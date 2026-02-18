@@ -1,0 +1,2 @@
+{"type": "request", "mode": "analyze", "tools_allowed": ["none"], "hmm": ["hmm"], "ts": "2026-02-17T18:02:41.004163+00:00"}
+{"type": "model", "name": "local-echo", "ts": "2026-02-17T18:02:41.004496+00:00"}
