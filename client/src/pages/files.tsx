@@ -221,32 +221,35 @@ export default function FilesPage() {
         <Button
           size="icon"
           variant="ghost"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          data-testid="button-upload"
-          title="Upload files"
-        >
-          {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={() => manifestInputRef.current?.click()}
-          disabled={uploading}
-          data-testid="button-snapshot"
-          title="Upload phone snapshot"
-        >
-          <Camera className="w-4 h-4" />
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
           onClick={() => refetch()}
           data-testid="button-refresh-files"
         >
           <RefreshCw className="w-4 h-4" />
         </Button>
       </header>
+
+      <div className="flex gap-2 px-3 py-2 border-b border-border bg-card/50 flex-shrink-0">
+        <Button
+          variant="outline"
+          className="flex-1 gap-2"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          data-testid="button-upload"
+        >
+          {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          <span className="text-sm">Upload Files</span>
+        </Button>
+        <Button
+          variant="outline"
+          className="flex-1 gap-2"
+          onClick={() => manifestInputRef.current?.click()}
+          disabled={uploading}
+          data-testid="button-snapshot"
+        >
+          <Camera className="w-4 h-4" />
+          <span className="text-sm">Phone Snapshot</span>
+        </Button>
+      </div>
 
       {uploading && uploadProgress > 0 && (
         <div className="px-3 py-1 flex-shrink-0">
