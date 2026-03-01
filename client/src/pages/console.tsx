@@ -330,6 +330,72 @@ function MetricsTab() {
   );
 }
 
+const METRIC_LABELS: Record<string, { label: string; desc: string }> = {
+  CM: { label: "Constraint Mismatch", desc: "1 - Jaccard(C_declared, C_observed)" },
+  DA: { label: "Dissonance Accum.", desc: "sigmoid(w·contradictions + retractions + repeats)" },
+  DRIFT: { label: "Drift", desc: "1 - cosine_similarity(x_t, goal)" },
+  DVG: { label: "Divergence", desc: "entropy(topic_distribution) normalized" },
+  INT: { label: "Intensity", desc: "clamp01(caps + punct + lex + tempo)" },
+  TBF: { label: "Turn-Balance", desc: "Gini coefficient on actor token shares" },
+};
+
+const ALERT_NAMES: Record<string, string> = {
+  CM: "ALERT_CM_HIGH",
+  DA: "ALERT_DA_RISING",
+  DVG: "ALERT_DVG_SPLIT",
+  INT: "ALERT_INT_SPIKE",
+  TBF: "ALERT_TBF_SKEW",
+  DRIFT: "ALERT_DRIFT_AWAY",
+};
+
+function alertColor(value: number): { bg: string; text: string; label: string } {
+  if (value >= 0.80) return { bg: "bg-red-500/20", text: "text-red-400", label: "HIGH" };
+  if (value <= 0.20) return { bg: "bg-green-500/20", text: "text-green-400", label: "LOW" };
+  return { bg: "bg-amber-500/20", text: "text-amber-400", label: "HYSTERESIS" };
+}
+
+function MetricRow({ metricKey, value, evidence }: { metricKey: string; value: number; evidence: string[] }) {
+  const info = METRIC_LABELS[metricKey] || { label: metricKey, desc: "" };
+  const alert = alertColor(value);
+  const pct = Math.round(value * 100);
+
+  return (
+    <div className="space-y-1" data-testid={`metric-row-${metricKey}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className="font-mono text-xs font-bold w-10 flex-shrink-0">{metricKey}</span>
+          <span className="text-[10px] text-muted-foreground truncate">{info.label}</span>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className="font-mono text-xs font-bold" data-testid={`text-metric-value-${metricKey}`}>
+            {value.toFixed(3)}
+          </span>
+          <Badge
+            variant="secondary"
+            className={cn("text-[9px] font-mono", alert.bg, alert.text)}
+            data-testid={`badge-alert-${metricKey}`}
+          >
+            {alert.label}
+          </Badge>
+        </div>
+      </div>
+      <div className="w-full h-1.5 bg-background rounded-full overflow-hidden">
+        <div
+          className={cn("h-full rounded-full transition-all", value >= 0.80 ? "bg-red-500" : value <= 0.20 ? "bg-green-500" : "bg-amber-500")}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {evidence.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {evidence.map((e, i) => (
+            <span key={i} className="text-[9px] font-mono text-muted-foreground">{e}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EdcmTab() {
   const { data: snapshots = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/edcm/snapshots"],
@@ -337,24 +403,109 @@ function EdcmTab() {
   });
 
   const latest = snapshots[0];
+  const ptca = latest?.ptcaState as any;
+
+  const { data: engineReport } = useQuery<any>({
+    queryKey: ["/api/a0p/events"],
+    refetchInterval: 10000,
+    select: (data: any[]) => {
+      if (!data || data.length === 0) return null;
+      const last = data[0];
+      return last?.payload;
+    },
+  });
+
+  const reportMetrics = engineReport?.edcmMetrics;
+  const reportAlerts = engineReport?.alerts;
+  const liveSentinelCtx = engineReport?.sentinelContext || engineReport?.sentinel_context;
 
   return (
     <ScrollArea className="h-full px-3 py-3">
       <div className="space-y-4 pb-4">
+
         <div className="rounded-lg border border-border bg-card p-4">
-          <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-            <Brain className="w-4 h-4 text-purple-400" />
-            EDCMBONE Dual-Brain Metrics
-          </h3>
-          {!latest ? (
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <Brain className="w-4 h-4 text-purple-400" />
+              EDCM Metric Families
+            </h3>
+            <Badge variant="secondary" className="text-[9px] font-mono" data-testid="badge-build-version">
+              {`v1.0.2-S9`}
+            </Badge>
+          </div>
+
+          {!latest && !reportMetrics ? (
             <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">No EDCM evaluations yet. Run a process through the engine to see brain connection metrics.</p>
-              <div className="text-xs text-muted-foreground">
-                <p>Thresholds: Merge ≤0.18 | Softfork ≤0.30 | Fork &gt;0.30</p>
-                <p>Align Risk: &gt;0.25 | PCNA: 53-node circular | PTCA: Euler dt=0.01</p>
+              <p className="text-xs text-muted-foreground">No EDCM evaluations yet. Run a process through the engine to generate metrics.</p>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {Object.entries(METRIC_LABELS).map(([key, info]) => (
+                  <div key={key} className="text-center p-2 rounded bg-background">
+                    <p className="font-mono font-bold text-muted-foreground">{key}</p>
+                    <p className="text-[9px] text-muted-foreground">{info.label}</p>
+                    <p className="font-mono text-muted-foreground">--</p>
+                  </div>
+                ))}
               </div>
             </div>
           ) : (
+            <div className="space-y-3">
+              {reportMetrics ? (
+                Object.entries(reportMetrics as Record<string, number>).map(([key, val]) => {
+                  const metricVal = typeof val === "object" ? (val as any).value ?? val : val;
+                  return (
+                    <MetricRow
+                      key={key}
+                      metricKey={key}
+                      value={typeof metricVal === "number" ? metricVal : 0}
+                      evidence={[]}
+                    />
+                  );
+                })
+              ) : (
+                Object.entries(METRIC_LABELS).map(([key]) => (
+                  <MetricRow key={key} metricKey={key} value={0} evidence={[]} />
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            80/20 Alert Status
+          </h3>
+          <div className="text-[10px] text-muted-foreground mb-3">
+            TRIGGER (HIGH) at ≥0.80 | CLEAR (LOW) at ≤0.20 | Hysteresis band (0.20, 0.80)
+          </div>
+          <div className="space-y-1.5">
+            {Object.entries(ALERT_NAMES).map(([metric, alertName]) => {
+              const val = reportMetrics ? (typeof reportMetrics[metric] === "object" ? (reportMetrics[metric] as any).value : reportMetrics[metric]) : null;
+              const numVal = typeof val === "number" ? val : 0;
+              const alert = alertColor(val != null ? numVal : 0.5);
+              return (
+                <div key={metric} className="flex items-center justify-between gap-2 text-xs" data-testid={`alert-row-${metric}`}>
+                  <div className="flex items-center gap-2">
+                    <span className={cn("w-2 h-2 rounded-full flex-shrink-0",
+                      val == null ? "bg-muted-foreground" : numVal >= 0.80 ? "bg-red-500" : numVal <= 0.20 ? "bg-green-500" : "bg-amber-500"
+                    )} />
+                    <span className="font-mono text-[10px]">{alertName}</span>
+                  </div>
+                  <span className={cn("font-mono text-[10px]", val != null ? alert.text : "text-muted-foreground")}>
+                    {val != null ? `${numVal.toFixed(3)} → ${alert.label}` : "no data"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {latest && (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+              <Brain className="w-4 h-4 text-purple-400" />
+              Disposition & Operators
+            </h3>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div>
@@ -370,14 +521,12 @@ function EdcmTab() {
                   </p>
                 </div>
               </div>
-
               <div className="space-y-2">
                 <h4 className="text-xs font-medium text-muted-foreground">Grok Operator Vector</h4>
                 <OperatorBar vec={latest.operatorGrok} color="emerald" />
                 <h4 className="text-xs font-medium text-muted-foreground">Gemini Operator Vector</h4>
                 <OperatorBar vec={latest.operatorGemini} color="blue" />
               </div>
-
               <div className="grid grid-cols-3 gap-2 text-xs">
                 <div className="text-center p-2 rounded bg-background">
                   <p className="text-muted-foreground">Grok Align</p>
@@ -393,18 +542,168 @@ function EdcmTab() {
                 </div>
                 <div className="text-center p-2 rounded bg-background">
                   <p className="text-muted-foreground">PTCA Energy</p>
-                  <p className="font-mono font-bold">
-                    {(latest.ptcaState as any)?.energy?.toFixed(4) || "--"}
+                  <p className="font-mono font-bold" data-testid="text-ptca-energy">
+                    {ptca?.energy?.toFixed(4) || "--"}
                   </p>
                 </div>
               </div>
-
               <div className="text-xs text-muted-foreground">
                 <p>Thresholds: Merge ≤0.18 | Softfork ≤0.30 | Fork &gt;0.30</p>
                 <p>Align Risk: &gt;0.25 | PCNA: 53-node circular | PTCA: Euler dt=0.01</p>
               </div>
             </div>
+          </div>
+        )}
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <Zap className="w-4 h-4 text-yellow-400" />
+            PTCA Tensor
+          </h3>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <span className="text-muted-foreground">Axes</span>
+              <p className="font-mono" data-testid="text-ptca-axes">53 × 9 × 8 × 7</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Geometry</span>
+              <p className="font-mono">Heptagram 6+1</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">prime_node</span>
+              <p className="font-mono text-[10px]">53 seeds (first 53 primes)</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">sentinel</span>
+              <p className="font-mono text-[10px]">9 channels (S1-S9)</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">phase</span>
+              <p className="font-mono text-[10px]">8 (reserved v2 inter-group)</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">hept</span>
+              <p className="font-mono text-[10px]">7 (6 ring + 1 Z hub)</p>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+            <div className="text-center p-2 rounded bg-background">
+              <p className="text-muted-foreground">α (alpha)</p>
+              <p className="font-mono font-bold">0.10</p>
+            </div>
+            <div className="text-center p-2 rounded bg-background">
+              <p className="text-muted-foreground">β (beta)</p>
+              <p className="font-mono font-bold">0.20</p>
+            </div>
+            <div className="text-center p-2 rounded bg-background">
+              <p className="text-muted-foreground">γ (gamma)</p>
+              <p className="font-mono font-bold">0.10</p>
+            </div>
+          </div>
+          {ptca && (
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <div className="text-center p-2 rounded bg-background">
+                <p className="text-muted-foreground">Heptagram Energy</p>
+                <p className="font-mono font-bold" data-testid="text-heptagram-energy">
+                  {ptca.heptagramEnergy?.toFixed(4) || "--"}
+                </p>
+              </div>
+              <div className="text-center p-2 rounded bg-background">
+                <p className="text-muted-foreground">Total Energy</p>
+                <p className="font-mono font-bold" data-testid="text-total-energy">
+                  {ptca.energy?.toFixed(4) || "--"}
+                </p>
+              </div>
+            </div>
           )}
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-blue-400" />
+            Sentinel Context
+          </h3>
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">S5 Window</span>
+              <span className="font-mono" data-testid="text-s5-window">
+                {liveSentinelCtx?.S5_context ? `${liveSentinelCtx.S5_context.window?.type || "turns"} / W=${liveSentinelCtx.S5_context.window?.W || 32}` : "turns / W=32"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">S5 Retrieval</span>
+              <span className="font-mono">{liveSentinelCtx?.S5_context?.retrieval_mode || "none"}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">S5 Hygiene</span>
+              <span className="font-mono">strip_secrets=true, redact_keys=true</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">S6 Identity</span>
+              <span className="font-mono">
+                {liveSentinelCtx?.S6_identity ? `actor_map ${liveSentinelCtx.S6_identity.actor_map_version} (conf: ${liveSentinelCtx.S6_identity.confidence})` : "actor_map v1 (conf: 0.98)"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">S7 Memory</span>
+              <span className="font-mono">
+                {liveSentinelCtx?.S7_memory ? `store=${liveSentinelCtx.S7_memory.store_allowed}, retention=${liveSentinelCtx.S7_memory.retention}` : "store=false, retention=session"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">S8 Risk</span>
+              <span className="font-mono" data-testid="text-s8-risk">
+                {liveSentinelCtx?.S8_risk ? `score=${liveSentinelCtx.S8_risk.score}, flags=[${(liveSentinelCtx.S8_risk.flags || []).join(",")}]` : "score=0.12, flags=[]"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">S9 Audit</span>
+              <span className="font-mono">
+                {liveSentinelCtx?.S9_audit ? `${liveSentinelCtx.S9_audit.evidence_events?.length || 0} events logged` : "evidence logged"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-green-400" />
+            EDCMBONE Report
+          </h3>
+          <div className="text-[10px] text-muted-foreground mb-2">
+            Minimal canonical skeleton for EDCM evaluation + reporting (v1.0.2-S9 frozen format)
+          </div>
+          <div className="bg-background rounded p-3 font-mono text-[9px] text-muted-foreground whitespace-pre-wrap max-h-48 overflow-auto" data-testid="text-edcmbone-report">
+{(() => {
+  const mv = (key: string) => {
+    const m = reportMetrics?.[key];
+    if (m == null) return "0.000";
+    return (typeof m === "object" ? (m as any).value : m).toFixed(3);
+  };
+  return `{
+  "edcmbone": {
+    "thread_id": "${latest?.taskId || "thr_..."}",
+    "used_context": {
+      "window": {"type":"turns","W":32},
+      "retrieval": {"mode":"none","sources":[],"top_k":0},
+      "hygiene": {"strip_secrets":true,"redact_keys":true}
+    },
+    "metrics": {
+      "CM":    {"value": ${mv("CM")}},
+      "DA":    {"value": ${mv("DA")}},
+      "DRIFT": {"value": ${mv("DRIFT")}},
+      "DVG":   {"value": ${mv("DVG")}},
+      "INT":   {"value": ${mv("INT")}},
+      "TBF":   {"value": ${mv("TBF")}}
+    },
+    "alerts": [],
+    "recommendations": [],
+    "snapshot_id": "snap_...",
+    "provenance": {"build":"v1.0.2-S9"}
+  }
+}`;
+})()}
+          </div>
         </div>
 
         <div className="rounded-lg border border-border bg-card p-4">

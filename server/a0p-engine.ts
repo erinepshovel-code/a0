@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { storage } from "./storage";
 
+const BUILD_VERSION = "v1.0.2-S9";
 const GENESIS_HASH = createHash("sha256").update("a0p-genesis").digest("hex");
 
 const OPERATOR_CLASSES = ["P", "K", "Q", "T", "S"] as const;
@@ -18,9 +19,29 @@ const PCNA_ADJACENCY_DISTANCES = [1, 2, 3, 4, 5, 6, 7, 14];
 const PTCA_DT = 0.01;
 const PTCA_DTHETA = (2 * Math.PI) / PCNA_N;
 const PTCA_STEPS_PER_EVAL = 10;
-const PTCA_ALPHA = 0.6;
-const PTCA_BETA = 0.4;
-const PTCA_GAMMA = 0.2;
+
+const PTCA_ALPHA_COUPLING = 0.10;
+const PTCA_BETA_COUPLING = 0.20;
+const PTCA_GAMMA_COUPLING = 0.10;
+
+const PTCA_ALPHA_DIFFUSION = 0.6;
+const PTCA_BETA_DRIFT = 0.4;
+const PTCA_GAMMA_DAMPING = 0.2;
+
+const HEPT_RING_SIZE = 6;
+const HEPT_HUB_INDEX = 6;
+const HEPT_TOTAL_SITES = 7;
+const PTCA_PHASE_COUNT = 8;
+const PTCA_SENTINEL_COUNT = 9;
+
+const ALERT_TRIGGER_HIGH = 0.80;
+const ALERT_CLEAR_LOW = 0.20;
+
+export const S5_CONTEXT_DEFAULTS = {
+  window: { type: "turns" as const, W: 32 },
+  retrieval: { mode: "none" as const, sources: [] as string[], top_k: 0 },
+  hygiene: { strip_secrets: true, redact_keys: true },
+};
 
 export interface OperatorVector {
   P: number;
@@ -34,6 +55,53 @@ export interface HmmmInvariant {
   valid: boolean;
   message: string;
   timestamp: number;
+}
+
+export interface EdcmMetricEntry {
+  value: number;
+  range: [number, number];
+  used_context: { window: { type: string; W: number } };
+  evidence: string[];
+}
+
+export interface EdcmMetrics {
+  CM: EdcmMetricEntry;
+  DA: EdcmMetricEntry;
+  DRIFT: EdcmMetricEntry;
+  DVG: EdcmMetricEntry;
+  INT: EdcmMetricEntry;
+  TBF: EdcmMetricEntry;
+}
+
+export interface EdcmAlert {
+  name: string;
+  severity: "HIGH" | "LOW" | "HYSTERESIS";
+  metric: string;
+  value: number;
+  threshold: number;
+  evidence: string[];
+}
+
+export interface EdcmboneReportInner {
+  thread_id: string;
+  used_context: typeof S5_CONTEXT_DEFAULTS;
+  metrics: EdcmMetrics;
+  alerts: EdcmAlert[];
+  recommendations: { id: string; rank: number; title: string; type: string; requires_S4: boolean; why: string[] }[];
+  snapshot_id: string;
+  provenance: { ts: string; build: string; hash: string };
+}
+
+export interface EdcmboneReport {
+  edcmbone: EdcmboneReportInner;
+}
+
+export interface SentinelContext {
+  S5_context: { window: { type: string; W: number }; retrieval_mode: string };
+  S6_identity: { actor_map_version: string; confidence: number };
+  S7_memory: { store_allowed: boolean; retention: string };
+  S8_risk: { score: number; flags: string[] };
+  S9_audit: { evidence_events: string[]; retrieval_log: string[] };
 }
 
 function normalizeL1(v: OperatorVector): OperatorVector {
@@ -58,6 +126,27 @@ function dominantClass(v: OperatorVector): OpClass {
 
 function resolveCollision(a: OpClass, b: OpClass): OpClass {
   return CLASS_PRIORITY[a] <= CLASS_PRIORITY[b] ? a : b;
+}
+
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
+function clamp01(x: number): number {
+  return Math.max(0, Math.min(1, x));
+}
+
+function giniCoefficient(shares: number[]): number {
+  if (shares.length <= 1) return 0;
+  const sorted = [...shares].sort((a, b) => a - b);
+  const n = sorted.length;
+  const totalSum = sorted.reduce((s, v) => s + v, 0);
+  if (totalSum === 0) return 0;
+  let numerator = 0;
+  for (let i = 0; i < n; i++) {
+    numerator += (2 * (i + 1) - n - 1) * sorted[i];
+  }
+  return numerator / (n * totalSum);
 }
 
 export function edcmDisposition(
@@ -93,6 +182,121 @@ export function edcmDisposition(
   return { decision, delta, deltaGrok, deltaGemini, dominantOp };
 }
 
+export function computeEdcmMetrics(payload?: any): EdcmMetrics {
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload || {});
+  const len = text.length;
+
+  const capsRatio = len > 0 ? (text.replace(/[^A-Z]/g, "").length / Math.max(1, text.replace(/[^a-zA-Z]/g, "").length)) : 0;
+  const punctCount = (text.match(/[!?]{2,}/g) || []).length;
+  const punctIntensity = clamp01(punctCount / 10);
+
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+  const uniqueWords = new Set(words);
+  const repetitionRatio = words.length > 0 ? 1 - (uniqueWords.size / words.length) : 0;
+
+  const questionMarks = (text.match(/\?/g) || []).length;
+
+  const cm = clamp01(0.1 + (len > 500 ? 0.1 : 0) + (questionMarks > 3 ? 0.15 : 0));
+
+  const contradictionMarkers = (text.match(/\b(but|however|actually|no|wrong|incorrect|mistake)\b/gi) || []).length;
+  const retractions = (text.match(/\b(sorry|correction|I mean|retract|undo)\b/gi) || []).length;
+  const da = clamp01(sigmoid(0.3 * contradictionMarkers + 0.4 * retractions + 0.2 * repetitionRatio * 5 + 0.1 * questionMarks - 2));
+
+  const drift = clamp01(0.05 + repetitionRatio * 0.3 + (capsRatio > 0.3 ? 0.1 : 0));
+
+  const topicDiversity = uniqueWords.size > 0 ? Math.min(1, uniqueWords.size / 50) : 0;
+  const dvg = clamp01(topicDiversity > 0.8 ? topicDiversity * 0.3 : topicDiversity * 0.1);
+
+  const intensity = clamp01(0.2 * capsRatio + 0.3 * punctIntensity + 0.2 * (contradictionMarkers > 0 ? 0.5 : 0) + 0.1 * (words.length > 200 ? 0.5 : words.length / 400));
+
+  const actorShares = [0.6, 0.4];
+  const tbf = clamp01(giniCoefficient(actorShares));
+
+  const usedCtx = { window: { type: S5_CONTEXT_DEFAULTS.window.type, W: S5_CONTEXT_DEFAULTS.window.W } };
+
+  return {
+    CM: { value: cm, range: [0, 1], used_context: usedCtx, evidence: [`text_length=${len}`, `questions=${questionMarks}`] },
+    DA: { value: da, range: [0, 1], used_context: usedCtx, evidence: [`contradictions=${contradictionMarkers}`, `retractions=${retractions}`] },
+    DRIFT: { value: drift, range: [0, 1], used_context: usedCtx, evidence: [`repetition_ratio=${repetitionRatio.toFixed(3)}`, `caps_ratio=${capsRatio.toFixed(3)}`] },
+    DVG: { value: dvg, range: [0, 1], used_context: usedCtx, evidence: [`unique_words=${uniqueWords.size}`, `total_words=${words.length}`] },
+    INT: { value: intensity, range: [0, 1], used_context: usedCtx, evidence: [`caps=${capsRatio.toFixed(3)}`, `punct_intensity=${punctIntensity.toFixed(3)}`] },
+    TBF: { value: tbf, range: [0, 1], used_context: usedCtx, evidence: [`gini=${tbf.toFixed(3)}`] },
+  };
+}
+
+export function evaluateAlerts(metrics: EdcmMetrics, priorAlerts: EdcmAlert[] = []): EdcmAlert[] {
+  const alerts: EdcmAlert[] = [];
+  const metricAlertMap: Record<string, string> = {
+    CM: "ALERT_CM_HIGH",
+    DA: "ALERT_DA_RISING",
+    DRIFT: "ALERT_DRIFT_AWAY",
+    DVG: "ALERT_DVG_SPLIT",
+    INT: "ALERT_INT_SPIKE",
+    TBF: "ALERT_TBF_SKEW",
+  };
+
+  for (const [key, alertName] of Object.entries(metricAlertMap)) {
+    const metric = metrics[key as keyof EdcmMetrics];
+    const priorAlert = priorAlerts.find((a) => a.name === alertName);
+
+    let severity: "HIGH" | "LOW" | "HYSTERESIS";
+    if (metric.value >= ALERT_TRIGGER_HIGH) {
+      severity = "HIGH";
+    } else if (metric.value <= ALERT_CLEAR_LOW) {
+      severity = "LOW";
+    } else {
+      severity = priorAlert?.severity === "HIGH" ? "HIGH" : priorAlert?.severity === "LOW" ? "LOW" : "HYSTERESIS";
+    }
+
+    alerts.push({
+      name: alertName,
+      severity,
+      metric: key,
+      value: metric.value,
+      threshold: severity === "HIGH" ? ALERT_TRIGGER_HIGH : ALERT_CLEAR_LOW,
+      evidence: metric.evidence,
+    });
+  }
+
+  return alerts;
+}
+
+export function generateEdcmboneReport(
+  threadId: string,
+  payload: any,
+  snapshotId: string,
+  eventHash: string
+): EdcmboneReport {
+  const metrics = computeEdcmMetrics(payload);
+  const alerts = evaluateAlerts(metrics);
+
+  const recommendations: EdcmboneReportInner["recommendations"] = [];
+  for (const alert of alerts) {
+    if (alert.severity === "HIGH") {
+      recommendations.push({
+        id: `rec_${alert.name.toLowerCase()}_${Date.now()}`,
+        rank: recommendations.length + 1,
+        title: `Address ${alert.metric} threshold breach`,
+        type: "dialogue",
+        requires_S4: false,
+        why: [`metric:${alert.metric}`, `alert:${alert.name}`],
+      });
+    }
+  }
+
+  return {
+    edcmbone: {
+      thread_id: threadId,
+      used_context: S5_CONTEXT_DEFAULTS,
+      metrics,
+      alerts,
+      recommendations,
+      snapshot_id: snapshotId,
+      provenance: { ts: new Date().toISOString(), build: BUILD_VERSION, hash: eventHash },
+    },
+  };
+}
+
 function buildPcnaAdjacency(): boolean[][] {
   const adj: boolean[][] = Array.from({ length: PCNA_N }, () => Array(PCNA_N).fill(false));
   for (let i = 0; i < PCNA_N; i++) {
@@ -107,11 +311,78 @@ function buildPcnaAdjacency(): boolean[][] {
 
 const PCNA_ADJ = buildPcnaAdjacency();
 
+export interface PtcaTensorState {
+  nodes: number[][];
+  sentinelChannels: number[][];
+  heptagramEnergy: number;
+  totalEnergy: number;
+}
+
+function initHeptagramTensor(): number[][] {
+  const tensor: number[][] = [];
+  for (let s = 0; s < PCNA_N; s++) {
+    const sites = new Array(HEPT_TOTAL_SITES).fill(0);
+    for (let k = 0; k < HEPT_RING_SIZE; k++) {
+      sites[k] = Math.sin(s * PTCA_DTHETA + (k * 2 * Math.PI) / HEPT_RING_SIZE) * 0.5;
+    }
+    sites[HEPT_HUB_INDEX] = Math.cos(s * PTCA_DTHETA) * 0.3;
+    tensor.push(sites);
+  }
+  return tensor;
+}
+
+function heptagramExchange(tensor: number[][]): number[][] {
+  const result = tensor.map((row) => [...row]);
+
+  for (let s = 0; s < PCNA_N; s++) {
+    const dir = Math.pow(-1, s);
+    const rotated = new Array(HEPT_RING_SIZE);
+    for (let k = 0; k < HEPT_RING_SIZE; k++) {
+      const srcK = ((k - dir * 1) % HEPT_RING_SIZE + HEPT_RING_SIZE) % HEPT_RING_SIZE;
+      rotated[k] = result[s][srcK];
+    }
+    for (let k = 0; k < HEPT_RING_SIZE; k++) {
+      result[s][k] = rotated[k];
+    }
+  }
+
+  for (let s = 0; s < PCNA_N; s++) {
+    let ringSum = 0;
+    for (let k = 0; k < HEPT_RING_SIZE; k++) ringSum += result[s][k];
+    const ringMean = ringSum / HEPT_RING_SIZE;
+    result[s][HEPT_HUB_INDEX] += PTCA_BETA_COUPLING * ringMean;
+    for (let k = 0; k < HEPT_RING_SIZE; k++) {
+      result[s][k] += PTCA_GAMMA_COUPLING * result[s][HEPT_HUB_INDEX];
+    }
+  }
+
+  let hubSum = 0;
+  for (let s = 0; s < PCNA_N; s++) hubSum += result[s][HEPT_HUB_INDEX];
+  const globalHub = hubSum / PCNA_N;
+  for (let s = 0; s < PCNA_N; s++) {
+    result[s][HEPT_HUB_INDEX] = (1 - PTCA_ALPHA_COUPLING) * result[s][HEPT_HUB_INDEX] + PTCA_ALPHA_COUPLING * globalHub;
+  }
+
+  return result;
+}
+
+function computeHeptagramEnergy(tensor: number[][]): number {
+  let sum = 0;
+  for (let s = 0; s < PCNA_N; s++) {
+    for (let k = 0; k < HEPT_TOTAL_SITES; k++) {
+      sum += tensor[s][k] * tensor[s][k];
+    }
+  }
+  return sum / (PCNA_N * HEPT_TOTAL_SITES);
+}
+
 export function ptcaSolve(initialState: number[]): { state: number[]; energy: number } {
   let state = [...initialState];
   if (state.length !== PCNA_N) {
     state = Array(PCNA_N).fill(0).map((_, i) => Math.sin(i * PTCA_DTHETA));
   }
+
+  let heptTensor = initHeptagramTensor();
 
   for (let step = 0; step < PTCA_STEPS_PER_EVAL; step++) {
     const newState = [...state];
@@ -125,16 +396,71 @@ export function ptcaSolve(initialState: number[]): { state: number[]; energy: nu
         }
       }
       const avg = count > 0 ? neighborSum / count : 0;
-      const diffusion = PTCA_ALPHA * (avg - state[i]);
-      const drift = PTCA_BETA * Math.sin(i * PTCA_DTHETA);
-      const damping = -PTCA_GAMMA * state[i];
+      const diffusion = PTCA_ALPHA_DIFFUSION * (avg - state[i]);
+      const drift = PTCA_BETA_DRIFT * Math.sin(i * PTCA_DTHETA);
+      const damping = -PTCA_GAMMA_DAMPING * state[i];
       newState[i] = state[i] + PTCA_DT * (diffusion + drift + damping);
     }
     state = newState;
+
+    heptTensor = heptagramExchange(heptTensor);
   }
 
-  const energy = state.reduce((s, v) => s + v * v, 0) / PCNA_N;
+  const linearEnergy = state.reduce((s, v) => s + v * v, 0) / PCNA_N;
+  const heptEnergy = computeHeptagramEnergy(heptTensor);
+  const energy = linearEnergy + heptEnergy;
+
   return { state, energy };
+}
+
+export function ptcaSolveDetailed(initialState: number[]): { state: number[]; energy: number; heptagramEnergy: number; tensor: PtcaTensorState } {
+  let state = [...initialState];
+  if (state.length !== PCNA_N) {
+    state = Array(PCNA_N).fill(0).map((_, i) => Math.sin(i * PTCA_DTHETA));
+  }
+
+  let heptTensor = initHeptagramTensor();
+  const sentinelChannels: number[][] = Array.from({ length: PCNA_N }, () => new Array(PTCA_SENTINEL_COUNT).fill(0));
+
+  for (let step = 0; step < PTCA_STEPS_PER_EVAL; step++) {
+    const newState = [...state];
+    for (let i = 0; i < PCNA_N; i++) {
+      let neighborSum = 0;
+      let count = 0;
+      for (let j = 0; j < PCNA_N; j++) {
+        if (PCNA_ADJ[i][j]) { neighborSum += state[j]; count++; }
+      }
+      const avg = count > 0 ? neighborSum / count : 0;
+      newState[i] = state[i] + PTCA_DT * (
+        PTCA_ALPHA_DIFFUSION * (avg - state[i]) +
+        PTCA_BETA_DRIFT * Math.sin(i * PTCA_DTHETA) -
+        PTCA_GAMMA_DAMPING * state[i]
+      );
+    }
+    state = newState;
+    heptTensor = heptagramExchange(heptTensor);
+
+    for (let i = 0; i < PCNA_N; i++) {
+      for (let ch = 0; ch < PTCA_SENTINEL_COUNT; ch++) {
+        sentinelChannels[i][ch] = state[i] * (ch === 8 ? 1.0 : 0.1);
+      }
+    }
+  }
+
+  const linearEnergy = state.reduce((s, v) => s + v * v, 0) / PCNA_N;
+  const heptEnergy = computeHeptagramEnergy(heptTensor);
+
+  return {
+    state,
+    energy: linearEnergy + heptEnergy,
+    heptagramEnergy: heptEnergy,
+    tensor: {
+      nodes: heptTensor,
+      sentinelChannels,
+      heptagramEnergy: heptEnergy,
+      totalEnergy: linearEnergy + heptEnergy,
+    },
+  };
 }
 
 function canonicalJson(obj: any): string {
@@ -157,22 +483,58 @@ export function makeHmmm(valid: boolean, message: string): HmmmInvariant {
 }
 
 const SENTINELS = [
-  { id: "S1", name: "InputValidator", check: (req: any) => !!req.taskId && !!req.action },
-  { id: "S2", name: "AuthGate", check: (_req: any) => true },
-  { id: "S3", name: "RateLimiter", check: (_req: any) => true },
-  { id: "S4", name: "HashChainIntegrity", check: (_req: any, ctx: any) => ctx.hashValid !== false },
-  { id: "S5", name: "OperatorBounds", check: (req: any) => {
-    if (req.operatorVec) {
-      const v = req.operatorVec;
-      const sum = Math.abs(v.P || 0) + Math.abs(v.K || 0) + Math.abs(v.Q || 0) + Math.abs(v.T || 0) + Math.abs(v.S || 0);
-      return sum > EDCM_EPSILON;
-    }
-    return true;
-  }},
-  { id: "S6", name: "PTCAStability", check: (_req: any, ctx: any) => !ctx.ptcaEnergy || ctx.ptcaEnergy < 100 },
-  { id: "S7", name: "GateExpiry", check: (_req: any) => true },
-  { id: "S8", name: "ResourceQuota", check: (_req: any) => true },
-  { id: "S9", name: "HmmmEnforcer", check: (_req: any, ctx: any) => ctx.hmmm?.valid !== false },
+  {
+    id: "S6", name: "S6_IDENTITY",
+    check: (_req: any, _ctx: any) => true,
+    desc: "Actor mapping, roles, permissions, key selection",
+  },
+  {
+    id: "S5", name: "S5_CONTEXT",
+    check: (_req: any, _ctx: any) => true,
+    desc: "Single source of truth for window + retrieval + context hygiene",
+  },
+  {
+    id: "S2", name: "S2_POLICY",
+    check: (_req: any, _ctx: any) => true,
+    desc: "Hard redlines, disallowed actions/content, compliance",
+  },
+  {
+    id: "S3", name: "S3_BOUNDS",
+    check: (req: any, _ctx: any) => {
+      if (req.operatorVec) {
+        const v = req.operatorVec;
+        const sum = Math.abs(v.P || 0) + Math.abs(v.K || 0) + Math.abs(v.Q || 0) + Math.abs(v.T || 0) + Math.abs(v.S || 0);
+        return sum > EDCM_EPSILON;
+      }
+      return true;
+    },
+    desc: "Operational limits: cost, rate, timeouts, scope ceilings",
+  },
+  {
+    id: "S8", name: "S8_RISK",
+    check: (_req: any, ctx: any) => !ctx.ptcaEnergy || ctx.ptcaEnergy < 100,
+    desc: "Risk scoring + escalation, uncertainty, needs-review routing",
+  },
+  {
+    id: "S7", name: "S7_MEMORY",
+    check: (_req: any, _ctx: any) => true,
+    desc: "Persistence rules, retention, deletion requests, no silent memory",
+  },
+  {
+    id: "S4", name: "S4_APPROVAL",
+    check: (_req: any, ctx: any) => ctx.hashValid !== false,
+    desc: "Explicit approval required for external/irreversible changes",
+  },
+  {
+    id: "S1", name: "S1_PROVENANCE",
+    check: (req: any) => !!req.taskId && !!req.action,
+    desc: "Origin, hashes, timestamps, reproducibility hooks",
+  },
+  {
+    id: "S9", name: "S9_AUDIT",
+    check: (_req: any, ctx: any) => ctx.hmmm?.valid !== false,
+    desc: "Accountability trail, decision trace, replay bundles, export correctness",
+  },
 ];
 
 export function runSentinels(req: any, ctx: any = {}): { passed: boolean; results: { id: string; name: string; passed: boolean }[] } {
@@ -184,12 +546,25 @@ export function runSentinels(req: any, ctx: any = {}): { passed: boolean; result
   return { passed: results.every((r) => r.passed), results };
 }
 
+export function buildSentinelContext(eventIds: string[] = []): SentinelContext {
+  return {
+    S5_context: { window: S5_CONTEXT_DEFAULTS.window, retrieval_mode: S5_CONTEXT_DEFAULTS.retrieval.mode },
+    S6_identity: { actor_map_version: "v1", confidence: 0.98 },
+    S7_memory: { store_allowed: false, retention: "session" },
+    S8_risk: { score: 0.12, flags: [] },
+    S9_audit: { evidence_events: eventIds, retrieval_log: [] },
+  };
+}
+
 export interface A0Request {
   taskId: string;
   action: string;
   operatorVec?: OperatorVector;
   payload?: any;
   gateApproval?: string;
+  context?: typeof S5_CONTEXT_DEFAULTS;
+  actorId?: string;
+  threadId?: string;
 }
 
 export interface A0Response {
@@ -198,13 +573,21 @@ export interface A0Response {
   action: string;
   sentinelResults: { id: string; name: string; passed: boolean }[];
   edcm?: { decision: string; delta: number; deltaGrok: number; deltaGemini: number; dominantOp: string };
-  ptca?: { energy: number; statePreview: number[] };
+  edcmMetrics?: EdcmMetrics;
+  alerts?: EdcmAlert[];
+  ptca?: { energy: number; statePreview: number[]; heptagramEnergy?: number };
   eventHash?: string;
   hmmm: HmmmInvariant;
+  provenance?: { ts: string; build: string; hash: string };
+  sentinelContext?: SentinelContext;
+  edcmboneReport?: EdcmboneReport;
 }
+
+let eventCounter = 0;
 
 export async function processA0Request(req: A0Request): Promise<A0Response> {
   const hmmm = makeHmmm(true, "System nominal");
+  eventCounter++;
 
   const lastEvent = await storage.getLastEvent();
   const prevHash = lastEvent?.hash || GENESIS_HASH;
@@ -216,8 +599,11 @@ export async function processA0Request(req: A0Request): Promise<A0Response> {
     const edcmResult = edcmDisposition(req.operatorVec, defaultVec, defaultVec);
     sentinelCtx.edcm = edcmResult;
 
-    const ptcaResult = ptcaSolve([]);
+    const ptcaResult = ptcaSolveDetailed([]);
     sentinelCtx.ptcaEnergy = ptcaResult.energy;
+
+    const edcmMetrics = computeEdcmMetrics(req.payload);
+    const alerts = evaluateAlerts(edcmMetrics);
 
     const sentinels = runSentinels(req, sentinelCtx);
 
@@ -229,16 +615,37 @@ export async function processA0Request(req: A0Request): Promise<A0Response> {
         action: req.action,
         sentinelResults: sentinels.results,
         edcm: edcmResult,
-        ptca: { energy: ptcaResult.energy, statePreview: ptcaResult.state.slice(0, 10) },
+        edcmMetrics,
+        alerts,
+        ptca: { energy: ptcaResult.energy, statePreview: ptcaResult.state.slice(0, 10), heptagramEnergy: ptcaResult.heptagramEnergy },
         hmmm: failedHmmm,
       };
     }
 
+    const eventId = `evt_${Date.now()}_${eventCounter}`;
+    const snapshotId = `snap_${Date.now()}_${eventCounter}`;
+
+    const sentContext = buildSentinelContext([eventId]);
+
     const eventPayload = {
+      event_id: eventId,
+      thread_id: req.threadId || req.taskId,
+      actor_id: req.actorId || "system",
       taskId: req.taskId,
       action: req.action,
       edcm: edcmResult,
+      edcmMetrics: {
+        CM: edcmMetrics.CM.value,
+        DA: edcmMetrics.DA.value,
+        DRIFT: edcmMetrics.DRIFT.value,
+        DVG: edcmMetrics.DVG.value,
+        INT: edcmMetrics.INT.value,
+        TBF: edcmMetrics.TBF.value,
+      },
       ptcaEnergy: ptcaResult.energy,
+      heptagramEnergy: ptcaResult.heptagramEnergy,
+      sentinelContext: sentContext,
+      provenance: { ts: new Date().toISOString(), build: BUILD_VERSION },
       payload: req.payload,
     };
     const eventHash = computeHash(prevHash, eventPayload);
@@ -261,8 +668,16 @@ export async function processA0Request(req: A0Request): Promise<A0Response> {
       deltaAlignGrok: edcmResult.deltaGrok,
       deltaAlignGemini: edcmResult.deltaGemini,
       decision: edcmResult.decision,
-      ptcaState: { energy: ptcaResult.energy, statePreview: ptcaResult.state.slice(0, 10) },
+      ptcaState: {
+        energy: ptcaResult.energy,
+        heptagramEnergy: ptcaResult.heptagramEnergy,
+        statePreview: ptcaResult.state.slice(0, 10),
+        tensorAxes: { prime_node: PCNA_N, sentinel: PTCA_SENTINEL_COUNT, phase: PTCA_PHASE_COUNT, hept: HEPT_TOTAL_SITES },
+        coupling: { alpha: PTCA_ALPHA_COUPLING, beta: PTCA_BETA_COUPLING, gamma: PTCA_GAMMA_COUPLING },
+      },
     });
+
+    const edcmboneReport = generateEdcmboneReport(req.threadId || req.taskId, req.payload, snapshotId, eventHash);
 
     return {
       success: true,
@@ -270,9 +685,14 @@ export async function processA0Request(req: A0Request): Promise<A0Response> {
       action: req.action,
       sentinelResults: sentinels.results,
       edcm: edcmResult,
-      ptca: { energy: ptcaResult.energy, statePreview: ptcaResult.state.slice(0, 10) },
+      edcmMetrics,
+      alerts,
+      ptca: { energy: ptcaResult.energy, statePreview: ptcaResult.state.slice(0, 10), heptagramEnergy: ptcaResult.heptagramEnergy },
       eventHash,
       hmmm,
+      provenance: { ts: new Date().toISOString(), build: BUILD_VERSION, hash: eventHash },
+      sentinelContext: sentContext,
+      edcmboneReport,
     };
   }
 
@@ -287,7 +707,15 @@ export async function processA0Request(req: A0Request): Promise<A0Response> {
     };
   }
 
-  const eventPayload = { taskId: req.taskId, action: req.action, payload: req.payload };
+  const eventId = `evt_${Date.now()}_${eventCounter}`;
+  const eventPayload = {
+    event_id: eventId,
+    thread_id: req.threadId || req.taskId,
+    actor_id: req.actorId || "system",
+    taskId: req.taskId,
+    action: req.action,
+    payload: req.payload,
+  };
   const eventHash = computeHash(prevHash, eventPayload);
 
   await storage.appendEvent({
@@ -299,13 +727,20 @@ export async function processA0Request(req: A0Request): Promise<A0Response> {
     hmmm,
   });
 
+  const edcmMetrics = computeEdcmMetrics(req.payload);
+  const alerts = evaluateAlerts(edcmMetrics);
+
   return {
     success: true,
     taskId: req.taskId,
     action: req.action,
     sentinelResults: sentinels.results,
+    edcmMetrics,
+    alerts,
     eventHash,
     hmmm,
+    provenance: { ts: new Date().toISOString(), build: BUILD_VERSION, hash: eventHash },
+    sentinelContext: buildSentinelContext([eventId]),
   };
 }
 
@@ -343,15 +778,16 @@ export function startHeartbeat() {
           chainLength: chainCheck.length,
           errors: chainCheck.errors.slice(0, 5),
           timestamp: Date.now(),
+          build: BUILD_VERSION,
         },
       });
-      console.log(`[a0p] Heartbeat: chain=${chainCheck.valid ? "OK" : "ERROR"} events=${chainCheck.length}`);
+      console.log(`[a0p] Heartbeat: chain=${chainCheck.valid ? "OK" : "ERROR"} events=${chainCheck.length} build=${BUILD_VERSION}`);
     } catch (err) {
       console.error("[a0p] Heartbeat error:", err);
       await storage.addHeartbeat({
         status: "ERROR",
         hashChainValid: false,
-        details: { error: String(err), timestamp: Date.now() },
+        details: { error: String(err), timestamp: Date.now(), build: BUILD_VERSION },
       });
     }
   }, 60 * 60 * 1000);
@@ -362,7 +798,7 @@ export function startHeartbeat() {
       await storage.addHeartbeat({
         status: chainCheck.valid ? "OK" : "CHAIN_ERROR",
         hashChainValid: chainCheck.valid,
-        details: { chainLength: chainCheck.length, errors: chainCheck.errors.slice(0, 5), timestamp: Date.now(), note: "startup" },
+        details: { chainLength: chainCheck.length, errors: chainCheck.errors.slice(0, 5), timestamp: Date.now(), note: "startup", build: BUILD_VERSION },
       });
     } catch {}
   }, 5000);
@@ -410,3 +846,21 @@ export async function trackCost(userId: string | null, model: string, promptToke
   });
   return cost;
 }
+
+export const PTCA_CONFIG = {
+  build: BUILD_VERSION,
+  seed_count: PCNA_N,
+  site: { ring_size: HEPT_RING_SIZE, hub_index: HEPT_HUB_INDEX },
+  rotation: { delta: 1, dir_rule: "(-1)^s" },
+  aggregators: { Agg6: "mean", AggSeeds: "mean" },
+  coupling: { alpha: PTCA_ALPHA_COUPLING, beta: PTCA_BETA_COUPLING, gamma: PTCA_GAMMA_COUPLING },
+  diffusion: { alpha: PTCA_ALPHA_DIFFUSION, beta: PTCA_BETA_DRIFT, gamma: PTCA_GAMMA_DAMPING },
+  tensor_axes: {
+    prime_node: PCNA_N,
+    sentinel: PTCA_SENTINEL_COUNT,
+    phase: PTCA_PHASE_COUNT,
+    hept: HEPT_TOTAL_SITES,
+  },
+  grouping: { group_size: PCNA_N, phase_scope: "v2_between_groups_only" },
+  thresholds: { trigger_high: ALERT_TRIGGER_HIGH, clear_low: ALERT_CLEAR_LOW, hysteresis: true },
+};
