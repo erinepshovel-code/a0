@@ -1,9 +1,9 @@
 # a0p — Agent Zero Platform
 
-## Specification v1.0.0
+## Specification v1.0.2-S9
 
-**Version**: 1.0.0
-**Status**: Frozen
+**Version**: 1.0.2-S9
+**Status**: Frozen (canon-aligned)
 **Platform**: Replit (NixOS container)
 **Runtime**: Node.js + TypeScript
 
@@ -43,15 +43,23 @@ The agent executes tasks autonomously using up to 9 tools across up to 8 rounds 
 
 ---
 
-## 3. EDCMBONE Engine
+## 3. EDCMBONE Engine (canon v1.0.2-S9)
 
-### 3.1 Operator Vector System
+### 3.1 Naming + Aliases
+
+- **EDCM**: Energy-Dissonance Circuit Model (diagnostic metrics + control signals)
+- **PTCA / PCTA**: Prime Tensor Circular Architecture (canon name: PTCA; alias PCTA accepted)
+- **PCNA**: Prime Circular Neural Architecture (neural/routing layer consuming PTCA structures)
+- **EDCMBONE**: Minimal canonical skeleton for EDCM evaluation + reporting
+- **Sentinels (S1-S9)**: Reserved control channels for invariants, safety, provenance, gates, and audit
+
+### 3.2 Operator Vector System
 
 Five operator classes: **P**, **K**, **Q**, **T**, **S**
 
 Each actor (Grok, Gemini, User) produces a 5-dimensional operator vector. Vectors are L1-normalized with epsilon = 1e-9 to prevent division by zero.
 
-### 3.2 Distance and Decision
+### 3.3 Distance and Decision
 
 | Metric | Method |
 |--------|--------|
@@ -63,30 +71,270 @@ Each actor (Grok, Gemini, User) produces a 5-dimensional operator vector. Vector
 
 Class priority for conflict resolution: P=0, K=1, Q=2, T=3, S=4 (lowest index dominates).
 
-### 3.3 PCNA (Prime Circular Neural Architecture)
+### 3.4 PCNA (Prime Circular Neural Architecture)
 
 - **Nodes**: n = 53
 - **Topology**: Circular graph
 - **Adjacency distances**: {1, 2, 3, 4, 5, 6, 7, 14}
 - Each node connects to neighbors at those distances (modular arithmetic)
 
-### 3.4 PTCA (Prime Tensor Circular Architecture)
+### 3.5 PTCA (Prime Tensor Circular Architecture) — 4-axis tensor
 
-Explicit-Euler solver for state evolution on the PCNA topology.
-PTCA is the tensor/field update rule that evolves state on the circular prime topology.
+PTCA defines a structured tensor space organized by primes and circular geometry. It supplies a deterministic skeleton for PCNA to learn on top of.
+
+#### 3.5.1 Tensor Layout (4-axis: 53 x 9 x 8 x 7)
+
+| Axis | Label | Size | Meaning |
+|------|-------|------|---------|
+| 0 | prime_node | 53 | Prime-indexed routing nodes (first 53 primes) |
+| 1 | sentinel | 9 | S1-S9 control channels |
+| 2 | phase | 8 | Phase cycle (reserved for v2 inter-group composition) |
+| 3 | hept | 7 | Heptagram association slot (6 ring + 1 Z hub) |
+
+Sentinel index mapping: S1_PROVENANCE=0, S2_POLICY=1, S3_BOUNDS=2, S4_APPROVAL=3, S5_CONTEXT=4, S6_IDENTITY=5, S7_MEMORY=6, S8_RISK=7, S9_AUDIT=8.
+
+#### 3.5.2 Heptagram Geometry (6+1 axial)
+
+Each seed (prime_node) has its own XY plane containing **6 ring sites** (hexagon). The **7th site** is an axial **Z hub** (tensor-field point).
+
+- `site 0..5`: XY hexagon ring
+- `site 6`: Z hub
+
+#### 3.5.3 Exchange Operator Pipeline
+
+**a) Ring rotation (v1 constant):**
+- Step delta = 1, direction `dir(s) = (-1)^s` (alternating by seed index)
+- Ring permutation: `k' = (k - dir(s) * delta) mod 6` for k in 0..5
+- Hub site (k=6) is not moved by rotation
+
+**b) Intra-seed coupling (ring <-> hub):**
+- `Agg6` = mean over ring sites (0..5)
+- Ring -> hub: `X[s,6] += beta * Agg6(X[s,0..5])`
+- Hub -> ring: `X[s,k] += gamma * X[s,6]` for k in 0..5
+
+**c) Inter-seed coupling via shared Z hub:**
+- `H = mean(X[:,6])` (mean over all seeds)
+- `X[s,6] = (1 - alpha) * X[s,6] + alpha * H`
+
+#### 3.5.4 Frozen Constants (v1.0.2-S9)
+
+| Constant | Value | Role |
+|----------|-------|------|
+| alpha | 0.10 | Inter-seed coupling weight |
+| beta | 0.20 | Ring-to-hub coupling weight |
+| gamma | 0.10 | Hub-to-ring coupling weight |
+| delta | 1 | Constant rotation step |
+| Agg6 | mean | Ring aggregator |
+| AggSeeds | mean | Seed aggregator |
+
+#### 3.5.5 PCNA Euler Solver Parameters
 
 | Parameter | Value | Role |
 |-----------|-------|------|
 | dt | 0.01 | Time step |
 | dtheta | 2*pi/53 | Angular spacing |
 | steps | 10 | Iterations per evaluation |
-| alpha | 0.6 | Diffusion (neighbor coupling) |
-| beta | 0.4 | Drift (sine-wave signal) |
-| gamma | 0.2 | Damping (energy dissipation) |
+| alpha_diffusion | 0.6 | Diffusion (neighbor coupling) |
+| beta_drift | 0.4 | Drift (sine-wave signal) |
+| gamma_damping | 0.2 | Damping (energy dissipation) |
 
-**Energy** = mean square of state vector: `sum(v^2) / n`
+**Energy** = linear energy (mean square of state vector) + heptagram energy (mean square of tensor sites).
 
-### 3.5 Hash Chain
+#### 3.5.6 Grouping and Phase Scope
+
+- A **group** is a block of exactly 53 seeds (one PTCA prime_node field)
+- v1 exchange (rotation + ring<->hub + shared-Z coupling) is defined **within a group**
+- Phase (8-step) is **reserved for v2** inter-group composition/coupling
+
+### 3.6 EDCM Metric Families (6 families, v1.0.2-S9 freeze)
+
+All metrics produce values in [0, 1] with declared range. Every metric output includes `used_context` echoing the S5 context window/retrieval used.
+
+#### A) Constraint Mismatch (CM)
+
+Measures mismatch between declared constraints and observed language/actions.
+
+- `CM = 1 - Jaccard(C_declared, C_observed)`
+- Output: `{"CM": {"value": 0.12, "range": [0,1], "evidence": ["..."]}}`
+
+#### B) Dissonance Accumulation (DA)
+
+Represents buildup of unresolved contradictions, corrections, backtracking, and non-resolution.
+
+- `DA = sigmoid(w1 * f_contrad + w2 * f_retract + w3 * f_repeat + w4 * f_unresolved)`
+- Features: contradiction markers, retractions/corrections, repeated unanswered questions, circular references
+
+#### C) Drift (DRIFT)
+
+Tracks deviation from goal vector or scope vector.
+
+- `DRIFT = 1 - cosine_similarity(x_t, goal)`
+- If embeddings are used, output is marked as inferred component
+
+#### D) Divergence (DVG)
+
+Measures splitting into multiple competing trajectories (distinct from drift).
+
+- `DVG = entropy(topic_distribution)` normalized to [0, 1]
+- Placeholder: cluster turns into topics, compute entropy
+
+#### E) Intensity (INT)
+
+Captures conversational "heat" without moralizing.
+
+- `INT = clamp01(a1 * caps + a2 * punct + a3 * lex_intensity + a4 * tempo)`
+- Features: caps ratio, punctuation intensity, lexical intensity, short-interval repetitions
+
+#### F) Turn-Balance Fairness (TBF)
+
+Measures domination/skew across actors using Gini coefficient on actor token shares.
+
+- `TBF = Gini(p_actor)` normalized [0, 1]
+- Higher value = more skew
+
+### 3.7 Alert Thresholds (80/20 rule, frozen v1.0.2-S9)
+
+Default policy for all alerts:
+
+| Condition | State |
+|-----------|-------|
+| Metric >= 0.80 | TRIGGER (HIGH) |
+| Metric <= 0.20 | CLEAR (LOW) |
+| 0.20 < Metric < 0.80 | Hysteresis band (no state change) |
+
+Named alerts (frozen):
+
+| Alert Name | Metric | Description |
+|------------|--------|-------------|
+| ALERT_CM_HIGH | CM | Constraint mismatch threshold breach |
+| ALERT_DA_RISING | DA | Dissonance accumulation rising |
+| ALERT_DVG_SPLIT | DVG | Divergence split detected |
+| ALERT_INT_SPIKE | INT | Intensity spike detected |
+| ALERT_TBF_SKEW | TBF | Turn-balance fairness skew |
+
+Each alert specifies thresholds, evidence requirements, and recommended mitigations (non-actuating unless S4 approved).
+
+### 3.8 S5_CONTEXT Contract (global context, frozen v1.0.2-S9)
+
+S5_CONTEXT is the single source of truth for window definition, retrieval policy, and hygiene/redaction rules. All compute endpoints accept optional `context`; if omitted, server uses defaults.
+
+```json
+{
+  "context": {
+    "window": {"type": "turns", "W": 32},
+    "retrieval": {"mode": "none", "sources": [], "top_k": 0},
+    "hygiene": {"strip_secrets": true, "redact_keys": true}
+  }
+}
+```
+
+Invariants:
+- EDCM MUST report which context it used (`used_context` in output)
+- PCNA MUST report which context it used
+- Any retrieval != none must be logged in S9_AUDIT (sources, queries, k, hashes where available)
+
+### 3.9 EDCMBONE Report Format (frozen v1.0.2-S9)
+
+Minimal canonical skeleton for EDCM evaluation and reporting:
+
+```json
+{
+  "edcmbone": {
+    "thread_id": "thr_...",
+    "used_context": {"window": {"type": "turns", "W": 32}, "retrieval": {"mode": "none", "sources": [], "top_k": 0}},
+    "metrics": {
+      "CM": {"value": 0.12},
+      "DA": {"value": 0.31},
+      "DRIFT": {"value": 0.22},
+      "DVG": {"value": 0.05},
+      "INT": {"value": 0.40},
+      "TBF": {"value": 0.18}
+    },
+    "alerts": [],
+    "recommendations": [],
+    "snapshot_id": "snap_..."
+  }
+}
+```
+
+Recommendations format:
+```json
+{
+  "recommendations": [
+    {
+      "id": "rec_...",
+      "rank": 1,
+      "title": "Clarify constraints",
+      "type": "dialogue|tool|system|external",
+      "requires_S4": true,
+      "why": ["metric:CM", "alert:ALERT_CM_HIGH"]
+    }
+  ]
+}
+```
+
+### 3.10 Sentinel Context (required in outputs)
+
+EDCM outputs include sentinel-relevant fields:
+
+```json
+{
+  "sentinel_context": {
+    "S5_context": {"window": {"type": "turns", "W": 32}, "retrieval_mode": "none"},
+    "S6_identity": {"actor_map_version": "v1", "confidence": 0.98},
+    "S7_memory": {"store_allowed": false, "retention": "session"},
+    "S8_risk": {"score": 0.12, "flags": []},
+    "S9_audit": {"evidence_events": ["evt_..."], "retrieval_log": []}
+  }
+}
+```
+
+### 3.11 Provenance Block
+
+Every response includes a provenance block (S1):
+
+```json
+{"provenance": {"ts": "ISO-8601", "model": "...", "build": "v1.0.2-S9", "hash": "sha256:..."}}
+```
+
+### 3.12 Canon Event Format
+
+```json
+{
+  "event_id": "evt_...",
+  "ts": "ISO-8601",
+  "thread_id": "thr_...",
+  "actor_id": "act_...",
+  "event_type": "turn|metric|alert|decision|action_request|action_result|snapshot",
+  "refs": ["evt_..."],
+  "payload": {},
+  "hash": "sha256:...",
+  "sig": null
+}
+```
+
+### 3.13 Sentinels (S1-S9, canon roles)
+
+| Sentinel | Canon Name | Role |
+|----------|------------|------|
+| S1 | S1_PROVENANCE | Origin, hashes, timestamps, reproducibility hooks |
+| S2 | S2_POLICY | Hard redlines, disallowed actions/content, compliance |
+| S3 | S3_BOUNDS | Operational limits: cost, rate, timeouts, scope ceilings |
+| S4 | S4_APPROVAL | Explicit approval for external/irreversible changes |
+| S5 | S5_CONTEXT | Single source of truth for window + retrieval + context hygiene |
+| S6 | S6_IDENTITY | Actor mapping, roles, permissions, key selection |
+| S7 | S7_MEMORY | Persistence rules, retention, deletion requests, no silent memory |
+| S8 | S8_RISK | Risk scoring + escalation, uncertainty, needs-review routing |
+| S9 | S9_AUDIT | Accountability trail, decision trace, replay bundles, export correctness |
+
+Recommended evaluation order (fast-fail): S6, S5, S2, S3, S8, S7, S4, S1, S9.
+
+Minimal invariants:
+- Any action proposal must satisfy S1-S3, request S4 when applicable, and record S9 always
+- S5 owns window + retrieval globally
+- S4 is non-bypassable for external actuation
+
+### 3.14 Hash Chain
 
 - Algorithm: SHA-256
 - Genesis hash: SHA-256 of "a0p-genesis"
@@ -94,21 +342,7 @@ PTCA is the tensor/field update rule that evolves state on the circular prime to
 - Hash = SHA-256(prevHash + canonicalJson(payload))
 - Verification: recomputes every hash from genesis to detect tampering
 
-### 3.6 Sentinels (S1-S9)
-
-| Sentinel | Check |
-|----------|-------|
-| S1 | Input validation |
-| S2 | Auth verification |
-| S3 | Rate limiting |
-| S4 | Hash chain integrity |
-| S5 | Operator bounds (vector sum > epsilon) |
-| S6 | PTCA stability (energy < 100) |
-| S7 | Reserved |
-| S8 | Reserved |
-| S9 | HmmmEnforcer (hmmm invariant) |
-
-### 3.7 HmmmInvariant
+### 3.15 HmmmInvariant
 
 ```
 When uncertain, pause. When conflicted, disclose. No silent fallback.
@@ -116,13 +350,13 @@ When uncertain, pause. When conflicted, disclose. No silent fallback.
 
 Every process carries an hmmm state object (`{valid, message, timestamp}`). S9 enforces this at every sentinel check. The system fails explicitly rather than degrading silently.
 
-### 3.8 Heartbeat
+### 3.16 Heartbeat
 
 - Frequency: every 1 hour (3,600,000 ms)
 - Startup: initial heartbeat at 5 seconds after launch
 - Action: runs full hash chain verification, logs status (OK / CHAIN_ERROR / ERROR)
 
-### 3.9 Emergency Stop
+### 3.17 Emergency Stop
 
 Manual kill switch. Sets `emergencyStop = true`, halts heartbeat. Resume available via API.
 
