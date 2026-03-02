@@ -1,0 +1,98 @@
+[
+  {
+    "name": ".gitignore",
+    "path": ".gitignore",
+    "sha": "534d16966f69641f13d57155ebe281b770c62b6e",
+    "size": 348,
+    "url": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/.gitignore?ref=main",
+    "html_url": "https://github.com/wayseer00/wayseer.github.io/blob/main/.gitignore",
+    "git_url": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/534d16966f69641f13d57155ebe281b770c62b6e",
+    "download_url": "https://raw.githubusercontent.com/wayseer00/wayseer.github.io/main/.gitignore",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/.gitignore?ref=main",
+      "git": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/534d16966f69641f13d57155ebe281b770c62b6e",
+      "html": "https://github.com/wayseer00/wayseer.github.io/blob/main/.gitignore"
+    }
+  },
+  {
+    "name": "CNAME",
+    "path": "CNAME",
+    "sha": "934318cf763b8f6600d474023bb1c470d24c1012",
+    "size": 57,
+    "url": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/CNAME?ref=main",
+    "html_url": "https://github.com/wayseer00/wayseer.github.io/blob/main/CNAME",
+    "git_url": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/934318cf763b8f6600d474023bb1c470d24c1012",
+    "download_url": "https://raw.githubusercontent.com/wayseer00/wayseer.github.io/main/CNAME",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/CNAME?ref=main",
+      "git": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/934318cf763b8f6600d474023bb1c470d24c1012",
+      "html": "https://github.com/wayseer00/wayseer.github.io/blob/main/CNAME"
+    }
+  },
+  {
+    "name": "LICENSE",
+    "path": "LICENSE",
+    "sha": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+    "size": 11357,
+    "url": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/LICENSE?ref=main",
+    "html_url": "https://github.com/wayseer00/wayseer.github.io/blob/main/LICENSE",
+    "git_url": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+    "download_url": "https://raw.githubusercontent.com/wayseer00/wayseer.github.io/main/LICENSE",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/LICENSE?ref=main",
+      "git": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+      "html": "https://github.com/wayseer00/wayseer.github.io/blob/main/LICENSE"
+    }
+  },
+  {
+    "name": "README.md",
+    "path": "README.md",
+    "sha": "2b71ef6f14909edef66baf0e950c8c53a1e5e53d",
+    "size": 286,
+    "url": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/README.md?ref=main",
+    "html_url": "https://github.com/wayseer00/wayseer.github.io/blob/main/README.md",
+    "git_url": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/2b71ef6f14909edef66baf0e950c8c53a1e5e53d",
+    "download_url": "https://raw.githubusercontent.com/wayseer00/wayseer.github.io/main/README.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/README.md?ref=main",
+      "git": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/2b71ef6f14909edef66baf0e950c8c53a1e5e53d",
+      "html": "https://github.com/wayseer00/wayseer.github.io/blob/main/README.md"
+    }
+  },
+  {
+    "name": "index.html",
+    "path": "index.html",
+    "sha": "1270620e06dc9ee25010aba7ae13640b7dd6bb64",
+    "size": 628,
+    "url": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/index.html?ref=main",
+    "html_url": "https://github.com/wayseer00/wayseer.github.io/blob/main/index.html",
+    "git_url": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/1270620e06dc9ee25010aba7ae13640b7dd6bb64",
+    "download_url": "https://raw.githubusercontent.com/wayseer00/wayseer.github.io/main/index.html",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/index.html?ref=main",
+      "git": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/1270620e06dc9ee25010aba7ae13640b7dd6bb64",
+      "html": "https://github.com/wayseer00/wayseer.github.io/blob/main/index.html"
+    }
+  },
+  {
+    "name": "robot.txt",
+    "path": "robot.txt",
+    "sha": "c2a49f4fb82f19ffa9089fcf8630e5a2870d3feb",
+    "size": 23,
+    "url": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/robot.txt?ref=main",
+    "html_url": "https://github.com/wayseer00/wayseer.github.io/blob/main/robot.txt",
+    "git_url": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/c2a49f4fb82f19ffa9089fcf8630e5a2870d3feb",
+    "download_url": "https://raw.githubusercontent.com/wayseer00/wayseer.github.io/main/robot.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/wayseer00/wayseer.github.io/contents/robot.txt?ref=main",
+      "git": "https://api.github.com/repos/wayseer00/wayseer.github.io/git/blobs/c2a49f4fb82f19ffa9089fcf8630e5a2870d3feb",
+      "html": "https://github.com/wayseer00/wayseer.github.io/blob/main/robot.txt"
+    }
+  }
+]

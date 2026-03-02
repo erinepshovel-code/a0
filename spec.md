@@ -13,7 +13,7 @@
 
 a0p (agent zero platform) is a mobile-first autonomous AI agent application. It combines Gemini function-calling with a mathematically rigorous orchestration engine (EDCMBONE), Google infrastructure access (Gmail, Drive), file management with direct phone upload, commercial subscriptions via Stripe, and Replit OAuth authentication.
 
-The agent executes tasks autonomously using up to 11 tools across up to 8 rounds per request, with full cryptographic audit logging and real-time cost tracking.
+The agent executes tasks autonomously using up to 16 tools across up to 8 rounds per request, with full cryptographic audit logging and real-time cost tracking.
 
 ---
 
@@ -368,7 +368,7 @@ Manual kill switch. Sets `emergencyStop = true`, halts heartbeat. Resume availab
 
 The agent uses Gemini 2.5 Flash with native function-calling (not prompt-based tool use). Each user request can trigger up to 8 tool rounds.
 
-### 4.2 Tools (11)
+### 4.2 Tools (16)
 
 | Tool | Args | Description |
 |------|------|-------------|
@@ -381,6 +381,11 @@ The agent uses Gemini 2.5 Flash with native function-calling (not prompt-based t
 | read_gmail | messageId | Read full Gmail message body |
 | send_gmail | to, subject, body | Send email via Gmail |
 | list_drive | folderId, query | List/search Google Drive files |
+| github_list_repos | owner | List GitHub repos for authenticated user or specific owner |
+| github_get_file | owner, repo, path, branch | Read a file from a GitHub repository |
+| github_list_files | owner, repo, path, branch | List files/dirs in a GitHub repo path |
+| github_create_or_update_file | owner, repo, path, content, message, branch | Create or update file (commits directly, triggers Pages rebuild) |
+| github_delete_file | owner, repo, path, message, branch | Delete a file from a GitHub repository |
 | web_search | query | Search the web for information (DuckDuckGo fallback if Brave unavailable) |
 | fetch_url | url | Fetch and read web page content (HTTPS only, SSRF-protected, 8K char limit) |
 

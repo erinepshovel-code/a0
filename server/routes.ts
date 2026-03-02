@@ -8,6 +8,7 @@ import multer from "multer";
 import { storage } from "./storage";
 import { getUncachableGmailClient } from "./gmail";
 import { getUncachableGoogleDriveClient } from "./drive";
+import { getUncachableGitHubClient } from "./github";
 import { getGrokClient } from "./xai";
 import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
@@ -504,6 +505,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       parameters: { type: "object" as const, properties: { folderId: { type: "string" as const, description: "Folder ID (optional, defaults to root)" } }, required: [] as string[] },
     },
     {
+      name: "github_list_repos",
+      description: "List GitHub repositories for the authenticated user or a specific owner",
+      parameters: { type: "object" as const, properties: { owner: { type: "string" as const, description: "Repository owner (username or org). If omitted, lists your own repos." } }, required: [] as string[] },
+    },
+    {
+      name: "github_get_file",
+      description: "Read a file from a GitHub repository",
+      parameters: { type: "object" as const, properties: { owner: { type: "string" as const, description: "Repository owner" }, repo: { type: "string" as const, description: "Repository name" }, path: { type: "string" as const, description: "File path in the repo" }, branch: { type: "string" as const, description: "Branch name (default: main)" } }, required: ["owner", "repo", "path"] },
+    },
+    {
+      name: "github_list_files",
+      description: "List files and directories in a GitHub repository path",
+      parameters: { type: "object" as const, properties: { owner: { type: "string" as const, description: "Repository owner" }, repo: { type: "string" as const, description: "Repository name" }, path: { type: "string" as const, description: "Directory path (default: root)" }, branch: { type: "string" as const, description: "Branch name (default: main)" } }, required: ["owner", "repo"] },
+    },
+    {
+      name: "github_create_or_update_file",
+      description: "Create or update a file in a GitHub repository. This commits the change directly. For GitHub Pages sites, this triggers a rebuild automatically.",
+      parameters: { type: "object" as const, properties: { owner: { type: "string" as const, description: "Repository owner" }, repo: { type: "string" as const, description: "Repository name" }, path: { type: "string" as const, description: "File path in the repo" }, content: { type: "string" as const, description: "File content (text)" }, message: { type: "string" as const, description: "Commit message" }, branch: { type: "string" as const, description: "Branch name (default: main)" } }, required: ["owner", "repo", "path", "content", "message"] },
+    },
+    {
+      name: "github_delete_file",
+      description: "Delete a file from a GitHub repository",
+      parameters: { type: "object" as const, properties: { owner: { type: "string" as const, description: "Repository owner" }, repo: { type: "string" as const, description: "Repository name" }, path: { type: "string" as const, description: "File path to delete" }, message: { type: "string" as const, description: "Commit message" }, branch: { type: "string" as const, description: "Branch name (default: main)" } }, required: ["owner", "repo", "path", "message"] },
+    },
+    {
       name: "web_search",
       description: "Search the web for information. Use for finding AI agent platforms, news, research, protocol docs, communities, current events, or any topic. Returns a summary answer and a list of result URLs.",
       parameters: { type: "object" as const, properties: { query: { type: "string" as const, description: "Search query — be specific and descriptive" } }, required: ["query"] },
@@ -573,6 +599,56 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const res = await drive.files.list({ q: query, fields: "files(id,name,mimeType,modifiedTime)", pageSize: 20 });
           if (!res.data.files?.length) return "No files found.";
           return res.data.files.map(f => `${f.mimeType?.includes("folder") ? "[dir]" : "[file]"} ${f.name} (${f.id})`).join("\n");
+        }
+        case "github_list_repos": {
+          const gh = await getUncachableGitHubClient();
+          if (args.owner) {
+            const { data } = await gh.repos.listForUser({ username: args.owner, per_page: 20, sort: "updated" });
+            return data.map(r => `${r.full_name} ${r.private ? "(private)" : "(public)"} — ${r.description || "no description"} [${r.html_url}]`).join("\n") || "No repositories found.";
+          }
+          const { data } = await gh.repos.listForAuthenticatedUser({ per_page: 20, sort: "updated" });
+          return data.map(r => `${r.full_name} ${r.private ? "(private)" : "(public)"} — ${r.description || "no description"} [${r.html_url}]`).join("\n") || "No repositories found.";
+        }
+        case "github_get_file": {
+          const gh = await getUncachableGitHubClient();
+          const { data } = await gh.repos.getContent({ owner: args.owner, repo: args.repo, path: args.path, ref: args.branch || "main" });
+          if (Array.isArray(data)) return "Error: Path is a directory, not a file. Use github_list_files instead.";
+          if (!("content" in data) || !data.content) return "Error: File has no content (may be too large or binary).";
+          const content = Buffer.from(data.content, "base64").toString("utf-8");
+          return `File: ${data.path} (${data.size} bytes, SHA: ${data.sha})\n\n${content}`.slice(0, 8000);
+        }
+        case "github_list_files": {
+          const gh = await getUncachableGitHubClient();
+          const { data } = await gh.repos.getContent({ owner: args.owner, repo: args.repo, path: args.path || "", ref: args.branch || "main" });
+          if (!Array.isArray(data)) return `${data.path} is a file, not a directory.`;
+          return data.map(item => `${item.type === "dir" ? "[dir]" : "[file]"} ${item.name} (${item.size || 0} bytes)`).join("\n") || "Empty directory.";
+        }
+        case "github_create_or_update_file": {
+          const gh = await getUncachableGitHubClient();
+          let sha: string | undefined;
+          try {
+            const { data: existing } = await gh.repos.getContent({ owner: args.owner, repo: args.repo, path: args.path, ref: args.branch || "main" });
+            if (!Array.isArray(existing)) sha = existing.sha;
+          } catch {}
+          const { data } = await gh.repos.createOrUpdateFileContents({
+            owner: args.owner, repo: args.repo, path: args.path,
+            message: args.message,
+            content: Buffer.from(args.content).toString("base64"),
+            branch: args.branch || "main",
+            ...(sha ? { sha } : {}),
+          });
+          return `${sha ? "Updated" : "Created"} ${args.path} — commit: ${data.commit.sha?.slice(0, 7)} [${data.commit.html_url}]`;
+        }
+        case "github_delete_file": {
+          const gh = await getUncachableGitHubClient();
+          const { data: existing } = await gh.repos.getContent({ owner: args.owner, repo: args.repo, path: args.path, ref: args.branch || "main" });
+          if (Array.isArray(existing)) return "Error: Cannot delete a directory. Delete individual files.";
+          const { data } = await gh.repos.deleteFile({
+            owner: args.owner, repo: args.repo, path: args.path,
+            message: args.message, sha: existing.sha,
+            branch: args.branch || "main",
+          });
+          return `Deleted ${args.path} — commit: ${data.commit.sha?.slice(0, 7)}`;
         }
         case "web_search": {
           const q = (args.query || "").trim();
@@ -740,7 +816,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 ${ctx.contextPrefix}
 
-You are agent zero (a0p) — an autonomous AI agent with tool access. You can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, and fetch web pages.
+You are agent zero (a0p) — an autonomous AI agent with tool access. You can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, and manage GitHub repositories.
 
 IMPORTANT RULES:
 - When a user asks you to DO something, use your tools. Don't just describe what to do.
@@ -751,7 +827,9 @@ IMPORTANT RULES:
 - For complex tasks, break them into steps and execute each one.
 - You have full access to the project filesystem and terminal.
 - You can browse the web using web_search (find pages) and fetch_url (read pages). Use these to research topics, find AI agent platforms, read documentation, explore communities, and stay current on any subject.
-- When browsing, search first to find relevant URLs, then fetch specific pages to read their content in detail.`;
+- When browsing, search first to find relevant URLs, then fetch specific pages to read their content in detail.
+- You can manage GitHub repositories using github_list_repos, github_list_files, github_get_file, github_create_or_update_file, and github_delete_file. Creating or updating files commits directly and triggers GitHub Pages rebuilds automatically.
+- The user's GitHub Pages site is at wayseer00/wayseer.github.io. When they ask about "my website" or "my site", this is the repo to work with.`;
 
       const geminiTools = [{
         functionDeclarations: AGENT_TOOLS.map(t => ({
