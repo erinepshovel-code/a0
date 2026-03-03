@@ -213,3 +213,10 @@ A mobile-first autonomous AI agent app powered by dual AI brains (Grok + Gemini)
 - `XAI_API_KEY` — xAI/Grok API key (user-provided)
 - `AI_INTEGRATIONS_GEMINI_API_KEY` / `AI_INTEGRATIONS_GEMINI_BASE_URL` — Gemini (Replit-managed)
 - `REPLIT_CONNECTORS_HOSTNAME`, `REPL_IDENTITY` — Google OAuth connectors (Replit-managed)
+- `GITHUB_PAT` — GitHub Personal Access Token (user-provided)
+
+## Data Persistence
+
+- All user context (system prompt, context prefix) and BYO API keys are persisted in `system_toggles` table via DB-backed storage (no in-memory state loss on restart)
+- Bandit arms, memory seeds, and heartbeat tasks are initialized on startup if not already present
+- Stripe is bypassed (STRIPE_ENABLED=false) — one-line flip to re-enable

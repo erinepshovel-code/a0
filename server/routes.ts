@@ -108,48 +108,77 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ============ CHAT / AI ============
 
-  const userContextStore: Record<string, { systemPrompt: string; contextPrefix: string }> = {};
-  const userApiKeys: Record<string, Record<string, string>> = {};
+  const DEFAULT_CONTEXT = {
+    systemPrompt: "You are a0p, an elite AI agent. You help with cloud infrastructure, file automation, system tasks, and coding. Be concise, technical, and precise.",
+    contextPrefix: "EDCMBONE operator discernment active. PCNA 53-node topology. PTCA explicit-Euler. SHA-256 hash chain. 9 sentinels preflight/postflight. hmmm invariant enforced.",
+  };
 
-  app.post("/api/context", (req, res) => {
-    const { systemPrompt, contextPrefix } = req.body;
-    const userId = (req as any).user?.claims?.sub || "default";
-    userContextStore[userId] = { systemPrompt, contextPrefix };
-    res.json({ ok: true });
+  const userApiKeysCache: Record<string, Record<string, string>> = {};
+
+  async function loadUserApiKeys(userId: string): Promise<Record<string, string>> {
+    if (userApiKeysCache[userId]) return userApiKeysCache[userId];
+    const toggle = await storage.getSystemToggle(`user_keys_${userId}`);
+    const keys = (toggle?.parameters as Record<string, string>) || {};
+    userApiKeysCache[userId] = keys;
+    return keys;
+  }
+
+  app.post("/api/context", async (req, res) => {
+    try {
+      const { systemPrompt, contextPrefix } = req.body;
+      const userId = (req as any).user?.claims?.sub || "default";
+      await storage.upsertSystemToggle(`user_context_${userId}`, true, { systemPrompt, contextPrefix });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
-  app.get("/api/context", (req, res) => {
-    const userId = (req as any).user?.claims?.sub || "default";
-    res.json(userContextStore[userId] || {
-      systemPrompt: "You are a0p, an elite AI agent. You help with cloud infrastructure, file automation, system tasks, and coding. Be concise, technical, and precise.",
-      contextPrefix: "EDCMBONE operator discernment active. PCNA 53-node topology. PTCA explicit-Euler. SHA-256 hash chain. 9 sentinels preflight/postflight. hmmm invariant enforced.",
-    });
+  app.get("/api/context", async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub || "default";
+      const toggle = await storage.getSystemToggle(`user_context_${userId}`);
+      const ctx = toggle?.parameters as { systemPrompt?: string; contextPrefix?: string } | null;
+      res.json(ctx && ctx.systemPrompt ? ctx : DEFAULT_CONTEXT);
+    } catch (e: any) {
+      res.json(DEFAULT_CONTEXT);
+    }
   });
 
-  app.get("/api/keys", (req, res) => {
-    const userId = (req as any).user?.claims?.sub || "default";
-    const keys = userApiKeys[userId] || {};
-    const masked: Record<string, string> = {};
-    for (const [k, v] of Object.entries(keys)) {
-      masked[k] = v ? `${v.slice(0, 4)}...${v.slice(-4)}` : "";
+  app.get("/api/keys", async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub || "default";
+      const keys = await loadUserApiKeys(userId);
+      const masked: Record<string, string> = {};
+      for (const [k, v] of Object.entries(keys)) {
+        masked[k] = v ? `${v.slice(0, 4)}...${v.slice(-4)}` : "";
+      }
+      res.json(masked);
+    } catch (e: any) {
+      res.json({});
     }
-    res.json(masked);
   });
 
-  app.post("/api/keys", (req, res) => {
-    const userId = (req as any).user?.claims?.sub || "default";
-    const { provider, key } = req.body;
-    const validProviders = ["openai", "anthropic", "mistral", "cohere", "perplexity"];
-    if (!validProviders.includes(provider)) {
-      return res.status(400).json({ error: `Invalid provider. Valid: ${validProviders.join(", ")}` });
+  app.post("/api/keys", async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub || "default";
+      const { provider, key } = req.body;
+      const validProviders = ["openai", "anthropic", "mistral", "cohere", "perplexity"];
+      if (!validProviders.includes(provider)) {
+        return res.status(400).json({ error: `Invalid provider. Valid: ${validProviders.join(", ")}` });
+      }
+      const keys = await loadUserApiKeys(userId);
+      if (key) {
+        keys[provider] = key;
+      } else {
+        delete keys[provider];
+      }
+      userApiKeysCache[userId] = keys;
+      await storage.upsertSystemToggle(`user_keys_${userId}`, true, keys);
+      res.json({ ok: true, provider, set: !!key });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
-    if (!userApiKeys[userId]) userApiKeys[userId] = {};
-    if (key) {
-      userApiKeys[userId][provider] = key;
-    } else {
-      delete userApiKeys[userId][provider];
-    }
-    res.json({ ok: true, provider, set: !!key });
   });
 
   // ============ AI REST ENDPOINTS ============
@@ -201,9 +230,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     },
   };
 
-  app.get("/api/ai/models", (req, res) => {
+  app.get("/api/ai/models", async (req, res) => {
     const userId = (req as any).user?.claims?.sub || "default";
-    const keys = userApiKeys[userId] || {};
+    const keys = await loadUserApiKeys(userId);
     const models = [...BUILTIN_MODELS];
     for (const [provider, cfg] of Object.entries(BYO_MODELS)) {
       const hasKey = !!keys[provider];
@@ -238,11 +267,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   }
 
-  function validateBYOModel(model: string, userId: string) {
+  async function validateBYOModel(model: string, userId: string) {
     const parts = model.split("/");
     if (parts.length !== 2) return { error: `Invalid model format. Use "gemini", "grok", or "provider/model-id"`, status: 400 };
     const [provider, modelId] = parts;
-    const keys = userApiKeys[userId] || {};
+    const keys = await loadUserApiKeys(userId);
     const apiKey = keys[provider];
     if (!apiKey) return { error: `No API key configured for ${provider}. Add one in Console > Context.`, status: 401 };
     const providerCfg = BYO_MODELS[provider];
@@ -530,11 +559,9 @@ INSTRUCTIONS:
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      const ctx = userContextStore[userId] || {
-        systemPrompt: "You are a0p, an elite AI agent.",
-        contextPrefix: "EDCMBONE operator discernment active.",
-      };
-      const sysPrompt = customSystem || `${ctx.systemPrompt}\n\n${ctx.contextPrefix}`;
+      const ctxToggle = await storage.getSystemToggle(`user_context_${userId}`);
+      const ctx = (ctxToggle?.parameters as any) || DEFAULT_CONTEXT;
+      const sysPrompt = customSystem || `${ctx.systemPrompt || DEFAULT_CONTEXT.systemPrompt}\n\n${ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix}`;
 
       if (model === "synthesis") {
         const synthConfig = await getSynthesisConfig();
@@ -637,7 +664,7 @@ INSTRUCTIONS:
         });
       }
 
-      const validated = validateBYOModel(model, userId);
+      const validated = await validateBYOModel(model, userId);
       if (validated.error) return res.status(validated.status!).json({ error: validated.error });
       const { provider, modelId, modelCfg, apiKey: byoKey, providerCfg } = validated;
 
@@ -690,11 +717,9 @@ INSTRUCTIONS:
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      const ctx = userContextStore[userId] || {
-        systemPrompt: "You are a0p, an elite AI agent.",
-        contextPrefix: "EDCMBONE operator discernment active.",
-      };
-      const sysPrompt = customSystem || `${ctx.systemPrompt}\n\n${ctx.contextPrefix}`;
+      const ctxToggle = await storage.getSystemToggle(`user_context_${userId}`);
+      const ctx = (ctxToggle?.parameters as any) || DEFAULT_CONTEXT;
+      const sysPrompt = customSystem || `${ctx.systemPrompt || DEFAULT_CONTEXT.systemPrompt}\n\n${ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix}`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -798,7 +823,7 @@ INSTRUCTIONS:
           }
         }
       } else {
-        const validated = validateBYOModel(model, userId);
+        const validated = await validateBYOModel(model, userId);
         if (validated.error) {
           res.write(`data: ${JSON.stringify({ error: validated.error, done: true })}\n\n`);
           return res.end();
@@ -1361,10 +1386,8 @@ INSTRUCTIONS:
       res.flushHeaders();
 
       const userId = (req as any).user?.claims?.sub || "default";
-      const ctx = userContextStore[userId] || {
-        systemPrompt: "You are a0p, an elite AI agent.",
-        contextPrefix: "EDCMBONE operator discernment active.",
-      };
+      const ctxToggle = await storage.getSystemToggle(`user_context_${userId}`);
+      const ctx = (ctxToggle?.parameters as any) || DEFAULT_CONTEXT;
 
       const modelBandit = await banditSelectWithFallback("model", chatModel);
       const ptcaBandit = await banditSelectWithFallback("ptca_route", "standard");
@@ -1384,9 +1407,9 @@ INSTRUCTIONS:
         pcnaArmId: pcnaBandit?.armId || null,
       });
 
-      const baseAgentSystemPrompt = `${ctx.systemPrompt}
+      const baseAgentSystemPrompt = `${ctx.systemPrompt || DEFAULT_CONTEXT.systemPrompt}
 
-${ctx.contextPrefix}
+${ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix}
 
 You are agent zero (a0p) — an autonomous AI agent with tool access. You can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, and manage GitHub repositories.
 
