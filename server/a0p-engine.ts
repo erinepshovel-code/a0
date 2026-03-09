@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { storage } from "./storage";
-import { logMemory, logSentinel, logInterference, logAttribution, logMaster } from "./logger";
+import { logMemory, logSentinel, logInterference, logAttribution, logMaster, logOmega } from "./logger";
 
 const BUILD_VERSION = "v1.0.2-S9";
 const GENESIS_HASH = createHash("sha256").update("a0p-genesis").digest("hex");
@@ -596,7 +596,12 @@ const SENTINELS = [
   },
   {
     id: "S8", name: "S8_RISK",
-    check: (_req: any, ctx: any) => !ctx.ptcaEnergy || ctx.ptcaEnergy < 100,
+    check: (_req: any, ctx: any) => {
+      if (ctx.ptcaEnergy && ctx.ptcaEnergy >= 100) return false;
+      const omega = getOmegaState();
+      if (omega.totalEnergy * OMEGA_T4_SIZE >= 120) return false;
+      return true;
+    },
     desc: "Risk scoring + escalation, uncertainty, needs-review routing",
   },
   {
@@ -2185,3 +2190,566 @@ export async function recordCorrelation(
 export async function getTopCorrelations(limit = 50): Promise<any[]> {
   return storage.getBanditCorrelations(limit);
 }
+
+const OMEGA_DIM_COUNT = 10;
+const OMEGA_ALPHA_DIFFUSION = 0.4;
+const OMEGA_BETA_DRIFT = 0.3;
+const OMEGA_GAMMA_DAMPING = 0.15;
+const OMEGA_STEPS_PER_EVAL = 10;
+const CROSS_TENSOR_COUPLING = 0.05;
+const OMEGA_SENTINEL_THRESHOLD = 120;
+
+const OMEGA_DIMENSION_LABELS = [
+  "Goal Persistence",
+  "Initiative",
+  "Planning Depth",
+  "Verification",
+  "Scheduling",
+  "Outreach",
+  "Learning",
+  "Resource Awareness",
+  "Exploration",
+  "Delegation",
+] as const;
+
+const OMEGA_DIMENSION_THRESHOLDS = [
+  0.4, 0.5, 0.3, 0.4, 0.3, 0.6, 0.5, 0.3, 0.4, 0.5,
+];
+
+const OMEGA_INIT_WEIGHTS = [
+  0.1, 0.3, 0.2, 0.2, 0.2, 0.1, 0.2, 0.8, 0.3, 0.2,
+];
+
+const OMEGA_DECAY_RATES = [
+  0.02, 0.03, 0.01, 0.02, 0.01, 0.03, 0.02, 0.01, 0.03, 0.02,
+];
+
+type OmegaTensor = Float64Array;
+
+const OMEGA_T4_SIZE = PCNA_N * OMEGA_DIM_COUNT * PTCA_PHASE_COUNT * HEPT_TOTAL_SITES;
+
+function omegaIdx(p: number, d: number, ph: number, h: number): number {
+  return ((p * OMEGA_DIM_COUNT + d) * PTCA_PHASE_COUNT + ph) * HEPT_TOTAL_SITES + h;
+}
+
+function initOmegaTensor(): OmegaTensor {
+  const t = new Float64Array(OMEGA_T4_SIZE);
+  for (let p = 0; p < PCNA_N; p++) {
+    for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+      const dWeight = OMEGA_INIT_WEIGHTS[d];
+      for (let ph = 0; ph < PTCA_PHASE_COUNT; ph++) {
+        for (let k = 0; k < HEPT_RING_SIZE; k++) {
+          t[omegaIdx(p, d, ph, k)] = Math.sin(p * PTCA_DTHETA + (k * 2 * Math.PI) / HEPT_RING_SIZE) * 0.5 * dWeight;
+        }
+        t[omegaIdx(p, d, ph, HEPT_HUB_INDEX)] = Math.cos(p * PTCA_DTHETA) * 0.3 * dWeight;
+      }
+    }
+  }
+  return t;
+}
+
+function omegaHeptagramExchange(t: OmegaTensor): void {
+  const scratch = new Float64Array(HEPT_RING_SIZE);
+  const omegaAlpha = PTCA_ALPHA_COUPLING * 0.7;
+  const omegaBeta = PTCA_BETA_COUPLING * 0.8;
+  const omegaGamma = PTCA_GAMMA_COUPLING * 0.6;
+
+  for (let p = 0; p < PCNA_N; p++) {
+    const dir = (p % 2 === 0) ? 1 : -1;
+    for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+      for (let ph = 0; ph < PTCA_PHASE_COUNT; ph++) {
+        for (let k = 0; k < HEPT_RING_SIZE; k++) {
+          const srcK = ((k - dir) % HEPT_RING_SIZE + HEPT_RING_SIZE) % HEPT_RING_SIZE;
+          scratch[k] = t[omegaIdx(p, d, ph, srcK)];
+        }
+        for (let k = 0; k < HEPT_RING_SIZE; k++) {
+          t[omegaIdx(p, d, ph, k)] = scratch[k];
+        }
+      }
+    }
+  }
+
+  for (let p = 0; p < PCNA_N; p++) {
+    for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+      for (let ph = 0; ph < PTCA_PHASE_COUNT; ph++) {
+        let ringSum = 0;
+        for (let k = 0; k < HEPT_RING_SIZE; k++) ringSum += t[omegaIdx(p, d, ph, k)];
+        const ringMean = ringSum / HEPT_RING_SIZE;
+        const hubIdx = omegaIdx(p, d, ph, HEPT_HUB_INDEX);
+        t[hubIdx] += omegaBeta * ringMean;
+        for (let k = 0; k < HEPT_RING_SIZE; k++) {
+          t[omegaIdx(p, d, ph, k)] += omegaGamma * t[hubIdx];
+        }
+      }
+    }
+  }
+
+  for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+    for (let ph = 0; ph < PTCA_PHASE_COUNT; ph++) {
+      let hubSum = 0;
+      for (let p = 0; p < PCNA_N; p++) hubSum += t[omegaIdx(p, d, ph, HEPT_HUB_INDEX)];
+      const globalHub = hubSum / PCNA_N;
+      for (let p = 0; p < PCNA_N; p++) {
+        const idx = omegaIdx(p, d, ph, HEPT_HUB_INDEX);
+        t[idx] = (1 - omegaAlpha) * t[idx] + omegaAlpha * globalHub;
+      }
+    }
+  }
+}
+
+function computeOmegaEnergy(t: OmegaTensor): { total: number; dimensionEnergies: number[]; phaseEnergies: number[] } {
+  let total = 0;
+  const dimensionEnergies = new Array(OMEGA_DIM_COUNT).fill(0);
+  const phaseEnergies = new Array(PTCA_PHASE_COUNT).fill(0);
+
+  for (let i = 0; i < OMEGA_T4_SIZE; i++) total += t[i] * t[i];
+
+  for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+    let dimSum = 0;
+    for (let p = 0; p < PCNA_N; p++) {
+      for (let ph = 0; ph < PTCA_PHASE_COUNT; ph++) {
+        for (let h = 0; h < HEPT_TOTAL_SITES; h++) {
+          const v = t[omegaIdx(p, d, ph, h)];
+          dimSum += v * v;
+        }
+      }
+    }
+    dimensionEnergies[d] = dimSum / (PCNA_N * PTCA_PHASE_COUNT * HEPT_TOTAL_SITES);
+  }
+
+  for (let ph = 0; ph < PTCA_PHASE_COUNT; ph++) {
+    let phSum = 0;
+    for (let p = 0; p < PCNA_N; p++) {
+      for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+        for (let h = 0; h < HEPT_TOTAL_SITES; h++) {
+          const v = t[omegaIdx(p, d, ph, h)];
+          phSum += v * v;
+        }
+      }
+    }
+    phaseEnergies[ph] = phSum / (PCNA_N * OMEGA_DIM_COUNT * HEPT_TOTAL_SITES);
+  }
+
+  total /= OMEGA_T4_SIZE;
+  return { total, dimensionEnergies, phaseEnergies };
+}
+
+export type OmegaAutonomyMode = "active" | "passive" | "economy" | "research";
+
+const OMEGA_MODE_BIASES: Record<OmegaAutonomyMode, number[]> = {
+  active:   [0.0, 0.3, 0.1, 0.1, 0.1, 0.2, 0.1, 0.0, 0.3, 0.1],
+  passive:  [0.0, -0.3, 0.0, 0.1, 0.0, -0.2, 0.0, 0.2, -0.2, 0.0],
+  economy:  [0.0, -0.1, -0.1, 0.0, 0.0, -0.1, 0.0, 0.5, -0.2, -0.1],
+  research: [0.0, 0.1, 0.2, 0.2, 0.1, 0.1, 0.4, 0.0, 0.4, 0.2],
+};
+
+export interface OmegaGoal {
+  id: string;
+  description: string;
+  priority: number;
+  status: "active" | "completed" | "removed";
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface OmegaState {
+  dimensionEnergies: number[];
+  dimensionBiases: number[];
+  phaseEnergies: number[];
+  totalEnergy: number;
+  mode: OmegaAutonomyMode;
+  goals: OmegaGoal[];
+  thresholdsCrossed: boolean[];
+  energyHistory: number[];
+  lastSolveTs: number;
+}
+
+let omegaTensor: OmegaTensor | null = null;
+let omegaState: OmegaState = {
+  dimensionEnergies: new Array(OMEGA_DIM_COUNT).fill(0),
+  dimensionBiases: new Array(OMEGA_DIM_COUNT).fill(0),
+  phaseEnergies: new Array(PTCA_PHASE_COUNT).fill(0),
+  totalEnergy: 0,
+  mode: "active",
+  goals: [],
+  thresholdsCrossed: new Array(OMEGA_DIM_COUNT).fill(false),
+  energyHistory: [],
+  lastSolveTs: 0,
+};
+
+export async function initOmega(): Promise<void> {
+  try {
+    const toggle = await storage.getSystemToggle("omega_tensor_state");
+    if (toggle?.parameters) {
+      const saved = toggle.parameters as any;
+      omegaState = {
+        dimensionEnergies: saved.dimensionEnergies || new Array(OMEGA_DIM_COUNT).fill(0),
+        dimensionBiases: saved.dimensionBiases || new Array(OMEGA_DIM_COUNT).fill(0),
+        phaseEnergies: saved.phaseEnergies || new Array(PTCA_PHASE_COUNT).fill(0),
+        totalEnergy: saved.totalEnergy || 0,
+        mode: saved.mode || "active",
+        goals: saved.goals || [],
+        thresholdsCrossed: saved.thresholdsCrossed || new Array(OMEGA_DIM_COUNT).fill(false),
+        energyHistory: saved.energyHistory || [],
+        lastSolveTs: saved.lastSolveTs || 0,
+      };
+      await logOmega("state_restored", { totalEnergy: omegaState.totalEnergy, fromTimestamp: omegaState.lastSolveTs });
+    }
+  } catch {}
+
+  try {
+    const goalsToggle = await storage.getSystemToggle("omega_goals");
+    if (goalsToggle?.parameters) {
+      const goalsData = goalsToggle.parameters as any;
+      if (Array.isArray(goalsData.goals)) {
+        omegaState.goals = goalsData.goals;
+      }
+    }
+  } catch {}
+
+  omegaTensor = initOmegaTensor();
+  await logOmega("init", {
+    dimensions: OMEGA_DIMENSION_LABELS,
+    totalElements: OMEGA_T4_SIZE,
+    axes: { prime_node: PCNA_N, dimension: OMEGA_DIM_COUNT, phase: PTCA_PHASE_COUNT, hept: HEPT_TOTAL_SITES },
+    mode: omegaState.mode,
+    goalCount: omegaState.goals.filter(g => g.status === "active").length,
+  });
+}
+
+export function omegaSolve(): OmegaState {
+  if (!omegaTensor) omegaTensor = initOmegaTensor();
+
+  const prevEnergies = [...omegaState.dimensionEnergies];
+  const prevCrossed = [...omegaState.thresholdsCrossed];
+
+  let linearState = Array(PCNA_N).fill(0).map((_, i) => Math.sin(i * PTCA_DTHETA));
+
+  for (let step = 0; step < OMEGA_STEPS_PER_EVAL; step++) {
+    const newState = [...linearState];
+    for (let i = 0; i < PCNA_N; i++) {
+      let neighborSum = 0;
+      let count = 0;
+      for (let j = 0; j < PCNA_N; j++) {
+        if (PCNA_ADJ[i][j]) { neighborSum += linearState[j]; count++; }
+      }
+      const avg = count > 0 ? neighborSum / count : 0;
+      newState[i] = linearState[i] + PTCA_DT * (
+        OMEGA_ALPHA_DIFFUSION * (avg - linearState[i]) +
+        OMEGA_BETA_DRIFT * Math.sin(i * PTCA_DTHETA) -
+        OMEGA_GAMMA_DAMPING * linearState[i]
+      );
+    }
+    linearState = newState;
+    omegaHeptagramExchange(omegaTensor);
+  }
+
+  const energy = computeOmegaEnergy(omegaTensor);
+
+  const activeGoals = omegaState.goals.filter(g => g.status === "active").length;
+  const modeBiases = OMEGA_MODE_BIASES[omegaState.mode];
+
+  for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+    let adjusted = energy.dimensionEnergies[d];
+    adjusted += omegaState.dimensionBiases[d] * 0.1;
+    adjusted += modeBiases[d] * 0.05;
+
+    if (d === 0) {
+      adjusted += activeGoals * 0.02;
+      if (activeGoals === 0) adjusted *= (1 - OMEGA_DECAY_RATES[d] * 5);
+    }
+
+    adjusted *= (1 - OMEGA_DECAY_RATES[d]);
+    energy.dimensionEnergies[d] = Math.max(0, Math.min(1, adjusted));
+  }
+
+  const thresholdsCrossed = new Array(OMEGA_DIM_COUNT).fill(false);
+  for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+    const nowAbove = energy.dimensionEnergies[d] >= OMEGA_DIMENSION_THRESHOLDS[d];
+    const wasAbove = prevCrossed[d];
+    thresholdsCrossed[d] = nowAbove;
+
+    if (nowAbove !== wasAbove) {
+      logOmega("threshold_crossed", {
+        dimension: d,
+        label: OMEGA_DIMENSION_LABELS[d],
+        energy: energy.dimensionEnergies[d],
+        threshold: OMEGA_DIMENSION_THRESHOLDS[d],
+        direction: nowAbove ? "above" : "below",
+      }).catch(() => {});
+    }
+  }
+
+  omegaState.dimensionEnergies = energy.dimensionEnergies;
+  omegaState.phaseEnergies = energy.phaseEnergies;
+  omegaState.totalEnergy = energy.total;
+  omegaState.thresholdsCrossed = thresholdsCrossed;
+  omegaState.lastSolveTs = Date.now();
+
+  omegaState.energyHistory.push(energy.total);
+  if (omegaState.energyHistory.length > 20) {
+    omegaState.energyHistory = omegaState.energyHistory.slice(-20);
+  }
+
+  logOmega("solve_step", {
+    dimensionEnergies: energy.dimensionEnergies.map((e, i) => ({ dim: OMEGA_DIMENSION_LABELS[i], energy: parseFloat(e.toFixed(4)) })),
+    totalEnergy: parseFloat(energy.total.toFixed(6)),
+    mode: omegaState.mode,
+    activeGoals,
+  }).catch(() => {});
+
+  return { ...omegaState };
+}
+
+export function applyCrossTensorCoupling(ptcaEnergy: number): { omegaEnergyFed: number; ptcaAdjustment: number; sentinelGateResult: string } {
+  const omegaTotal = omegaState.totalEnergy;
+  const ptcaAdjustment = omegaTotal * CROSS_TENSOR_COUPLING;
+
+  const ptcaFeedback = ptcaEnergy * CROSS_TENSOR_COUPLING * 0.1;
+  for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+    omegaState.dimensionEnergies[d] = Math.min(1, omegaState.dimensionEnergies[d] + ptcaFeedback / OMEGA_DIM_COUNT);
+  }
+  omegaState.totalEnergy = omegaState.dimensionEnergies.reduce((s, e) => s + e, 0) / OMEGA_DIM_COUNT;
+
+  let sentinelGateResult = "pass";
+  const normalizedOmegaEnergy = omegaTotal * OMEGA_T4_SIZE;
+  const OMEGA_SENTINEL_GATE = 120;
+  if (normalizedOmegaEnergy >= OMEGA_SENTINEL_GATE) {
+    sentinelGateResult = "fail";
+    for (let d = 0; d < OMEGA_DIM_COUNT; d++) {
+      omegaState.dimensionEnergies[d] *= 0.5;
+    }
+    logOmega("sentinel_gate", { omegaEnergy: omegaTotal, normalizedEnergy: normalizedOmegaEnergy, threshold: OMEGA_SENTINEL_GATE, result: "fail", action: "energy_halved" }).catch(() => {});
+  } else {
+    logOmega("sentinel_gate", { omegaEnergy: omegaTotal, normalizedEnergy: normalizedOmegaEnergy, threshold: OMEGA_SENTINEL_GATE, result: "pass" }).catch(() => {});
+  }
+
+  logOmega("cross_coupling", {
+    direction: "omega_to_ptca",
+    omegaEnergy: omegaTotal,
+    ptcaEnergyBefore: ptcaEnergy,
+    ptcaEnergyAfter: ptcaEnergy + ptcaAdjustment,
+    couplingCoefficient: CROSS_TENSOR_COUPLING,
+  }).catch(() => {});
+
+  return { omegaEnergyFed: omegaTotal, ptcaAdjustment, sentinelGateResult };
+}
+
+export async function applyMemoryBridge(): Promise<void> {
+  const bridges = [
+    { dim: 0, seed: 8, label: "Goal↔Seed8" },
+    { dim: 8, seed: 7, label: "Exploration↔Seed7" },
+    { dim: 6, seed: 10, label: "Learning↔Seed10" },
+  ];
+
+  try {
+    const allSeeds = await storage.getMemorySeeds();
+
+    for (const bridge of bridges) {
+      const dimEnergy = omegaState.dimensionEnergies[bridge.dim] || 0;
+      const energyDelta = dimEnergy * 0.02;
+
+      const seed = allSeeds.find(s => s.seedIndex === bridge.seed);
+      if (seed) {
+        const currentWeight = seed.weight ?? 1.0;
+        const newWeight = Math.max(0.1, Math.min(2.0, currentWeight + energyDelta * 0.5));
+        if (Math.abs(newWeight - currentWeight) > 0.001) {
+          await storage.updateMemorySeed(seed.seedIndex, { weight: newWeight });
+        }
+
+        const seedActivation = (currentWeight - 1.0) * 0.05;
+        if (seedActivation > 0.01) {
+          omegaState.dimensionEnergies[bridge.dim] = Math.min(1, omegaState.dimensionEnergies[bridge.dim] + seedActivation);
+        }
+      }
+
+      logOmega("cross_coupling", {
+        direction: "memory_bridge",
+        seed: bridge.seed,
+        dimension: bridge.dim,
+        dimensionLabel: OMEGA_DIMENSION_LABELS[bridge.dim],
+        seedLabel: bridge.label,
+        energyDelta: parseFloat(energyDelta.toFixed(6)),
+        seedWeight: seed ? seed.weight : null,
+      }).catch(() => {});
+    }
+  } catch (e: any) {
+    logOmega("cross_coupling", { direction: "memory_bridge", error: e.message }).catch(() => {});
+  }
+}
+
+export function applyBanditCoupling(currentEpsilon: number): { newEpsilon: number } {
+  const a9Energy = omegaState.dimensionEnergies[8] || 0;
+  const epsilonDelta = (a9Energy - 0.5) * 0.1;
+  const newEpsilon = Math.max(0.05, Math.min(0.8, currentEpsilon + epsilonDelta));
+
+  logOmega("cross_coupling", {
+    direction: "bandit",
+    epsilonBefore: currentEpsilon,
+    epsilonAfter: parseFloat(newEpsilon.toFixed(4)),
+    a9Energy: parseFloat(a9Energy.toFixed(4)),
+  }).catch(() => {});
+
+  return { newEpsilon };
+}
+
+export function applyEdcmFeedback(driftScore: number): void {
+  const before = omegaState.dimensionEnergies[3] || 0;
+  const boost = driftScore * 0.1;
+  omegaState.dimensionEnergies[3] = Math.min(1, before + boost);
+
+  logOmega("cross_coupling", {
+    direction: "edcm_to_verification",
+    driftScore: parseFloat(driftScore.toFixed(4)),
+    a4EnergyBefore: parseFloat(before.toFixed(4)),
+    a4EnergyAfter: parseFloat(omegaState.dimensionEnergies[3].toFixed(4)),
+  }).catch(() => {});
+}
+
+export async function persistOmegaState(): Promise<void> {
+  try {
+    await storage.upsertSystemToggle("omega_tensor_state", true, {
+      dimensionEnergies: omegaState.dimensionEnergies,
+      dimensionBiases: omegaState.dimensionBiases,
+      phaseEnergies: omegaState.phaseEnergies,
+      totalEnergy: omegaState.totalEnergy,
+      mode: omegaState.mode,
+      thresholdsCrossed: omegaState.thresholdsCrossed,
+      energyHistory: omegaState.energyHistory,
+      lastSolveTs: omegaState.lastSolveTs,
+    });
+    await storage.upsertSystemToggle("omega_goals", true, {
+      goals: omegaState.goals,
+    });
+    await logOmega("state_persisted", {
+      totalEnergy: parseFloat(omegaState.totalEnergy.toFixed(6)),
+      dimensionEnergies: omegaState.dimensionEnergies.map(e => parseFloat(e.toFixed(4))),
+    });
+  } catch (e) {
+    console.error("[omega] persist error:", e);
+  }
+}
+
+export function getOmegaState(): OmegaState {
+  return { ...omegaState, goals: [...omegaState.goals] };
+}
+
+export function setOmegaMode(mode: OmegaAutonomyMode): OmegaState {
+  const oldMode = omegaState.mode;
+  omegaState.mode = mode;
+  logOmega("mode_switch", { source: "api", oldMode, newMode: mode }).catch(() => {});
+  return { ...omegaState };
+}
+
+export function boostOmegaDimension(dimension: number, amount: number, source: string = "api"): OmegaState {
+  if (dimension < 0 || dimension >= OMEGA_DIM_COUNT) return { ...omegaState };
+  const before = omegaState.dimensionEnergies[dimension];
+  omegaState.dimensionEnergies[dimension] = Math.max(0, Math.min(1, before + amount * 0.1));
+  logOmega("dimension_boost", {
+    source,
+    dimension,
+    label: OMEGA_DIMENSION_LABELS[dimension],
+    amount,
+    before: parseFloat(before.toFixed(4)),
+    after: parseFloat(omegaState.dimensionEnergies[dimension].toFixed(4)),
+  }).catch(() => {});
+  return { ...omegaState };
+}
+
+export function setOmegaDimensionBias(dimension: number, bias: number, source: string = "manual"): OmegaState {
+  if (dimension < 0 || dimension >= OMEGA_DIM_COUNT) return { ...omegaState };
+  const oldBias = omegaState.dimensionBiases[dimension];
+  omegaState.dimensionBiases[dimension] = Math.max(-1, Math.min(1, bias));
+  logOmega("dimension_boost", {
+    source,
+    dimension,
+    label: OMEGA_DIMENSION_LABELS[dimension],
+    oldBias: parseFloat(oldBias.toFixed(4)),
+    newBias: parseFloat(omegaState.dimensionBiases[dimension].toFixed(4)),
+  }).catch(() => {});
+  return { ...omegaState };
+}
+
+export function addOmegaGoal(description: string, priority: number, source: string = "api"): OmegaGoal {
+  const goal: OmegaGoal = {
+    id: `goal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    description,
+    priority: Math.max(1, Math.min(10, priority)),
+    status: "active",
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+  };
+  omegaState.goals.push(goal);
+
+  omegaState.dimensionEnergies[0] = Math.min(1, (omegaState.dimensionEnergies[0] || 0) + 0.1);
+
+  logOmega("goal_added", {
+    source,
+    goalId: goal.id,
+    description: goal.description,
+    priority: goal.priority,
+    goalsRemaining: omegaState.goals.filter(g => g.status === "active").length,
+  }).catch(() => {});
+
+  return goal;
+}
+
+export function completeOmegaGoal(goalId: string, source: string = "api"): boolean {
+  const goal = omegaState.goals.find(g => g.id === goalId && g.status === "active");
+  if (!goal) return false;
+
+  goal.status = "completed";
+  goal.completedAt = new Date().toISOString();
+
+  const remaining = omegaState.goals.filter(g => g.status === "active").length;
+  if (remaining === 0) {
+    omegaState.dimensionEnergies[0] *= 0.5;
+  }
+
+  logOmega("goal_completed", {
+    source,
+    goalId: goal.id,
+    description: goal.description,
+    goalsRemaining: remaining,
+  }).catch(() => {});
+
+  return true;
+}
+
+export function removeOmegaGoal(goalId: string, source: string = "api"): boolean {
+  const goal = omegaState.goals.find(g => g.id === goalId);
+  if (!goal) return false;
+
+  goal.status = "removed";
+
+  logOmega("goal_removed", {
+    source,
+    goalId: goal.id,
+    description: goal.description,
+    goalsRemaining: omegaState.goals.filter(g => g.status === "active").length,
+  }).catch(() => {});
+
+  return true;
+}
+
+export function getOmegaDimensionLabels(): readonly string[] {
+  return OMEGA_DIMENSION_LABELS;
+}
+
+export function getOmegaDimensionThresholds(): number[] {
+  return [...OMEGA_DIMENSION_THRESHOLDS];
+}
+
+export const OMEGA_CONFIG = {
+  dimensions: OMEGA_DIM_COUNT,
+  labels: OMEGA_DIMENSION_LABELS,
+  thresholds: OMEGA_DIMENSION_THRESHOLDS,
+  initWeights: OMEGA_INIT_WEIGHTS,
+  decayRates: OMEGA_DECAY_RATES,
+  diffusion: { alpha: OMEGA_ALPHA_DIFFUSION, beta: OMEGA_BETA_DRIFT, gamma: OMEGA_GAMMA_DAMPING },
+  crossCoupling: CROSS_TENSOR_COUPLING,
+  sentinelThreshold: OMEGA_SENTINEL_THRESHOLD,
+  tensorAxes: { prime_node: PCNA_N, dimension: OMEGA_DIM_COUNT, phase: PTCA_PHASE_COUNT, hept: HEPT_TOTAL_SITES },
+  totalElements: OMEGA_T4_SIZE,
+  modes: Object.keys(OMEGA_MODE_BIASES),
+};

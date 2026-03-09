@@ -29,6 +29,12 @@ import {
   initializeMemorySeeds, getMemoryRequestCounter,
   banditSelect, banditReward, banditGetStats, banditToggleArm, initializeBanditArms,
   recordCorrelation, getTopCorrelations,
+  initOmega, omegaSolve, applyCrossTensorCoupling, applyMemoryBridge,
+  applyBanditCoupling, applyEdcmFeedback, persistOmegaState,
+  getOmegaState, setOmegaMode, boostOmegaDimension, setOmegaDimensionBias,
+  addOmegaGoal, completeOmegaGoal, removeOmegaGoal,
+  getOmegaDimensionLabels, getOmegaDimensionThresholds, OMEGA_CONFIG,
+  type OmegaAutonomyMode,
   type A0Request,
   type MemoryAttribution,
 } from "./a0p-engine";
@@ -1152,6 +1158,36 @@ INSTRUCTIONS:
       parameters: { type: "object" as const, properties: {}, required: [] as string[] },
     },
     {
+      name: "set_goal",
+      description: "Add a goal to the PTCA-Ω autonomy goal stack. Goals drive the Goal Persistence dimension energy.",
+      parameters: { type: "object" as const, properties: { description: { type: "string" as const, description: "Goal description" }, priority: { type: "number" as const, description: "Priority 1-10" } }, required: ["description", "priority"] },
+    },
+    {
+      name: "complete_goal",
+      description: "Mark a PTCA-Ω goal as completed",
+      parameters: { type: "object" as const, properties: { goalId: { type: "string" as const, description: "Goal ID to complete" } }, required: ["goalId"] },
+    },
+    {
+      name: "list_goals",
+      description: "List current PTCA-Ω autonomy goals",
+      parameters: { type: "object" as const, properties: {}, required: [] as string[] },
+    },
+    {
+      name: "get_omega_state",
+      description: "Get the current PTCA-Ω autonomy tensor state: all 10 dimension energies, mode, goals, thresholds",
+      parameters: { type: "object" as const, properties: {}, required: [] as string[] },
+    },
+    {
+      name: "boost_dimension",
+      description: "Temporarily boost a PTCA-Ω autonomy dimension energy. Dimensions: 0=Goal, 1=Initiative, 2=Planning, 3=Verification, 4=Scheduling, 5=Outreach, 6=Learning, 7=Resource, 8=Exploration, 9=Delegation",
+      parameters: { type: "object" as const, properties: { dimension: { type: "number" as const, description: "Dimension index 0-9" }, amount: { type: "number" as const, description: "Boost amount (1-10 scale)" } }, required: ["dimension", "amount"] },
+    },
+    {
+      name: "set_autonomy_mode",
+      description: "Set PTCA-Ω autonomy mode: active (high initiative/exploration), passive (respond only), economy (budget-conscious), research (high exploration+learning)",
+      parameters: { type: "object" as const, properties: { mode: { type: "string" as const, description: "Mode: active, passive, economy, or research" } }, required: ["mode"] },
+    },
+    {
       name: "web_search",
       description: "Search the web for information. Use for finding AI agent platforms, news, research, protocol docs, communities, current events, or any topic. Returns a summary answer and a list of result URLs.",
       parameters: { type: "object" as const, properties: { query: { type: "string" as const, description: "Search query — be specific and descriptive" } }, required: ["query"] },
@@ -1435,6 +1471,44 @@ INSTRUCTIONS:
         case "get_synthesis_config": {
           const activePreset = await getActiveBrainPreset();
           return JSON.stringify(activePreset, null, 2);
+        }
+        case "set_goal": {
+          const goal = addOmegaGoal(args.description || "", args.priority || 5, "agent_tool");
+          await persistOmegaState();
+          return `Goal added: ${goal.id} — "${goal.description}" (priority: ${goal.priority}). Active goals: ${getOmegaState().goals.filter(g => g.status === "active").length}`;
+        }
+        case "complete_goal": {
+          const ok = completeOmegaGoal(args.goalId || "", "agent_tool");
+          if (!ok) return `Error: Goal not found or already completed: ${args.goalId}`;
+          await persistOmegaState();
+          return `Goal completed: ${args.goalId}. Active goals: ${getOmegaState().goals.filter(g => g.status === "active").length}`;
+        }
+        case "list_goals": {
+          const state = getOmegaState();
+          if (state.goals.length === 0) return "No goals set.";
+          return state.goals.map(g => `[${g.status}] ${g.id}: ${g.description} (priority: ${g.priority})`).join("\n");
+        }
+        case "get_omega_state": {
+          const state = getOmegaState();
+          const labels = getOmegaDimensionLabels();
+          const thresholds = getOmegaDimensionThresholds();
+          const dims = state.dimensionEnergies.map((e, i) => `  A${i+1} ${labels[i]}: ${e.toFixed(4)} (threshold: ${thresholds[i]}) ${state.thresholdsCrossed[i] ? "▲ACTIVE" : ""}`);
+          return `PTCA-Ω State:\nMode: ${state.mode}\nTotal Energy: ${state.totalEnergy.toFixed(6)}\nDimensions:\n${dims.join("\n")}\nActive Goals: ${state.goals.filter(g => g.status === "active").length}`;
+        }
+        case "boost_dimension": {
+          const dim = args.dimension;
+          if (dim === undefined || dim < 0 || dim > 9) return "Error: dimension must be 0-9";
+          boostOmegaDimension(dim, args.amount || 1, "agent_tool");
+          await persistOmegaState();
+          const labels = getOmegaDimensionLabels();
+          return `Dimension A${dim+1} (${labels[dim]}) boosted by ${args.amount}. New energy: ${getOmegaState().dimensionEnergies[dim].toFixed(4)}`;
+        }
+        case "set_autonomy_mode": {
+          const mode = (args.mode || "").toLowerCase();
+          if (!["active", "passive", "economy", "research"].includes(mode)) return `Error: mode must be one of: active, passive, economy, research`;
+          setOmegaMode(mode as OmegaAutonomyMode);
+          await persistOmegaState();
+          return `Autonomy mode set to: ${mode}`;
         }
         case "web_search": {
           const q = (args.query || "").trim();
@@ -2754,6 +2828,12 @@ IMPORTANT RULES:
     console.error("[a0p:memory] Failed to initialize memory seeds:", err);
   });
 
+  initOmega().then(() => {
+    console.log("[a0p:omega] PTCA-Ω tensor initialized");
+  }).catch((err) => {
+    console.error("[a0p:omega] Failed to initialize PTCA-Ω:", err);
+  });
+
   // ============ HEARTBEAT SCHEDULER ============
 
   initializeHeartbeatTasks().then(() => {
@@ -2908,7 +2988,7 @@ IMPORTANT RULES:
 
   // ============ APPEND-ONLY LOGS ============
 
-  const VALID_STREAMS: LogStream[] = ["master", "edcm", "memory", "sentinel", "interference", "attribution"];
+  const VALID_STREAMS: LogStream[] = ["master", "edcm", "memory", "sentinel", "interference", "attribution", "omega"];
 
   app.get("/api/logs/stats", async (_req, res) => {
     try {
@@ -3955,6 +4035,113 @@ IMPORTANT RULES:
       if (!res.headersSent) {
         res.status(500).json({ error: e.message });
       }
+    }
+  });
+
+  // ============ OMEGA PTCA-Ω ENDPOINTS ============
+
+  app.get("/api/omega/state", async (_req, res) => {
+    try {
+      const state = getOmegaState();
+      const labels = getOmegaDimensionLabels();
+      const thresholds = getOmegaDimensionThresholds();
+      res.json({
+        ...state,
+        dimensionLabels: labels,
+        dimensionThresholds: thresholds,
+        config: OMEGA_CONFIG,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/omega/bias", async (req, res) => {
+    try {
+      const { dimension, bias } = req.body;
+      if (typeof dimension !== "number" || dimension < 0 || dimension >= 10) {
+        return res.status(400).json({ error: "dimension must be 0-9" });
+      }
+      if (typeof bias !== "number") {
+        return res.status(400).json({ error: "bias must be a number" });
+      }
+      const state = setOmegaDimensionBias(dimension, bias, "manual");
+      await persistOmegaState();
+      res.json({ ok: true, state });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/omega/mode", async (req, res) => {
+    try {
+      const { mode } = req.body;
+      if (!["active", "passive", "economy", "research"].includes(mode)) {
+        return res.status(400).json({ error: "mode must be: active, passive, economy, or research" });
+      }
+      const state = setOmegaMode(mode as OmegaAutonomyMode);
+      await persistOmegaState();
+      res.json({ ok: true, state });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/omega/goal", async (req, res) => {
+    try {
+      const { description, priority } = req.body;
+      if (!description) return res.status(400).json({ error: "description required" });
+      const goal = addOmegaGoal(description, priority || 5, "console");
+      await persistOmegaState();
+      res.json({ ok: true, goal });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/omega/goal/:goalId/complete", async (req, res) => {
+    try {
+      const ok = completeOmegaGoal(req.params.goalId, "console");
+      if (!ok) return res.status(404).json({ error: "Goal not found or already completed" });
+      await persistOmegaState();
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/omega/goal/:goalId/remove", async (req, res) => {
+    try {
+      const ok = removeOmegaGoal(req.params.goalId, "console");
+      if (!ok) return res.status(404).json({ error: "Goal not found" });
+      await persistOmegaState();
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/omega/boost", async (req, res) => {
+    try {
+      const { dimension, amount } = req.body;
+      if (typeof dimension !== "number" || dimension < 0 || dimension >= 10) {
+        return res.status(400).json({ error: "dimension must be 0-9" });
+      }
+      const state = boostOmegaDimension(dimension, amount || 1, "console");
+      await persistOmegaState();
+      res.json({ ok: true, state });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/omega/solve", async (_req, res) => {
+    try {
+      const state = omegaSolve();
+      await persistOmegaState();
+      res.json({ ok: true, state });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 
