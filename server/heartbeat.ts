@@ -1,6 +1,6 @@
 import { storage } from "./storage";
-import { logMaster, logTranscript, logEdcm } from "./logger";
-import { computeEdcmMetrics, updateSemanticMemory } from "./a0p-engine";
+import { logMaster, logTranscript, logEdcm, logOmega } from "./logger";
+import { computeEdcmMetrics, updateSemanticMemory, omegaSolve, applyCrossTensorCoupling, applyMemoryBridge, persistOmegaState, getOmegaState } from "./a0p-engine";
 import { getUncachableGitHubClient } from "./github";
 import { createHash } from "crypto";
 import type { HeartbeatTask } from "@shared/schema";
@@ -112,6 +112,67 @@ function weightedSelect(tasks: HeartbeatTask[]): HeartbeatTask | null {
     if (roll <= 0) return task;
   }
   return eligible[eligible.length - 1];
+}
+
+interface OmegaStateCompact {
+  dimensionEnergies: number[];
+  mode: string;
+  goals: Array<{ status: string }>;
+}
+
+function omegaWeightedSelect(tasks: HeartbeatTask[], omega: OmegaStateCompact): HeartbeatTask | null {
+  const eligible = tasks.filter((t) => {
+    if (!t.enabled) return false;
+    if (t.lastRun) {
+      const elapsed = (Date.now() - new Date(t.lastRun).getTime()) / 1000;
+      if (elapsed < t.intervalSeconds) return false;
+    }
+    return true;
+  });
+
+  if (eligible.length === 0) return null;
+
+  const a9Exploration = omega.dimensionEnergies[8] || 0;
+  const a1Goal = omega.dimensionEnergies[0] || 0;
+  const a7Learning = omega.dimensionEnergies[6] || 0;
+
+  const adjustedWeights = eligible.map(t => {
+    let w = t.weight;
+
+    if (t.taskType === "github_search" || t.taskType === "ai_social_search") {
+      w *= (1 + a9Exploration * 0.5);
+    }
+
+    if (t.taskType === "transcript_search") {
+      w *= (1 + a7Learning * 0.3);
+    }
+
+    if (a1Goal > 0.4) {
+      w *= (1 + a1Goal * 0.2);
+    }
+
+    if (omega.mode === "economy") {
+      if (t.taskType === "github_search" || t.taskType === "ai_social_search") {
+        w *= 0.5;
+      }
+    } else if (omega.mode === "research") {
+      if (t.taskType === "github_search" || t.taskType === "ai_social_search") {
+        w *= 1.5;
+      }
+    } else if (omega.mode === "passive") {
+      w *= 0.7;
+    }
+
+    return { task: t, weight: Math.max(0.01, w) };
+  });
+
+  const totalWeight = adjustedWeights.reduce((sum, tw) => sum + tw.weight, 0);
+  let roll = Math.random() * totalWeight;
+  for (const tw of adjustedWeights) {
+    roll -= tw.weight;
+    if (roll <= 0) return tw.task;
+  }
+  return adjustedWeights[adjustedWeights.length - 1].task;
 }
 
 async function executeTask(task: HeartbeatTask): Promise<{ result: string; relevance: number; data: any }> {
@@ -939,11 +1000,38 @@ async function tick(): Promise<void> {
     const enabled = await isHeartbeatEnabled();
     if (!enabled) return;
 
-    const tasks = await storage.getHeartbeatTasks();
-    if (tasks.length === 0) return;
+    const omegaResult = omegaSolve();
+    applyCrossTensorCoupling(omegaResult.totalEnergy);
+    await applyMemoryBridge();
 
-    const selected = weightedSelect(tasks);
-    if (!selected) return;
+    const omega = getOmegaState();
+
+    await logOmega("task_selection", {
+      driver: "heartbeat_tick",
+      dimensionEnergies: omega.dimensionEnergies.map(e => parseFloat(e.toFixed(4))),
+      mode: omega.mode,
+      activeGoals: omega.goals.filter(g => g.status === "active").length,
+    });
+
+    if (omega.dimensionEnergies[6] >= 0.5) {
+      const learningNote = `Heartbeat learning reflection at ${new Date().toISOString()}: mode=${omega.mode}, totalEnergy=${omega.totalEnergy.toFixed(4)}`;
+      try {
+        await updateSemanticMemory(learningNote.slice(0, 450), 10);
+        await logOmega("learning_entry", { seedIndex: 10, summary: learningNote.slice(0, 100), a7Energy: omega.dimensionEnergies[6] });
+      } catch {}
+    }
+
+    const tasks = await storage.getHeartbeatTasks();
+    if (tasks.length === 0) {
+      await persistOmegaState();
+      return;
+    }
+
+    const selected = omegaWeightedSelect(tasks, omega);
+    if (!selected) {
+      await persistOmegaState();
+      return;
+    }
 
     await logMaster("heartbeat", "task_selected", {
       taskName: selected.name,
@@ -1013,6 +1101,8 @@ async function tick(): Promise<void> {
         await logMaster("heartbeat", "edcm_anomaly_discovery_error", { error: err.message });
       }
     }
+
+    await persistOmegaState();
   } catch (err: any) {
     console.error("[heartbeat] Tick error:", err);
     await logMaster("heartbeat", "tick_error", { error: err.message }).catch(() => {});

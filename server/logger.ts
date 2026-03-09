@@ -13,6 +13,7 @@ const LOG_STREAMS = {
   sentinel: "sentinel-memory.jsonl",
   interference: "memory-interference.jsonl",
   attribution: "memory-attribution.jsonl",
+  omega: "omega-autonomy.jsonl",
 } as const;
 
 export type LogStream = keyof typeof LOG_STREAMS;
@@ -33,6 +34,7 @@ let streamToggles: Record<string, boolean> = {
   sentinel: true,
   interference: true,
   attribution: true,
+  omega: true,
   transcripts: true,
   "ai-transcripts": true,
 };
@@ -168,6 +170,19 @@ export async function logAttribution(event: string, data: Record<string, any>): 
     }
   } catch (e) {
     console.error("Logger attribution write error:", e);
+  }
+}
+
+export async function logOmega(event: string, data: Record<string, any>): Promise<void> {
+  if (!isStreamEnabled("omega")) return;
+  const entry = buildEntry("omega", "omega_autonomy", event, data);
+  try {
+    await appendToFile(getStreamPath("omega"), entry);
+    if (isStreamEnabled("master")) {
+      await appendToFile(getStreamPath("master"), entry);
+    }
+  } catch (e) {
+    console.error("Logger omega write error:", e);
   }
 }
 
