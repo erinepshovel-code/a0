@@ -15,7 +15,7 @@ import ConsolePage from "@/pages/console";
 import PricingPage from "@/pages/pricing";
 import SplashPage from "@/pages/splash";
 import LoginPage from "@/pages/login";
-import BottomNav from "@/components/bottom-nav";
+import TopNav from "@/components/top-nav";
 import HmmmDoctrine from "@/components/hmmm-doctrine";
 
 function Router() {
@@ -71,13 +71,13 @@ function AppShell() {
   return (
     <AuthGate>
       <div className="flex flex-col h-screen w-screen bg-background text-foreground overflow-hidden">
+        <TopNav />
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="flex-1 overflow-hidden">
             <Router />
           </div>
           <HmmmDoctrine />
         </div>
-        <BottomNav />
       </div>
     </AuthGate>
   );

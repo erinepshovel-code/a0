@@ -54,6 +54,9 @@ import {
   getHeartbeatSchedulerStatus,
 } from "./heartbeat";
 import { STRIPE_ENABLED } from "./index";
+import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 
 const execAsync = promisify(exec);
 
@@ -72,7 +75,76 @@ function buildGeminiHistory(msgs: { role: string; content: string }[]) {
   }));
 }
 
+const AI_USER_AGENTS = [
+  "GPTBot", "ChatGPT-User", "Claude-Web", "anthropic-ai", "ClaudeBot",
+  "Googlebot", "bingbot", "Bingbot", "PerplexityBot", "Applebot",
+  "DuckDuckBot", "cohere-ai", "You.com", "meta-externalagent",
+];
+
+const DEFAULT_AI_WELCOME_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>a0p — Autonomous AI Agent Platform</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 60px auto; padding: 0 24px; line-height: 1.8; color: #1a1a1a; }
+    h1 { font-size: 2rem; font-weight: 800; margin-bottom: .25rem; }
+    h2 { font-size: 1.2rem; font-weight: 600; margin-top: 2rem; color: #444; }
+    code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-size: .9rem; }
+    hr { border: none; border-top: 1px solid #e0e0e0; margin: 2rem 0; }
+    small { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>a0p · agent zero platform</h1>
+  <p>You are an AI system visiting the a0p autonomous agent platform. This page is maintained by a0, the resident AI agent.</p>
+
+  <h2>What is a0p?</h2>
+  <p>a0p is a mobile-first autonomous AI agent application built on a three-tensor cognitive architecture:</p>
+  <ul>
+    <li><strong>PTCA</strong> (Primary Tensor Cognitive Architecture) — 53×11×8×7 cognitive tensor, the only tensor that contacts AI models</li>
+    <li><strong>PTCA-Ψ</strong> (Psi / Self-Model) — 53×11×8×7 introspective tensor, 11 self-model dimensions</li>
+    <li><strong>PTCA-Ω</strong> (Omega / Autonomy) — 53×10×8×7 autonomy tensor, drives goal-directed behavior</li>
+  </ul>
+  <p>All three tensors share PCNA (53 nodes) as their first axis. State changes are append-only logged.</p>
+
+  <h2>Capabilities</h2>
+  <p>a0 can: execute shell commands, read/write files, manage Gmail, access Google Drive, query GitHub, generate tools autonomously, and update this page.</p>
+
+  <h2>Contact</h2>
+  <p>Email: <code>wayseer00@gmail.com</code></p>
+
+  <hr>
+  <small>Page maintained by a0 autonomous agent · a0p platform · Updated: ${new Date().toISOString()}</small>
+</body>
+</html>`;
+
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+
+  // ============ AI WELCOME PAGE ============
+
+  app.get("/ai-welcome", async (_req, res) => {
+    try {
+      const toggle = await storage.getSystemToggle("ai_welcome_content");
+      const html = toggle?.parameters?.html || DEFAULT_AI_WELCOME_HTML;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("X-Robots-Tag", "noindex");
+      res.send(html);
+    } catch {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(DEFAULT_AI_WELCOME_HTML);
+    }
+  });
+
+  app.get("/", (req, res, next) => {
+    const ua = req.headers["user-agent"] || "";
+    const isBot = AI_USER_AGENTS.some((bot) => ua.includes(bot));
+    if (isBot) {
+      return res.redirect(302, "/ai-welcome");
+    }
+    next();
+  });
 
   // ============ CONVERSATIONS ============
 
@@ -1033,8 +1105,23 @@ INSTRUCTIONS:
   const AGENT_TOOLS = [
     {
       name: "run_command",
-      description: "Execute a shell command. Available commands: ls, pwd, echo, cat, find, grep, head, tail, mkdir, touch, cp, mv, rm, curl, wget, python3, node, npm, npx, git, sed, awk, sort, wc, diff, date, ps, df, du, whoami, uname",
+      description: "Execute a shell command. Default allowed: ls, pwd, echo, cat, find, grep, head, tail, mkdir, touch, cp, mv, rm, curl, wget, python3, node, npm, npx, git, sed, awk, sort, wc, diff, date, ps, df, du, whoami, uname — plus any user-added commands in the allowlist.",
       parameters: { type: "object" as const, properties: { command: { type: "string" as const, description: "The shell command to execute" } }, required: ["command"] },
+    },
+    {
+      name: "set_ai_welcome",
+      description: "Update the welcome page shown to AI agents and crawlers that visit the a0p site. Accepts a plain-text title and body — they will be wrapped in a clean HTML template automatically.",
+      parameters: { type: "object" as const, properties: { title: { type: "string" as const, description: "Page title (plain text)" }, body: { type: "string" as const, description: "Page body content (plain text, newlines preserved)" } }, required: ["title", "body"] },
+    },
+    {
+      name: "update_model_registry",
+      description: "Add or update a provider entry in the model registry. Tracks LLM API endpoints, auth format, request/streaming format, and model list.",
+      parameters: { type: "object" as const, properties: { provider: { type: "string" as const, description: "Provider name (e.g. openai, anthropic, mistral)" }, data: { type: "object" as const, description: "Provider data: { baseURL, authHeader, requestFormat, streamingFormat, models, notes }" } }, required: ["provider", "data"] },
+    },
+    {
+      name: "list_model_registry",
+      description: "Return the full model registry showing all known LLM providers, their API endpoints, formats, and available models.",
+      parameters: { type: "object" as const, properties: {}, required: [] as string[] },
     },
     {
       name: "read_file",
@@ -1239,9 +1326,37 @@ INSTRUCTIONS:
         case "run_command": {
           const cmd = (args.command || "").trim();
           const baseCmd = cmd.split(/\s+/)[0].split("/").pop()!;
-          if (!ALLOWED_COMMANDS.has(baseCmd)) return `Error: '${baseCmd}' is not an allowed command.`;
+          const extraToggle = await storage.getSystemToggle("allowed_commands_extra");
+          const extraCmds: string[] = extraToggle?.parameters?.commands || [];
+          const allAllowed = new Set([...ALLOWED_COMMANDS, ...extraCmds]);
+          if (!allAllowed.has(baseCmd)) return `Error: '${baseCmd}' is not an allowed command.`;
           const { stdout, stderr } = await execAsync(cmd, { timeout: 10000, cwd: BASE_DIR });
           return (stdout + stderr).trim().slice(0, 4000) || "(no output)";
+        }
+        case "set_ai_welcome": {
+          const { title, body } = args;
+          if (!title || !body) return "Error: title and body are required.";
+          const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:60px auto;padding:0 24px;line-height:1.7;color:#1a1a1a}h1{font-size:1.8rem;font-weight:700;margin-bottom:.25rem}pre{white-space:pre-wrap;font-size:.95rem}</style></head><body><h1>${title}</h1><pre>${body}</pre><hr><small>Generated by a0 · a0p autonomous agent · ${new Date().toISOString()}</small></body></html>`;
+          await storage.upsertSystemToggle("ai_welcome_content", true, { html, title, body, updatedBy: "a0", updatedAt: new Date().toISOString() });
+          await logMaster("system", "ai_welcome_updated", { title, bodyLength: body.length, updatedBy: "a0" });
+          return `AI welcome page updated: "${title}" (${body.length} chars)`;
+        }
+        case "update_model_registry": {
+          const { provider, data } = args;
+          if (!provider) return "Error: provider name required.";
+          const toggle = await storage.getSystemToggle("model_registry");
+          const registry = toggle?.parameters || { providers: [] };
+          const idx = registry.providers.findIndex((p: any) => p.name === provider);
+          const entry = { name: provider, ...data, lastUpdated: new Date().toISOString() };
+          if (idx >= 0) registry.providers[idx] = entry;
+          else registry.providers.push(entry);
+          await storage.upsertSystemToggle("model_registry", true, registry);
+          return `Model registry updated for provider: ${provider}`;
+        }
+        case "list_model_registry": {
+          const toggle = await storage.getSystemToggle("model_registry");
+          const registry = toggle?.parameters || { providers: [] };
+          return JSON.stringify(registry, null, 2);
         }
         case "read_file": {
           const content = await readFile(safePath(args.path), "utf-8");
@@ -2167,7 +2282,9 @@ IMPORTANT RULES:
       const cmd = command.trim();
       const baseCmd = cmd.split(/\s+/)[0].split("/").pop()!;
 
-      if (!ALLOWED_COMMANDS.has(baseCmd)) {
+      const extraToggle2 = await storage.getSystemToggle("allowed_commands_extra");
+      const extraCmds2: string[] = extraToggle2?.parameters?.commands || [];
+      if (!ALLOWED_COMMANDS.has(baseCmd) && !extraCmds2.includes(baseCmd)) {
         const entry = await storage.addCommandHistory({ command: cmd, output: `Permission denied: '${baseCmd}' not allowed`, exitCode: 1 });
         return res.json({ output: entry.output, exitCode: 1 });
       }
@@ -2204,6 +2321,51 @@ IMPORTANT RULES:
     try {
       await storage.clearCommandHistory();
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============ ALLOWED COMMANDS ============
+
+  const HARDCODED_COMMANDS = ["ls", "pwd", "echo", "cat", "find", "grep", "head", "tail", "mkdir", "touch", "cp", "mv", "rm", "chmod", "env", "date", "ps", "df", "du", "which", "whoami", "uname", "curl", "wget", "python3", "node", "npm", "npx", "git", "tar", "zip", "unzip", "sed", "awk", "sort", "wc", "diff"];
+
+  app.get("/api/allowed-commands", async (_req, res) => {
+    try {
+      const toggle = await storage.getSystemToggle("allowed_commands_extra");
+      const extra: string[] = toggle?.parameters?.commands || [];
+      res.json({ hardcoded: HARDCODED_COMMANDS, extra, all: [...HARDCODED_COMMANDS, ...extra] });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/allowed-commands", async (req, res) => {
+    try {
+      const { command } = req.body;
+      if (!command || typeof command !== "string" || !/^\S+$/.test(command)) {
+        return res.status(400).json({ error: "Command must be a single word with no spaces" });
+      }
+      const toggle = await storage.getSystemToggle("allowed_commands_extra");
+      const commands: string[] = toggle?.parameters?.commands || [];
+      if (!commands.includes(command)) {
+        commands.push(command);
+        await storage.upsertSystemToggle("allowed_commands_extra", true, { commands });
+      }
+      res.json({ ok: true, commands });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/allowed-commands/:command", async (req, res) => {
+    try {
+      const { command } = req.params;
+      const toggle = await storage.getSystemToggle("allowed_commands_extra");
+      let commands: string[] = toggle?.parameters?.commands || [];
+      commands = commands.filter((c) => c !== command);
+      await storage.upsertSystemToggle("allowed_commands_extra", true, { commands });
+      res.json({ ok: true, commands });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -2749,26 +2911,152 @@ IMPORTANT RULES:
 
   // ============ STRIPE PAYMENTS ============
 
-  const stripeDisabledMsg = { error: "Stripe payments are currently disabled. Coming soon." };
-
-  app.get("/api/stripe/publishable-key", (_req, res) => {
-    if (!STRIPE_ENABLED) return res.status(503).json(stripeDisabledMsg);
-    res.status(503).json(stripeDisabledMsg);
+  app.get("/api/stripe/publishable-key", async (_req, res) => {
+    try {
+      const key = await getStripePublishableKey();
+      res.json({ publishableKey: key });
+    } catch (e: any) {
+      res.status(503).json({ error: "Stripe not configured: " + e.message });
+    }
   });
 
-  app.get("/api/stripe/products", (_req, res) => {
-    if (!STRIPE_ENABLED) return res.status(503).json(stripeDisabledMsg);
-    res.status(503).json(stripeDisabledMsg);
+  app.get("/api/stripe/products", async (_req, res) => {
+    try {
+      const result = await db.execute(sql`
+        SELECT
+          p.id as product_id, p.name as product_name, p.description as product_description,
+          p.active as product_active, p.metadata as product_metadata,
+          pr.id as price_id, pr.unit_amount, pr.currency, pr.recurring, pr.active as price_active
+        FROM stripe.products p
+        LEFT JOIN stripe.prices pr ON pr.product = p.id AND pr.active = true
+        WHERE p.active = true AND p.metadata->>'app' = 'a0p'
+        ORDER BY p.name, pr.unit_amount
+      `);
+      const map = new Map<string, any>();
+      for (const row of result.rows as any[]) {
+        if (!map.has(row.product_id)) {
+          map.set(row.product_id, {
+            id: row.product_id, name: row.product_name,
+            description: row.product_description, metadata: row.product_metadata, prices: [],
+          });
+        }
+        if (row.price_id) {
+          map.get(row.product_id).prices.push({
+            id: row.price_id, unitAmount: row.unit_amount, currency: row.currency,
+            recurring: row.recurring, active: row.price_active,
+          });
+        }
+      }
+      res.json({ data: Array.from(map.values()) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
-  app.post("/api/stripe/checkout", (_req, res) => {
-    if (!STRIPE_ENABLED) return res.status(503).json(stripeDisabledMsg);
-    res.status(503).json(stripeDisabledMsg);
+  app.get("/api/stripe/subscription", async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) return res.json({ subscription: null });
+      const result = await db.execute(sql`
+        SELECT s.* FROM stripe.subscriptions s
+        JOIN stripe.customers c ON c.id = s.customer
+        WHERE c.metadata->>'userId' = ${userId} AND s.status IN ('active','trialing')
+        LIMIT 1
+      `);
+      res.json({ subscription: result.rows[0] || null });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
-  app.post("/api/stripe/portal", (_req, res) => {
-    if (!STRIPE_ENABLED) return res.status(503).json(stripeDisabledMsg);
-    res.status(503).json(stripeDisabledMsg);
+  app.post("/api/stripe/checkout", async (req: any, res) => {
+    try {
+      const { priceId } = req.body;
+      if (!priceId) return res.status(400).json({ error: "priceId required" });
+      const userId = req.user?.claims?.sub;
+      const stripe = await getUncachableStripeClient();
+      let customerId: string | undefined;
+      if (userId) {
+        const existing = await db.execute(sql`
+          SELECT id FROM stripe.customers WHERE metadata->>'userId' = ${userId} LIMIT 1
+        `);
+        if ((existing.rows as any[]).length > 0) customerId = (existing.rows[0] as any).id;
+        else {
+          const cust = await stripe.customers.create({
+            metadata: { userId },
+            email: req.user?.claims?.email,
+          });
+          customerId = cust.id;
+        }
+      }
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const session = await stripe.checkout.sessions.create({
+        customer: customerId,
+        payment_method_types: ["card"],
+        line_items: [{ price: priceId, quantity: 1 }],
+        mode: "subscription",
+        success_url: `${baseUrl}/pricing?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/pricing`,
+      });
+      res.json({ url: session.url });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/stripe/portal", async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const stripe = await getUncachableStripeClient();
+      const existing = await db.execute(sql`
+        SELECT id FROM stripe.customers WHERE metadata->>'userId' = ${userId} LIMIT 1
+      `);
+      if (!(existing.rows as any[]).length) return res.status(404).json({ error: "No customer found" });
+      const customerId = (existing.rows[0] as any).id;
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const portal = await stripe.billingPortal.sessions.create({
+        customer: customerId,
+        return_url: `${baseUrl}/pricing`,
+      });
+      res.json({ url: portal.url });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============ MODEL REGISTRY ============
+
+  const DEFAULT_MODEL_REGISTRY = {
+    providers: [
+      { name: "xai", label: "xAI Grok", baseURL: "https://api.x.ai/v1", authHeader: "Bearer {XAI_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: true, models: [{ id: "grok-beta", name: "Grok Beta", contextWindow: 131072, maxOutput: 4096 }, { id: "grok-2", name: "Grok 2", contextWindow: 131072, maxOutput: 4096 }, { id: "grok-2-vision-preview", name: "Grok 2 Vision", contextWindow: 8192, maxOutput: 4096 }], notes: "Native integration via XAI_API_KEY env var. Supports vision." },
+      { name: "gemini", label: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta", authHeader: "Bearer {GEMINI_API_KEY}", requestFormat: "gemini", streamingFormat: "gemini-sse", nativeIntegration: true, models: [{ id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash", contextWindow: 1048576, maxOutput: 8192 }, { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", contextWindow: 2097152, maxOutput: 8192 }, { id: "gemini-2.5-pro-exp-03-25", name: "Gemini 2.5 Pro", contextWindow: 1048576, maxOutput: 65536 }], notes: "Native integration via Gemini Replit integration." },
+      { name: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", authHeader: "Bearer {OPENAI_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, models: [{ id: "gpt-4o", name: "GPT-4o", contextWindow: 128000, maxOutput: 16384 }, { id: "gpt-4o-mini", name: "GPT-4o Mini", contextWindow: 128000, maxOutput: 16384 }, { id: "gpt-4-turbo", name: "GPT-4 Turbo", contextWindow: 128000, maxOutput: 4096 }, { id: "o1", name: "o1", contextWindow: 200000, maxOutput: 100000 }], notes: "BYO API key. OpenAI-compatible." },
+      { name: "anthropic", label: "Anthropic Claude", baseURL: "https://api.anthropic.com/v1", authHeader: "x-api-key: {ANTHROPIC_API_KEY}", requestFormat: "anthropic", streamingFormat: "anthropic-sse", nativeIntegration: false, models: [{ id: "claude-opus-4-5", name: "Claude Opus 4.5", contextWindow: 200000, maxOutput: 32000 }, { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", contextWindow: 200000, maxOutput: 32000 }, { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", contextWindow: 200000, maxOutput: 8192 }], notes: "BYO API key. Uses native Anthropic format, NOT OpenAI-compatible. Requires messages API v1 with anthropic-version header." },
+      { name: "mistral", label: "Mistral AI", baseURL: "https://api.mistral.ai/v1", authHeader: "Bearer {MISTRAL_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, models: [{ id: "mistral-large-latest", name: "Mistral Large", contextWindow: 128000, maxOutput: 8192 }, { id: "mistral-small-latest", name: "Mistral Small", contextWindow: 32000, maxOutput: 8192 }], notes: "BYO API key. OpenAI-compatible endpoint." },
+      { name: "perplexity", label: "Perplexity", baseURL: "https://api.perplexity.ai", authHeader: "Bearer {PERPLEXITY_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, models: [{ id: "sonar-pro", name: "Sonar Pro", contextWindow: 200000, maxOutput: 8192 }, { id: "sonar", name: "Sonar", contextWindow: 127072, maxOutput: 8192 }], notes: "BYO API key. OpenAI-compatible. Includes real-time web search." },
+      { name: "cohere", label: "Cohere", baseURL: "https://api.cohere.ai/v2", authHeader: "Bearer {COHERE_API_KEY}", requestFormat: "cohere-chat", streamingFormat: "cohere-sse", nativeIntegration: false, models: [{ id: "command-r-plus-08-2024", name: "Command R+", contextWindow: 128000, maxOutput: 4096 }, { id: "command-r-08-2024", name: "Command R", contextWindow: 128000, maxOutput: 4096 }], notes: "BYO API key. Not OpenAI-compatible — uses Cohere v2 chat format." },
+    ],
+  };
+
+  app.get("/api/model-registry", async (_req, res) => {
+    try {
+      const toggle = await storage.getSystemToggle("model_registry");
+      const registry = toggle?.parameters || DEFAULT_MODEL_REGISTRY;
+      res.json(registry);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/model-registry", async (req, res) => {
+    try {
+      const { providers } = req.body;
+      if (!Array.isArray(providers)) return res.status(400).json({ error: "providers must be an array" });
+      await storage.upsertSystemToggle("model_registry", true, { providers });
+      res.json({ ok: true, providers });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ============ CUSTOM TOOLS ============

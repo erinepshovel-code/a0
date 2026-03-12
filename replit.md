@@ -21,11 +21,13 @@ a0p is a mobile-first autonomous AI agent application leveraging multi-model AI 
 The application is built with a React + Vite + TypeScript frontend, an Express.js + TypeScript backend, and a PostgreSQL database managed by Drizzle ORM. Authentication is handled via Replit Auth (OpenID Connect). Payments are integrated with Stripe (sandbox) using managed webhooks.
 
 **UI/UX Decisions:**
-- Mobile-first design with bottom-tab navigation.
+- Mobile-first design with sticky top navigation bar (5 items: Agent, Term, Files, Console, Account + New button).
 - Dark mode enabled by default across the application.
 - Real-time display of agent tool actions with visual indicators.
-- Comprehensive Console interface with 15 dedicated tabs: Heartbeat, Metrics, EDCM, Logs, Context, Bandit, Memory, System, Brain, Credentials, Export, Custom Tools, Omega (PTCA-Ω dimension gauges, bias sliders, goal stack, energy sparkline, mode selector), and Psi (PTCA-Ψ sentinel→Ψ→Ω bridge visualization, dimension energy bars with threshold markers, bias sliders, self-model mode selector, triad energy summary, energy history sparkline).
+- Comprehensive Console interface: 15 tabs grouped into 5 groups (Agent: Workflow/Bandit/Metrics, Memory: Memory/EDCM/Brain, Triad: Psi/Omega/Heartbeat, System: System/Logs, Tools: Tools/Keys/Context/Export). Active group/tab persisted in localStorage.
+- run_command Allowlist section at top of Tools tab: grayed hardcoded badges, deletable extra badges, add input.
 - Slider orientation toggle (vertical/horizontal) for all Console sliders, default vertical.
+- Chat input: auto-growing textarea (Enter=newline, Ctrl+Enter=send), model pills row below textarea, simplified header.
 - Chat message word-wrap prevents horizontal overflow on mobile.
 - Active conversation persists across page navigation via localStorage.
 - Login gate redirects unauthenticated users to /login.

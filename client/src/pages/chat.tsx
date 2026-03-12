@@ -229,10 +229,15 @@ export default function ChatPage() {
   }
 
   function handleKey(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       sendMessage();
     }
+  }
+
+  function autoResize(el: HTMLTextAreaElement) {
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 200) + "px";
   }
 
   const isEngineRunning = engineStatus?.status === "RUNNING";
@@ -293,44 +298,15 @@ export default function ChatPage() {
           <Button size="icon" variant="ghost" onClick={() => setSidebarOpen(true)} data-testid="button-open-sidebar">
             <PanelLeftOpen className="w-4 h-4" />
           </Button>
-          <div className="flex-1 flex items-center gap-2 min-w-0">
-            <div className="relative">
-              <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                <Shield className="w-4 h-4 text-primary-foreground" />
-              </div>
-              <div className={cn(
-                "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-card",
-                isEngineRunning ? "bg-green-400" : "bg-red-400"
-              )} />
-            </div>
-            <div className="min-w-0">
-              <span className="font-bold text-sm block leading-tight" data-testid="text-agent-title">
-                {convDetail?.title || "a0p"}
-              </span>
-              <span className="text-[10px] text-muted-foreground leading-none">
-                agent zero · {isEngineRunning ? "operational" : "stopped"}
-              </span>
-            </div>
+          <div className="flex-1 min-w-0">
+            <span className="font-semibold text-sm truncate block" data-testid="text-agent-title">
+              {convDetail?.title || "a0p"}
+            </span>
           </div>
-          <Select value={selectedModel} onValueChange={setSelectedModel}>
-            <SelectTrigger className="w-[130px] text-[11px]" data-testid="select-model">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CHAT_MODELS.map((m) => (
-                <SelectItem key={m.id} value={m.id} data-testid={`model-option-${m.id}`}>
-                  <span className="flex items-center gap-1.5">
-                    <m.icon className="w-3 h-3" />
-                    {m.label}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Badge variant="secondary" className="text-[9px] gap-1 font-mono" data-testid="badge-engine-status">
-            <Activity className="w-2.5 h-2.5" />
-            EDCM
-          </Badge>
+          <div className={cn(
+            "w-2 h-2 rounded-full flex-shrink-0",
+            isEngineRunning ? "bg-green-400" : "bg-red-400"
+          )} data-testid="badge-engine-status" title={isEngineRunning ? "operational" : "stopped"} />
         </header>
 
         <ScrollArea className="flex-1 px-3 py-2">
@@ -429,22 +405,42 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </ScrollArea>
 
-        <div className="px-3 py-2 border-t border-border bg-card flex-shrink-0">
+        <div className="px-3 pt-2 pb-2 border-t border-border bg-card flex-shrink-0 space-y-2">
           <div className="flex gap-2 items-end">
             <Textarea
               ref={textareaRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => { setInput(e.target.value); autoResize(e.target); }}
               onKeyDown={handleKey}
-              placeholder="Give a0p a task..."
-              className="resize-none min-h-[40px] max-h-32 text-sm"
-              rows={1}
+              placeholder="Give a0p a task… (Enter = new line, Ctrl+Enter = send)"
+              className="resize-none min-h-[44px] text-sm flex-1"
+              rows={2}
               disabled={streaming}
               data-testid="input-message"
+              style={{ overflow: "hidden" }}
             />
             <Button size="icon" onClick={sendMessage} disabled={!input.trim() || streaming} data-testid="button-send">
               <Send className="w-4 h-4" />
             </Button>
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <span className="text-[9px] text-muted-foreground flex-shrink-0">model:</span>
+            {CHAT_MODELS.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => setSelectedModel(m.id)}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors border flex-shrink-0",
+                  selectedModel === m.id
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card text-muted-foreground border-border hover:text-foreground"
+                )}
+                data-testid={`model-pill-${m.id}`}
+              >
+                <m.icon className="w-2.5 h-2.5" />
+                {m.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>

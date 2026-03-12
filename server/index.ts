@@ -3,8 +3,11 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
+import { runMigrations } from "stripe-replit-sync";
+import { getStripeSync } from "./stripeClient";
+import { WebhookHandlers } from "./webhookHandlers";
 
-export const STRIPE_ENABLED = false;
+export const STRIPE_ENABLED = true;
 
 const app = express();
 const httpServer = createServer(app);
@@ -18,8 +21,17 @@ declare module "http" {
 app.post(
   "/api/stripe/webhook",
   express.raw({ type: "application/json" }),
-  async (_req, res) => {
-    res.status(503).json({ error: "Stripe is currently disabled. Coming soon." });
+  async (req, res) => {
+    const signature = req.headers["stripe-signature"];
+    if (!signature) return res.status(400).json({ error: "Missing stripe-signature" });
+    try {
+      const sig = Array.isArray(signature) ? signature[0] : signature;
+      await WebhookHandlers.processWebhook(req.body as Buffer, sig);
+      res.status(200).json({ received: true });
+    } catch (e: any) {
+      console.error("Stripe webhook error:", e.message);
+      res.status(400).json({ error: "Webhook error" });
+    }
   }
 );
 
@@ -70,17 +82,28 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
-  if (STRIPE_ENABLED) {
-    console.log("Stripe is enabled but no initialization configured");
-  } else {
-    console.log("Stripe disabled — skipping initialization");
+async function initStripe() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) { console.warn("DATABASE_URL not set — skipping Stripe init"); return; }
+  try {
+    await runMigrations({ databaseUrl, schema: "stripe" });
+    const stripeSync = await getStripeSync();
+    const webhookBaseUrl = `https://${process.env.REPLIT_DOMAINS?.split(",")[0]}`;
+    await stripeSync.findOrCreateManagedWebhook(`${webhookBaseUrl}/api/stripe/webhook`);
+    stripeSync.syncBackfill().catch((e: any) => console.error("Stripe backfill error:", e));
+    console.log("[stripe] initialized");
+  } catch (e: any) {
+    console.error("[stripe] init failed:", e.message);
   }
+}
 
+(async () => {
   await setupAuth(app);
   registerAuthRoutes(app);
 
   await registerRoutes(httpServer, app);
+
+  initStripe().catch((e) => console.error("[stripe] startup error:", e));
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
