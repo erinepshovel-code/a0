@@ -26,35 +26,91 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 
-const TABS = [
-  { id: "workflow", label: "Workflow", icon: Activity },
-  { id: "bandit", label: "Bandit", icon: Target },
-  { id: "metrics", label: "Metrics", icon: DollarSign },
-  { id: "edcm", label: "EDCM", icon: Brain },
-  { id: "memory", label: "Memory", icon: Brain },
-  { id: "brain", label: "Brain", icon: Cpu },
-  { id: "system", label: "System", icon: Settings },
-  { id: "heartbeat", label: "Heartbeat", icon: Clock },
-  { id: "tools", label: "Tools", icon: Wrench },
-  { id: "credentials", label: "Credentials", icon: Lock },
-  { id: "export", label: "Export", icon: Download },
-  { id: "logs", label: "Logs", icon: ScrollText },
-  { id: "context", label: "Context", icon: FileText },
-  { id: "omega", label: "Omega", icon: Gauge },
-  { id: "psi", label: "Psi", icon: Eye },
+type TabId = "workflow" | "bandit" | "metrics" | "edcm" | "memory" | "brain" | "system" | "heartbeat" | "tools" | "credentials" | "export" | "logs" | "context" | "omega" | "psi";
+
+const TAB_GROUPS = [
+  {
+    id: "agent", label: "Agent", icon: Activity,
+    tabs: [
+      { id: "workflow" as TabId, label: "Workflow", icon: Activity },
+      { id: "bandit" as TabId, label: "Bandit", icon: Target },
+      { id: "metrics" as TabId, label: "Metrics", icon: DollarSign },
+    ],
+  },
+  {
+    id: "memory", label: "Memory", icon: Brain,
+    tabs: [
+      { id: "memory" as TabId, label: "Memory", icon: Brain },
+      { id: "edcm" as TabId, label: "EDCM", icon: Cpu },
+      { id: "brain" as TabId, label: "Brain", icon: GitBranch },
+    ],
+  },
+  {
+    id: "triad", label: "Triad", icon: Star,
+    tabs: [
+      { id: "psi" as TabId, label: "Psi Ψ", icon: Eye },
+      { id: "omega" as TabId, label: "Omega Ω", icon: Gauge },
+      { id: "heartbeat" as TabId, label: "Heartbeat", icon: Clock },
+    ],
+  },
+  {
+    id: "system", label: "System", icon: Settings,
+    tabs: [
+      { id: "system" as TabId, label: "System", icon: Settings },
+      { id: "logs" as TabId, label: "Logs", icon: ScrollText },
+    ],
+  },
+  {
+    id: "tools", label: "Tools", icon: Wrench,
+    tabs: [
+      { id: "tools" as TabId, label: "Tools", icon: Wrench },
+      { id: "credentials" as TabId, label: "Keys", icon: Lock },
+      { id: "context" as TabId, label: "Context", icon: FileText },
+      { id: "export" as TabId, label: "Export", icon: Download },
+    ],
+  },
 ] as const;
 
-type TabId = typeof TABS[number]["id"];
+const TAB_TO_GROUP: Record<TabId, string> = {
+  workflow: "agent", bandit: "agent", metrics: "agent",
+  memory: "memory", edcm: "memory", brain: "memory",
+  psi: "triad", omega: "triad", heartbeat: "triad",
+  system: "system", logs: "system",
+  tools: "tools", credentials: "tools", context: "tools", export: "tools",
+};
 
 export default function ConsolePage() {
-  const [activeTab, setActiveTab] = useState<TabId>("workflow");
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    return (localStorage.getItem("a0p-console-tab") as TabId) || "workflow";
+  });
+  const [activeGroup, setActiveGroup] = useState<string>(() => {
+    const savedTab = (localStorage.getItem("a0p-console-tab") as TabId) || "workflow";
+    return TAB_TO_GROUP[savedTab] || "agent";
+  });
   const { orientation, toggleOrientation, isVertical } = useSliderOrientation();
+
+  function selectGroup(groupId: string) {
+    setActiveGroup(groupId);
+    const group = TAB_GROUPS.find(g => g.id === groupId);
+    if (group && !group.tabs.find(t => t.id === activeTab)) {
+      const firstTab = group.tabs[0].id;
+      setActiveTab(firstTab);
+      localStorage.setItem("a0p-console-tab", firstTab);
+    }
+  }
+
+  function selectTab(tabId: TabId) {
+    setActiveTab(tabId);
+    localStorage.setItem("a0p-console-tab", tabId);
+  }
+
+  const currentGroup = TAB_GROUPS.find(g => g.id === activeGroup) || TAB_GROUPS[0];
 
   return (
     <div className="flex flex-col h-full">
       <header className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card flex-shrink-0">
         <Shield className="w-4 h-4 text-primary flex-shrink-0" />
-        <span className="font-semibold text-sm flex-1">a0p Console</span>
+        <span className="font-semibold text-sm flex-1">Console</span>
         <Button
           size="icon"
           variant="ghost"
@@ -65,11 +121,30 @@ export default function ConsolePage() {
         </Button>
       </header>
 
+      <div className="flex gap-1 px-2 py-1.5 bg-card border-b border-border flex-shrink-0 overflow-x-auto">
+        {TAB_GROUPS.map((group) => (
+          <button
+            key={group.id}
+            onClick={() => selectGroup(group.id)}
+            className={cn(
+              "flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors flex-shrink-0",
+              activeGroup === group.id
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent"
+            )}
+            data-testid={`group-${group.id}`}
+          >
+            <group.icon className="w-3 h-3" />
+            {group.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex border-b border-border bg-card overflow-x-auto flex-shrink-0">
-        {TABS.map((tab) => (
+        {currentGroup.tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => selectTab(tab.id)}
             className={cn(
               "flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors",
               activeTab === tab.id
@@ -3201,6 +3276,37 @@ function HeartbeatTab({ orientation, isVertical }: SliderOrientationProps) {
 function CustomToolsTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const [newCommand, setNewCommand] = useState("");
+  const { data: allowlistData } = useQuery<{ hardcoded: string[]; extra: string[]; all: string[] }>({
+    queryKey: ["/api/allowed-commands"],
+  });
+  const addCommandMutation = useMutation({
+    mutationFn: (command: string) => apiRequest("POST", "/api/allowed-commands", { command }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/allowed-commands"] });
+      setNewCommand("");
+      toast({ title: "Command added to allowlist" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  const deleteCommandMutation = useMutation({
+    mutationFn: (cmd: string) => apiRequest("DELETE", `/api/allowed-commands/${encodeURIComponent(cmd)}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/allowed-commands"] });
+      toast({ title: "Command removed" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function handleAddCommand() {
+    const cmd = newCommand.trim();
+    if (!cmd) return;
+    if (cmd.includes(" ")) { toast({ title: "Single word only", variant: "destructive" }); return; }
+    if (allowlistData?.all.includes(cmd)) { toast({ title: "Already in allowlist", variant: "destructive" }); return; }
+    addCommandMutation.mutate(cmd);
+  }
+
   const [showForm, setShowForm] = useState(false);
   const [editingTool, setEditingTool] = useState<CustomToolData | null>(null);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
@@ -3345,6 +3451,48 @@ function CustomToolsTab() {
   return (
     <ScrollArea className="h-full px-3 py-3">
       <div className="space-y-4 pb-4">
+
+        <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+          <h3 className="font-semibold text-xs flex items-center gap-1.5 text-muted-foreground uppercase tracking-wide">
+            <Shield className="w-3.5 h-3.5 text-primary" />
+            run_command Allowlist
+          </h3>
+          <div className="flex flex-wrap gap-1.5">
+            {(allowlistData?.hardcoded || []).map((cmd) => (
+              <span key={cmd} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-muted text-muted-foreground border border-transparent" data-testid={`badge-hardcoded-cmd-${cmd}`}>
+                {cmd}
+              </span>
+            ))}
+            {(allowlistData?.extra || []).map((cmd) => (
+              <span key={cmd} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-primary/10 text-primary border border-primary/20" data-testid={`badge-extra-cmd-${cmd}`}>
+                {cmd}
+                <button
+                  onClick={() => deleteCommandMutation.mutate(cmd)}
+                  disabled={deleteCommandMutation.isPending}
+                  className="hover:text-destructive transition-colors ml-0.5"
+                  data-testid={`button-remove-cmd-${cmd}`}
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Input
+              value={newCommand}
+              onChange={(e) => setNewCommand(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAddCommand()}
+              placeholder="command (single word)"
+              className="text-xs font-mono h-7 flex-1"
+              data-testid="input-new-command"
+            />
+            <Button size="sm" onClick={handleAddCommand} disabled={!newCommand.trim() || addCommandMutation.isPending} className="h-7 px-2 text-xs" data-testid="button-add-command">
+              <Plus className="w-3 h-3 mr-1" />
+              Add
+            </Button>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="font-semibold text-sm flex items-center gap-2">
             <Wrench className="w-4 h-4 text-orange-400" />
