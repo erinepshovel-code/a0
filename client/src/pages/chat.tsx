@@ -87,7 +87,14 @@ export default function ChatPage() {
   const [streamContent, setStreamContent] = useState("");
   const [toolActions, setToolActions] = useState<ToolAction[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<string>("agent");
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return localStorage.getItem("a0p-selected-model") || "agent";
+  });
+
+  function handleSetModel(model: string) {
+    setSelectedModel(model);
+    localStorage.setItem("a0p-selected-model", model);
+  }
   const [synthesisPhase, setSynthesisPhase] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -428,7 +435,7 @@ export default function ChatPage() {
             {CHAT_MODELS.map((m) => (
               <button
                 key={m.id}
-                onClick={() => setSelectedModel(m.id)}
+                onClick={() => handleSetModel(m.id)}
                 className={cn(
                   "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors border flex-shrink-0",
                   selectedModel === m.id
