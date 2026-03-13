@@ -316,7 +316,7 @@ export default function ChatPage() {
           )} data-testid="badge-engine-status" title={isEngineRunning ? "operational" : "stopped"} />
         </header>
 
-        <ScrollArea className="flex-1 px-3 py-2">
+        <ScrollArea className="flex-1 px-3 pr-4 py-2">
           {!activeConvId && !streaming && (
             <div className="flex flex-col items-center justify-center h-full py-12 gap-5 text-center">
               <div className="relative">
