@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -14,8 +14,9 @@ import { Input } from "@/components/ui/input";
 import {
   Activity, AlertTriangle, Brain, ChevronDown, ChevronRight, DollarSign, Download, FileText, Filter,
   Heart, Key, OctagonX, Play, RefreshCw, ScrollText, Shield, Upload, Zap, Check, X, Wrench, Plus, Trash2, ToggleLeft, TestTube,
-  Clock, Sparkles, Target, Settings, Lock, Eye, EyeOff, ArrowUpDown, ArrowLeftRight, Cpu, GitBranch, Star, Gauge,
+  Clock, Sparkles, Target, Settings, Lock, Eye, EyeOff, ArrowUpDown, ArrowLeftRight, Cpu, GitBranch, Star, Gauge, Scale, BarChart2,
 } from "lucide-react";
+import { usePersona, type Persona } from "@/hooks/use-persona";
 import { useSliderOrientation } from "@/hooks/use-slider-orientation";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
