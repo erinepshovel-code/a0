@@ -12,6 +12,7 @@ import DrivePage from "@/pages/drive";
 import MailPage from "@/pages/mail";
 import AutomationPage from "@/pages/automation";
 import ConsolePage from "@/pages/console";
+import PricingPage from "@/pages/pricing";
 import SplashPage from "@/pages/splash";
 import LoginPage from "@/pages/login";
 import TopNav from "@/components/top-nav";
@@ -31,6 +32,7 @@ function Router() {
       <Route path="/mail" component={MailPage} />
       <Route path="/automation" component={AutomationPage} />
       <Route path="/console" component={ConsolePage} />
+      <Route path="/pricing" component={PricingPage} />
       <Route component={ChatPage} />
     </Switch>
   );
@@ -60,7 +62,7 @@ function AppShell() {
 
   if (isPublicPage) {
     return (
-      <div className="flex flex-col h-screen w-screen overflow-hidden">
+      <div className="flex flex-col h-dvh w-screen overflow-hidden">
         <div className="flex-1 overflow-auto">
           <Router />
         </div>
@@ -70,7 +72,7 @@ function AppShell() {
 
   return (
     <AuthGate>
-      <div className="flex flex-col h-screen w-screen bg-background text-foreground overflow-hidden">
+      <div className="flex flex-col h-dvh w-screen bg-background text-foreground overflow-hidden">
         <TopNav />
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="flex-1 overflow-hidden">

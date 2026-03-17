@@ -232,3 +232,49 @@
 .markdown-content code.inline-code {
   word-break: break-all;
 }
+
+/* ── Mobile-first globals ── */
+html {
+  height: -webkit-fill-available;
+}
+
+body {
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Remove 300ms tap delay everywhere */
+a, button, [role="button"], input, select, textarea, label {
+  touch-action: manipulation;
+}
+
+/* Kill grey tap flash on iOS */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent body scroll when app shell is open */
+#root {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* Scrollable areas should bounce only on iOS (feels native) */
+.overflow-y-auto, .overflow-auto, [data-radix-scroll-area-viewport] {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Ensure inputs never trigger zoom on iOS (font-size >= 16px) */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+input[type="tel"],
+input[type="url"],
+input[type="number"],
+textarea,
+select {
+  font-size: max(16px, 1em);
+}
