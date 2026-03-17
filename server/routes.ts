@@ -234,8 +234,18 @@ Surface patterns across multiple transcripts or appearances when available.`,
 
   app.get("/api/user/persona", async (req, res) => {
     try {
-      const userId = (req as any).user?.claims?.sub || "default";
-      const toggle = await storage.getSystemToggle(`user_persona_${userId}`);
+      const userId = (req as any).user?.claims?.sub;
+      if (userId) {
+        const toggle = await storage.getSystemToggle(`user_persona_${userId}`);
+        if (toggle) {
+          const persona = (toggle.parameters as any)?.persona || "free";
+          return res.json({ persona });
+        }
+        const fallback = await storage.getSystemToggle("user_persona_default");
+        const persona = (fallback?.parameters as any)?.persona || "free";
+        return res.json({ persona });
+      }
+      const toggle = await storage.getSystemToggle("user_persona_default");
       const persona = (toggle?.parameters as any)?.persona || "free";
       res.json({ persona });
     } catch (e: any) {

@@ -190,3 +190,4 @@
 {"timestamp":"2026-03-17T05:01:16.743Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"00da218642d2","conversationsScanned":10,"totalMessages":92,"highEdcmCount":0,"findingsCount":0}}
 {"timestamp":"2026-03-17T05:24:01.698Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"b1096ba3a673","conversationsScanned":10,"totalMessages":92,"highEdcmCount":0,"findingsCount":0}}
 {"timestamp":"2026-03-17T05:34:27.029Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"cb1510162770","conversationsScanned":10,"totalMessages":92,"highEdcmCount":0,"findingsCount":0}}
+{"timestamp":"2026-03-17T05:55:37.267Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"8077275b9cf9","conversationsScanned":10,"totalMessages":92,"highEdcmCount":0,"findingsCount":0}}
