@@ -1,8 +1,8 @@
 # a0p — Agent Zero Platform
 
-## Specification v1.0.2-S9
+## Specification v1.0.2-S11
 
-**Version**: 1.0.2-S9
+**Version**: 1.0.2-S11
 **Status**: Frozen (canon-aligned)
 **Platform**: Replit (NixOS container)
 **Runtime**: Node.js + TypeScript
@@ -718,6 +718,75 @@ Each toggle stores a `parameters` JSONB field for subsystem-specific configurati
 
 All parameters are adjustable via Console sliders and persisted in the `system_toggles` table.
 
+### 3.27 SubCore — 17-Seed Sub-Graph Organ
+
+A 17-seed memory sub-graph that operates **outside** the main PTCA/PCNA working tensor. It serves as a compression bridge between the server's three-core architecture (LLM/Tools, Psi, Omega) and phone-side state, and as a rhythm/pattern detector for temporal and structural analysis.
+
+#### 3.27.1 Architecture
+
+| Property | Value |
+|----------|-------|
+| Seeds | 17 (indexed 0–16) |
+| Prime addressing | [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59] |
+| Depth per seed | 7 (heptagram phases — same axis as PTCA `hept`) |
+| Per-seed fields | `state[7]`, `previousState[7]`, `structuralSignature[7]`, `sourceAffinity[3]`, `lastWriteHeartbeat` |
+
+#### 3.27.2 Source Affinity
+
+Each seed tracks which core last wrote it as a 3-element float vector:
+
+| Index | Core |
+|-------|------|
+| 0 | LLM/Tools |
+| 1 | Psi (self-model) |
+| 2 | Omega (autonomy) |
+
+#### 3.27.3 Three Projection Modes
+
+| Mode | Name | Question | Output Shape |
+|------|------|----------|--------------|
+| Serial | Auditory | What changed? | deltas[17][7] + anomalies + coherence |
+| Parallel | Visual | What shape? | pattern[119] + topology[136] + coherence |
+| Raw | Memory | What state? | states[17][7] + previousStates[17][7] + staleness[17] |
+
+**Auditory (temporal/serial):**
+- For each of 17 seeds: `delta = state − previousState` (7-element vector)
+- Delta magnitude = L2 norm of the delta vector
+- Anomaly: magnitude exceeds expected range (rhythm break)
+- Coherence: overall temporal stability score [0, 1]
+
+**Visual (structural/parallel):**
+- Pattern: 17 × 7 = 119-element flat array (all current seed states concatenated)
+- Topology: 17 × 16 / 2 = 136-element upper triangle of inter-seed cosine similarity matrix
+- Coherence: structural clustering score [0, 1]
+
+#### 3.27.4 Sync Protocol
+
+`SyncPayload` travels bidirectionally between server and phone at each heartbeat:
+
+```typescript
+{
+  seeds: Array<{ index: number; state: number[]; sourceAffinity: [number, number, number] }>;
+  heartbeat: number;
+  direction: 'server-to-phone' | 'phone-to-server';
+  tensionField?: number[]; // phone-to-server only: where superimposed functions conflict
+  hash: string;            // SHA-256 integrity check
+}
+```
+
+#### 3.27.5 Integration
+
+- **Tick**: `tickSubCore()` called every heartbeat (30s) via `server/heartbeat.ts`
+- **Persistence**: `exportSync()` saves seed states to `system_toggles` key `subcore_state` after each tick; `importSync()` restores on server startup
+- **API**: `GET /api/subcore/state` — returns latest auditory + visual + memory projections with all `Float64Array` values serialized as `number[]`
+- **Singleton**: `server/subcore-instance.ts` holds the single server-side SubCore instance with a cached latest state
+
+#### 3.27.6 Console Visualization (S17 Tab — Memory Group)
+
+- **Serial mode** (auditory): 17 seed rows showing prime address, delta magnitude bar, anomaly flag (`!`). Rhythm break count banner. Temporal coherence score top-right.
+- **Parallel mode** (visual): SVG radial layout — 17 nodes on a ring, colored by activation: slate (idle) → green (low) → amber (mid) → red (high). Structural coherence at center.
+- Mode toggle persisted in `localStorage` (`a0p-s17-mode`). Auto-refresh every 30s; manual refresh button.
+
 ---
 
 ## 4. AI Agent
@@ -1006,6 +1075,14 @@ Automatically created and synced by `stripe-replit-sync`:
 
 ### 12.2 Console Tabs
 
+Tabs are organized into 5 groups:
+
+**Agent group:** Workflow, Bandit, Metrics
+**Memory group:** Memory, EDCM, Brain, S17
+**Triad group:** Psi Ψ, Omega Ω, Heartbeat
+**System group:** System, Logs
+**Tools group:** Tools, Keys, Context, API, Export
+
 1. **Workflow**: Engine status, emergency stop, heartbeat log, hash chain status
 2. **Metrics**: Token usage, cost estimates, spend limits (slider + toggle)
 3. **EDCM**: Operator vectors, BONE delta, alignment risk, PTCA energy, history
@@ -1014,6 +1091,7 @@ Automatically created and synced by `stripe-replit-sync`:
 6. **Bandit**: Four domain sections with per-arm toggles, reward bars, UCB1 scores; EDCM Directives panel with per-directive toggles + threshold sliders; EDCM History sparklines; Cross-domain correlation panel (top combinations with joint reward)
 7. **Memory**: 11 seed cards (label, summary, tensor magnitude, weight slider, enabled/pinned toggles, clear/import); Sentinel audit (pass rate sparklines); Attribution trace (bar chart); Interference alerts; Drift warnings; Projection heatmaps; Export/Import buttons; Snapshot history
 8. **System**: Global toggles table (bandit, edcm_directives, memory_injection, heartbeat, synthesis, custom_tools, logging); Expandable parameter sliders per subsystem; Discovery drafts panel (heartbeat discoveries with "Start Conversation" promotion)
+9. **S17**: SubCore 17-seed organ. Serial mode: delta bars for each seed, anomaly flags, temporal coherence. Parallel mode: radial SVG of 17 prime-addressed nodes colored by activation, structural coherence score.
 
 ### 12.3 Bottom Navigation
 
@@ -1058,7 +1136,7 @@ server/
   routes.ts             — All API routes
   storage.ts            — Database storage layer (IStorage interface)
   a0p-engine.ts         — EDCMBONE, PCNA, PTCA, sentinels, hash chain, bandit, EDCM directives, memory tensor, correlation tracking
-  heartbeat.ts          — Background task scheduler (transcript search, GitHub search, AI social monitoring, discovery drafts)
+  heartbeat.ts          — Background task scheduler (transcript search, GitHub search, AI social monitoring, discovery drafts); SubCore tick + persist
   logger.ts             — Append-only logging system (7 streams, per-stream toggles)
   stripeClient.ts       — Stripe client + sync setup
   webhookHandlers.ts    — Stripe webhook processor
@@ -1067,6 +1145,12 @@ server/
   drive.ts              — Google Drive client factory
   xai.ts                — Grok/xAI client factory
   github.ts             — GitHub client factory (Replit Connector, uncacheable tokens)
+  subcore-instance.ts   — Singleton SubCore instance; tickSubCore(), getSubCoreState() with Float64Array→number[] serialization; startup hydration from DB
+  subcore/
+    types.ts            — Type definitions: SubCoreSeed, AuditoryProjection, VisualProjection, MemoryProjection, SyncPayload, CoreId enum
+    subcore.ts          — SubCore class: 17-seed state machine, tick(), auditoryProject(), visualProject(), memoryProject(), exportSync(), importSync()
+    heartbeat.ts        — SubCore heartbeat integration helpers
+    index.ts            — Module re-exports
   replit_integrations/  — Auth module (Passport + Replit OpenID)
 
 client/src/
