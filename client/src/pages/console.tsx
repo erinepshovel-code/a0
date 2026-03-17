@@ -26,7 +26,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 
-type TabId = "workflow" | "bandit" | "metrics" | "edcm" | "memory" | "brain" | "system" | "heartbeat" | "tools" | "credentials" | "export" | "logs" | "context" | "omega" | "psi";
+type TabId = "workflow" | "bandit" | "metrics" | "edcm" | "memory" | "brain" | "system" | "heartbeat" | "tools" | "credentials" | "export" | "logs" | "context" | "omega" | "psi" | "api";
 
 const TAB_GROUPS = [
   {
@@ -66,6 +66,7 @@ const TAB_GROUPS = [
       { id: "tools" as TabId, label: "Tools", icon: Wrench },
       { id: "credentials" as TabId, label: "Keys", icon: Lock },
       { id: "context" as TabId, label: "Context", icon: FileText },
+      { id: "api" as TabId, label: "API", icon: Cpu },
       { id: "export" as TabId, label: "Export", icon: Download },
     ],
   },
@@ -76,7 +77,7 @@ const TAB_TO_GROUP: Record<TabId, string> = {
   memory: "memory", edcm: "memory", brain: "memory",
   psi: "triad", omega: "triad", heartbeat: "triad",
   system: "system", logs: "system",
-  tools: "tools", credentials: "tools", context: "tools", export: "tools",
+  tools: "tools", credentials: "tools", context: "tools", api: "tools", export: "tools",
 };
 
 type TabGroup = { id: string; label: string; icon: any; tabs: Array<{ id: TabId; label: string; icon: any }> };
@@ -192,6 +193,7 @@ export default function ConsolePage() {
         {activeTab === "export" && <ExportTab />}
         {activeTab === "logs" && <LogsTab />}
         {activeTab === "context" && <ContextTab />}
+        {activeTab === "api" && <ApiModelTab />}
         {activeTab === "omega" && <OmegaTab orientation={orientation} isVertical={isVertical} />}
         {activeTab === "psi" && <PsiTab />}
       </div>
@@ -4593,6 +4595,175 @@ function ContextTab() {
             [SYSTEM]{"\n"}{systemPrompt}{"\n\n"}[CONTEXT]{"\n"}{contextPrefix}{"\n\n"}[USER MESSAGE]{"\n"}{"<user input here>"}
           </div>
         </div>
+      </div>
+    </ScrollArea>
+  );
+}
+
+const PRESET_PROVIDERS = [
+  { id: "xai", label: "xAI (Grok)", baseUrl: "https://api.x.ai/v1", models: ["grok-3-mini", "grok-3", "grok-3-mini-fast"] },
+  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", models: ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"] },
+  { id: "custom", label: "Custom (OpenAI-compatible)", baseUrl: "", models: [] },
+];
+
+function ApiModelTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: cfg } = useQuery<{ provider: string; model: string; baseUrl: string; apiKeySet: boolean }>({
+    queryKey: ["/api/agent/model-config"],
+  });
+
+  const [provider, setProvider] = useState("xai");
+  const [model, setModel] = useState("grok-3-mini");
+  const [baseUrl, setBaseUrl] = useState("https://api.x.ai/v1");
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (cfg && !loaded) {
+      setProvider(cfg.provider || "xai");
+      setModel(cfg.model || "grok-3-mini");
+      setBaseUrl(cfg.baseUrl || "https://api.x.ai/v1");
+      setLoaded(true);
+    }
+  }, [cfg, loaded]);
+
+  const preset = PRESET_PROVIDERS.find(p => p.id === provider);
+
+  function handleProviderChange(pid: string) {
+    setProvider(pid);
+    const p = PRESET_PROVIDERS.find(x => x.id === pid);
+    if (p) {
+      setBaseUrl(p.baseUrl);
+      if (p.models.length) setModel(p.models[0]);
+    }
+  }
+
+  const saveMutation = useMutation({
+    mutationFn: () => apiRequest("PATCH", "/api/agent/model-config", {
+      provider, model, baseUrl,
+      ...(apiKey ? { apiKey } : {}),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agent/model-config"] });
+      setApiKey("");
+      toast({ title: "API config saved — agent will use this on next message" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <ScrollArea className="h-full px-3 py-3">
+      <div className="space-y-4 pb-4">
+
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <h3 className="font-semibold text-sm">Provider</h3>
+          <div className="space-y-2">
+            {PRESET_PROVIDERS.map(p => (
+              <button
+                key={p.id}
+                onClick={() => handleProviderChange(p.id)}
+                className={cn(
+                  "w-full text-left px-3 py-2 rounded-md border text-sm transition-colors",
+                  provider === p.id
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border hover:border-primary/50 hover:bg-accent"
+                )}
+                data-testid={`button-provider-${p.id}`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <h3 className="font-semibold text-sm">Model</h3>
+          {preset && preset.models.length > 0 ? (
+            <div className="space-y-1">
+              {preset.models.map(m => (
+                <button
+                  key={m}
+                  onClick={() => setModel(m)}
+                  className={cn(
+                    "w-full text-left px-3 py-1.5 rounded-md text-xs font-mono transition-colors",
+                    model === m
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background hover:bg-accent text-muted-foreground hover:text-foreground"
+                  )}
+                  data-testid={`button-model-${m}`}
+                >
+                  {m}
+                </button>
+              ))}
+              <p className="text-[10px] text-muted-foreground pt-1">Or type a custom model name below:</p>
+            </div>
+          ) : null}
+          <Input
+            value={model}
+            onChange={e => setModel(e.target.value)}
+            placeholder="e.g. grok-3-mini, gpt-4o, llama-3..."
+            className="font-mono text-xs"
+            data-testid="input-model-name"
+          />
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <h3 className="font-semibold text-sm">Base URL</h3>
+          <p className="text-[10px] text-muted-foreground">Must be an OpenAI-compatible endpoint.</p>
+          <Input
+            value={baseUrl}
+            onChange={e => setBaseUrl(e.target.value)}
+            placeholder="https://api.x.ai/v1"
+            className="font-mono text-xs"
+            data-testid="input-base-url"
+          />
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <h3 className="font-semibold text-sm">API Key</h3>
+          <p className="text-[10px] text-muted-foreground">
+            {cfg?.apiKeySet ? "A key is stored. Enter a new one to replace it." : "No key stored. For xAI the server uses XAI_API_KEY env var by default."}
+          </p>
+          <div className="relative">
+            <Input
+              type={showKey ? "text" : "password"}
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder={cfg?.apiKeySet ? "••••••••••••••••" : "Paste API key…"}
+              className="font-mono text-xs pr-9"
+              data-testid="input-api-key"
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(v => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              data-testid="button-toggle-key-visibility"
+            >
+              {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-3 font-mono text-[10px] text-muted-foreground space-y-0.5">
+          <div><span className="text-primary">provider</span>: {provider}</div>
+          <div><span className="text-primary">model</span>: {model}</div>
+          <div><span className="text-primary">baseUrl</span>: {baseUrl || "(default)"}</div>
+          <div><span className="text-primary">apiKey</span>: {cfg?.apiKeySet ? "stored ✓" : "using env var"}</div>
+        </div>
+
+        <Button
+          className="w-full"
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending}
+          data-testid="button-save-api-config"
+        >
+          <Check className="w-4 h-4 mr-1" />
+          {saveMutation.isPending ? "Saving..." : "Save API Config"}
+        </Button>
+
       </div>
     </ScrollArea>
   );
