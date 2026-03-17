@@ -230,33 +230,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  const VALID_PERSONAS = ["free", "legal", "researcher", "political"] as const;
-
-  app.get("/api/user/persona", async (req, res) => {
-    try {
-      const userId = (req as any).user?.claims?.sub || "default";
-      const toggle = await storage.getSystemToggle(`user_persona_${userId}`);
-      const persona = (toggle?.parameters as { persona: string } | null)?.persona ?? "free";
-      res.json({ persona });
-    } catch (e: any) {
-      res.json({ persona: "free" });
-    }
-  });
-
-  app.patch("/api/user/persona", async (req, res) => {
-    try {
-      const userId = (req as any).user?.claims?.sub || "default";
-      const { persona } = req.body;
-      if (!VALID_PERSONAS.includes(persona)) {
-        return res.status(400).json({ error: `persona must be one of: ${VALID_PERSONAS.join(", ")}` });
-      }
-      await storage.upsertSystemToggle(`user_persona_${userId}`, true, { persona });
-      res.json({ ok: true, persona });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
   const DEFAULT_MODEL_SLOTS = {
     a: { label: "A", provider: "xai", model: "grok-3-mini", baseUrl: "https://api.x.ai/v1", apiKey: "" },
     b: { label: "B", provider: "xai", model: "grok-3-mini", baseUrl: "https://api.x.ai/v1", apiKey: "" },
@@ -2189,13 +2162,6 @@ INSTRUCTIONS:
       const userId = (req as any).user?.claims?.sub || "default";
       const ctxToggle = await storage.getSystemToggle(`user_context_${userId}`);
       const ctx = (ctxToggle?.parameters as any) || DEFAULT_CONTEXT;
-      const personaToggle = await storage.getSystemToggle(`user_persona_${userId}`);
-      const userPersona = (personaToggle?.parameters as { persona: string } | null)?.persona ?? "free";
-      const PERSONA_PROMPT_BLOCKS: Record<string, string> = {
-        legal: "\n\nPERSONA CONTEXT: The user is a legal professional. Frame analysis in terms of legal risk, compliance exposure, contract enforceability, and regulatory alignment. Use precise legal terminology. Highlight obligations, liabilities, and disclosure requirements.",
-        researcher: "\n\nPERSONA CONTEXT: The user is a researcher. Approach analysis with academic rigor — identify methodology, express confidence intervals, flag potential confounds, and suggest further investigation. Cite reasoning explicitly.",
-        political: "\n\nPERSONA CONTEXT: The user operates in political and civic contexts. Frame analysis through stakeholder positions, messaging risk, coalition dynamics, and public discourse impact. Identify narrative frames and rhetorical patterns.",
-      };
       const allSlots = await getModelSlots();
       const activeSlot = allSlots[activeSlotKey];
       const { client: grokClient, model: agentModel } = buildSlotClient(activeSlot);
@@ -2235,7 +2201,7 @@ IMPORTANT RULES:
 - You can manage GitHub repositories using github_list_repos, github_list_files, github_get_file, github_create_or_update_file, github_delete_file, and github_push_zip. Creating or updating files commits directly and triggers GitHub Pages rebuilds automatically.
 - github_push_zip extracts an uploaded zip file and pushes all its contents to a GitHub repo. Use this when the user uploads a zip of website files.
 - You can manage GitHub Codespaces using codespace_list, codespace_create, codespace_start, codespace_stop, codespace_delete, and codespace_exec. Use Codespaces as a staging environment for making, testing, and iterating on changes before pushing to production.
-- The user's GitHub Pages site is at wayseer00/wayseer.github.io. When they ask about "my website" or "my site", this is the repo to work with.${PERSONA_PROMPT_BLOCKS[userPersona] ?? ""}`;
+- The user's GitHub Pages site is at wayseer00/wayseer.github.io. When they ask about "my website" or "my site", this is the repo to work with.`;
 
       const conversationContext = prevMessages.map(m => m.content).join("\n") + "\n" + content;
       const { augmentedPrompt: agentSystemPrompt, directivesFired, memorySeedsUsed } = await buildAugmentedSystemPrompt(
