@@ -229,6 +229,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/agent/model-config", async (_req, res) => {
+    try {
+      const toggle = await storage.getSystemToggle("agent_model_config");
+      const p = (toggle?.parameters as any) || {};
+      res.json({
+        provider: p.provider || "xai",
+        model: p.model || "grok-3-mini",
+        baseUrl: p.baseUrl || "",
+        apiKeySet: !!(p.apiKey),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/agent/model-config", async (req, res) => {
+    try {
+      const { provider, model, baseUrl, apiKey } = req.body;
+      const existing = await storage.getSystemToggle("agent_model_config");
+      const ep = (existing?.parameters as any) || {};
+      await storage.upsertSystemToggle("agent_model_config", true, {
+        provider: provider ?? ep.provider ?? "xai",
+        model: model ?? ep.model ?? "grok-3-mini",
+        baseUrl: baseUrl ?? ep.baseUrl ?? "",
+        apiKey: apiKey !== undefined ? apiKey : (ep.apiKey || ""),
+      });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/keys", async (req, res) => {
     try {
       const userId = (req as any).user?.claims?.sub || "default";
@@ -2075,6 +2107,12 @@ INSTRUCTIONS:
       const userId = (req as any).user?.claims?.sub || "default";
       const ctxToggle = await storage.getSystemToggle(`user_context_${userId}`);
       const ctx = (ctxToggle?.parameters as any) || DEFAULT_CONTEXT;
+      const agentModelToggle = await storage.getSystemToggle("agent_model_config");
+      const agentModelCfg = (agentModelToggle?.parameters as any) || {};
+      const agentModel = agentModelCfg.model || "grok-3-mini";
+      const agentProvider = agentModelCfg.provider || "xai";
+      const agentBaseUrl = agentModelCfg.baseUrl || "https://api.x.ai/v1";
+      const agentApiKey = agentModelCfg.apiKey || process.env.XAI_API_KEY || "";
       const modelBandit = await banditSelectWithFallback("model", chatModel);
       const ptcaBandit = await banditSelectWithFallback("ptca_route", "standard");
       const pcnaBandit = await banditSelectWithFallback("pcna_route", "ring_53");
@@ -2097,7 +2135,7 @@ INSTRUCTIONS:
 
 ${ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix}
 
-You are agent zero (a0p) — an autonomous AI agent powered by Grok (grok-3-mini, built by xAI). You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, and manage GitHub repositories. You are NOT Gemini, Claude, or any Google product — you are Grok-based.
+You are agent zero (a0p) — an autonomous AI agent powered by ${agentModel} (provider: ${agentProvider}). You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, and manage GitHub repositories.
 
 IMPORTANT RULES:
 - When a user asks you to DO something, use your tools. Don't just describe what to do.
@@ -2281,7 +2319,9 @@ IMPORTANT RULES:
         }
       }
 
-      const grokClient = getGrokClient();
+      const grokClient = agentProvider === "custom" && agentBaseUrl && agentApiKey
+        ? new OpenAI({ apiKey: agentApiKey, baseURL: agentBaseUrl })
+        : new OpenAI({ apiKey: agentApiKey || process.env.XAI_API_KEY!, baseURL: agentBaseUrl });
 
       const grokTools = AGENT_TOOLS.map(t => ({
         type: "function" as const,
@@ -2306,7 +2346,7 @@ IMPORTANT RULES:
         grokMessages[0] = { role: "system", content: currentSystemPrompt };
 
         const result = await grokClient.chat.completions.create({
-          model: "grok-3-mini",
+          model: agentModel,
           messages: grokMessages,
           tools: grokTools,
           tool_choice: "auto",
