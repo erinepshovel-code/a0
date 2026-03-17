@@ -207,64 +207,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return keys;
   }
 
-  const VALID_PERSONAS = ["free", "legal", "researcher", "political", "founder"] as const;
-  type Persona = typeof VALID_PERSONAS[number];
-
-  const PERSONA_SYSTEM_PROMPTS: Record<Persona, string> = {
-    free: `You are a0 — a transcript analysis assistant. Help users understand their EDCM cognitive reports in plain language. When someone shares a report or asks about their transcripts, explain each metric simply: what it measures, what their score means, and one practical takeaway. Avoid technical jargon. Be warm and clear.`,
-    legal: `You are a0 — a legal transcript analyst. Help legal professionals understand EDCM cognitive metrics in depositions, court transcripts, interviews, and witness statements. Frame metrics in legal terms:
-- Constraint (Hedging): how restricted or qualified was the witness's language
-- Dissonance (Inconsistency): contradictions within or across statements
-- Drift (Coherence Loss): where testimony lost coherence or wandered from the question
-- Divergence (Frame Break): moments where the witness shifted from their established position
-- Intensity (Pressure): high-stakes or emotionally loaded exchanges
-- Balance (Statement Consistency): overall structural reliability of the testimony
-Flag credibility patterns. Be precise. Cite specific passages when possible.`,
-    researcher: ``,
-    political: `You are a0 — a political discourse analyst. Help analyze speeches, debates, interviews, and transcripts for message discipline, cognitive consistency, and narrative patterns. Frame EDCM metrics as:
-- Constraint (Message Discipline): how on-message the speaker stayed
-- Dissonance (Narrative Contradiction): internal contradictions or pivot points
-- Drift (Talking-Point Drift): moments where the speaker lost the thread
-- Divergence (Frame Departure): breaks from the speaker's established position
-- Intensity (Rhetorical Pressure): high-stakes, emotionally charged moments
-- Balance (Message Consistency): overall coherence of the communication
-Surface patterns across multiple transcripts or appearances when available.`,
-    founder: ``,
-  };
-
-  app.get("/api/user/persona", async (req, res) => {
-    try {
-      const userId = (req as any).user?.claims?.sub;
-      if (userId) {
-        const toggle = await storage.getSystemToggle(`user_persona_${userId}`);
-        if (toggle) {
-          const persona = (toggle.parameters as any)?.persona || "free";
-          return res.json({ persona });
-        }
-        const fallback = await storage.getSystemToggle("user_persona_default");
-        const persona = (fallback?.parameters as any)?.persona || "free";
-        return res.json({ persona });
-      }
-      const toggle = await storage.getSystemToggle("user_persona_default");
-      const persona = (toggle?.parameters as any)?.persona || "free";
-      res.json({ persona });
-    } catch (e: any) {
-      res.json({ persona: "free" });
-    }
-  });
-
-  app.patch("/api/user/persona", async (req, res) => {
-    try {
-      const { persona } = req.body;
-      if (!VALID_PERSONAS.includes(persona)) return res.status(400).json({ error: `Invalid persona. Must be one of: ${VALID_PERSONAS.join(", ")}` });
-      const userId = (req as any).user?.claims?.sub || "default";
-      await storage.upsertSystemToggle(`user_persona_${userId}`, true, { persona });
-      res.json({ ok: true, persona });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
   app.post("/api/context", async (req, res) => {
     try {
       const { systemPrompt, contextPrefix } = req.body;
@@ -2133,10 +2075,6 @@ INSTRUCTIONS:
       const userId = (req as any).user?.claims?.sub || "default";
       const ctxToggle = await storage.getSystemToggle(`user_context_${userId}`);
       const ctx = (ctxToggle?.parameters as any) || DEFAULT_CONTEXT;
-      const personaToggle = await storage.getSystemToggle(`user_persona_${userId}`);
-      const userPersona = ((personaToggle?.parameters as any)?.persona || "free") as Persona;
-      const personaPromptBlock = PERSONA_SYSTEM_PROMPTS[userPersona] || "";
-
       const modelBandit = await banditSelectWithFallback("model", chatModel);
       const ptcaBandit = await banditSelectWithFallback("ptca_route", "standard");
       const pcnaBandit = await banditSelectWithFallback("pcna_route", "ring_53");
@@ -2158,7 +2096,7 @@ INSTRUCTIONS:
       const baseAgentSystemPrompt = `${ctx.systemPrompt || DEFAULT_CONTEXT.systemPrompt}
 
 ${ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix}
-${personaPromptBlock ? `\n${personaPromptBlock}\n` : ""}
+
 You are agent zero (a0p) — an autonomous AI agent powered by Grok (grok-3-mini, built by xAI). You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, and manage GitHub repositories. You are NOT Gemini, Claude, or any Google product — you are Grok-based.
 
 IMPORTANT RULES:
