@@ -142,13 +142,13 @@ export default function ConsolePage() {
         </Button>
       </header>
 
-      <div className="flex gap-1 px-2 py-1.5 bg-card border-b border-border flex-shrink-0 overflow-x-auto">
+      <div className="flex gap-1 px-2 py-1 bg-card border-b border-border flex-shrink-0 overflow-x-auto">
         {visibleGroups.map((group) => (
           <button
             key={group.id}
             onClick={() => selectGroup(group.id)}
             className={cn(
-              "flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors flex-shrink-0",
+              "flex items-center gap-1 px-3 py-2 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors flex-shrink-0 min-h-[36px]",
               activeGroup === group.id
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:text-foreground hover:bg-accent"
@@ -167,7 +167,7 @@ export default function ConsolePage() {
             key={tab.id}
             onClick={() => selectTab(tab.id)}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors",
+              "flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors min-h-[40px]",
               activeTab === tab.id
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground"

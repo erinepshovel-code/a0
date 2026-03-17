@@ -266,15 +266,10 @@ a, button, [role="button"], input, select, textarea, label {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Ensure inputs never trigger zoom on iOS (font-size >= 16px) */
-input[type="text"],
-input[type="email"],
-input[type="password"],
-input[type="search"],
-input[type="tel"],
-input[type="url"],
-input[type="number"],
+/* Ensure inputs never trigger zoom on iOS (font-size >= 16px).
+   Must use !important to override Tailwind's text-sm (14px). */
+input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 textarea,
 select {
-  font-size: max(16px, 1em);
+  font-size: max(16px, 1em) !important;
 }

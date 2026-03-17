@@ -143,8 +143,8 @@ export default function TerminalPage() {
       </ScrollArea>
 
       {/* Input */}
-      <div className="border-t border-border bg-card flex-shrink-0">
-        <form onSubmit={handleSubmit} className="flex items-center gap-2 px-3 py-2">
+      <div className="border-t border-border bg-card flex-shrink-0" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+        <form onSubmit={handleSubmit} className="flex items-center gap-2 px-3 py-2 min-h-[48px]">
           <span className="text-emerald-400 text-sm flex-shrink-0">$</span>
           <input
             ref={inputRef}
