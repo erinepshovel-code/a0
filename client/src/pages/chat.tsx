@@ -408,25 +408,28 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </ScrollArea>
 
-        <div className="px-3 pt-2 pb-2 border-t border-border bg-card flex-shrink-0 space-y-2">
+        <div
+          className="px-3 pt-2 border-t border-border bg-card flex-shrink-0 space-y-2"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem)" }}
+        >
           <div className="flex gap-2 items-end">
             <Textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => { setInput(e.target.value); autoResize(e.target); }}
               onKeyDown={handleKey}
-              placeholder="Give a0p a task… (Enter = new line, Ctrl+Enter = send)"
-              className="resize-none min-h-[44px] text-sm flex-1"
+              placeholder="Give a0p a task…"
+              className="resize-none min-h-[44px] flex-1"
               rows={2}
               disabled={streaming}
               data-testid="input-message"
               style={{ overflow: "hidden" }}
             />
-            <Button size="icon" onClick={sendMessage} disabled={!input.trim() || streaming} data-testid="button-send">
+            <Button size="icon" className="h-11 w-11 flex-shrink-0" onClick={sendMessage} disabled={!input.trim() || streaming} data-testid="button-send">
               <Send className="w-4 h-4" />
             </Button>
           </div>
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+          <div className="flex items-center gap-2 overflow-x-auto">
             <span className="text-[9px] text-muted-foreground flex-shrink-0">slot:</span>
             {(["a", "b", "c"] as const).map((s) => {
               const slot = modelSlots?.[s];
@@ -438,7 +441,7 @@ export default function ChatPage() {
                   onClick={() => setActiveSlot(s)}
                   title={model}
                   className={cn(
-                    "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors border flex-shrink-0",
+                    "flex items-center gap-1 px-3 py-2 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors border flex-shrink-0 min-h-[36px]",
                     activeSlot === s
                       ? "bg-primary text-primary-foreground border-primary"
                       : "bg-card text-muted-foreground border-border hover:text-foreground"
