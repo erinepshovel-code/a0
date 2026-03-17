@@ -4,7 +4,7 @@ import { computeEdcmMetrics, updateSemanticMemory, omegaSolve, applyCrossTensorC
 import { getUncachableGitHubClient } from "./github";
 import { createHash } from "crypto";
 import type { HeartbeatTask } from "@shared/schema";
-import { tickSubCore } from "./subcore-instance.js";
+import { tickSubCore, subCore } from "./subcore-instance.js";
 
 const DEFAULT_TICK_INTERVAL_MS = 30_000;
 

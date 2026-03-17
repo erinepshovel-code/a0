@@ -1,5 +1,5 @@
 import { useLocation, Link } from "wouter";
-import { Zap, Terminal, FolderOpen, Shield, Plus } from "lucide-react";
+import { Zap, Terminal, FolderOpen, Shield, Plus, Sliders } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { path: "/terminal", icon: Terminal, label: "Term" },
   { path: "/files", icon: FolderOpen, label: "Files" },
   { path: "/console", icon: Shield, label: "Console" },
+  { path: "/pricing", icon: Sliders, label: "View" },
 ];
 
 export default function TopNav() {
