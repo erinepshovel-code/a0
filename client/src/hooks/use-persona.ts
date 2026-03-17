@@ -3,6 +3,8 @@ import { apiRequest } from "@/lib/queryClient";
 
 export type Persona = "free" | "legal" | "researcher" | "political" | "founder";
 
+const LS_KEY = "a0p-persona";
+
 export const PERSONA_META: Record<Persona, { label: string; description: string; icon: string }> = {
   free: {
     label: "Free",
@@ -31,6 +33,18 @@ export const PERSONA_META: Record<Persona, { label: string; description: string;
   },
 };
 
+function readLocal(): Persona {
+  try {
+    const v = localStorage.getItem(LS_KEY) as Persona | null;
+    if (v && ["free", "legal", "researcher", "political", "founder"].includes(v)) return v;
+  } catch {}
+  return "free";
+}
+
+function writeLocal(p: Persona) {
+  try { localStorage.setItem(LS_KEY, p); } catch {}
+}
+
 export function usePersona() {
   const queryClient = useQueryClient();
 
@@ -40,13 +54,24 @@ export function usePersona() {
   });
 
   const mutation = useMutation({
-    mutationFn: (persona: Persona) => apiRequest("PATCH", "/api/user/persona", { persona }),
+    mutationFn: async (persona: Persona) => {
+      writeLocal(persona);
+      return apiRequest("PATCH", "/api/user/persona", { persona });
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/user/persona"] }),
   });
 
+  const serverPersona = data?.persona;
+  const localPersona = readLocal();
+  const persona: Persona = serverPersona ?? localPersona;
+
   return {
-    persona: data?.persona ?? "free",
-    setPersona: (p: Persona) => mutation.mutate(p),
+    persona,
+    setPersona: (p: Persona) => {
+      writeLocal(p);
+      queryClient.setQueryData(["/api/user/persona"], { persona: p });
+      mutation.mutate(p);
+    },
     isLoading,
     isPending: mutation.isPending,
   };
