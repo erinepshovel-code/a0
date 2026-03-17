@@ -17,6 +17,7 @@ import {
   Clock, Sparkles, Target, Settings, Lock, Eye, EyeOff, ArrowUpDown, ArrowLeftRight, Cpu, GitBranch, Star, Gauge,
 } from "lucide-react";
 import { useSliderOrientation } from "@/hooks/use-slider-orientation";
+import { usePersona } from "@/hooks/use-persona";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -95,8 +96,45 @@ const DEFAULT_METRIC_LABELS: MetricLabelMap = {
   TBF: { label: "Turn-Balance", desc: "Gini coefficient on actor token shares" },
 };
 
+const LEGAL_METRIC_LABELS: MetricLabelMap = {
+  CM: { label: "Conflict Mismatch", desc: "Divergence between declared and observed constraints" },
+  DA: { label: "Disclosure Accum.", desc: "Accumulation of contradictions, retractions, repeats" },
+  DRIFT: { label: "Position Drift", desc: "Deviation from stated legal position over time" },
+  DVG: { label: "Argument Divergence", desc: "Entropy of topic distribution in testimony" },
+  INT: { label: "Adversarial Intensity", desc: "Intensity of adversarial language patterns" },
+  TBF: { label: "Party Balance", desc: "Gini coefficient on party token shares" },
+};
+
+const RESEARCHER_METRIC_LABELS: MetricLabelMap = {
+  CM: { label: "Constraint Mismatch", desc: "Methodological constraint deviation index" },
+  DA: { label: "Dissonance Accum.", desc: "Accumulation of contradictions and retractions" },
+  DRIFT: { label: "Conceptual Drift", desc: "Divergence from stated research hypothesis" },
+  DVG: { label: "Topic Divergence", desc: "Entropy across topic distribution" },
+  INT: { label: "Signal Intensity", desc: "Aggregate salience: caps, punctuation, lexical strength" },
+  TBF: { label: "Source Balance", desc: "Gini coefficient on source token shares" },
+};
+
+const POLITICAL_METRIC_LABELS: MetricLabelMap = {
+  CM: { label: "Mandate Mismatch", desc: "Gap between declared and observed policy positions" },
+  DA: { label: "Contradiction Load", desc: "Accumulated contradictions, retractions, reversals" },
+  DRIFT: { label: "Message Drift", desc: "Deviation from core political messaging" },
+  DVG: { label: "Narrative Divergence", desc: "Spread across distinct narrative frames" },
+  INT: { label: "Rhetorical Intensity", desc: "Intensity of rhetorical and emotional language" },
+  TBF: { label: "Coalition Balance", desc: "Gini coefficient on coalition speaker shares" },
+};
+
+function personaMetricLabels(persona: string): MetricLabelMap {
+  if (persona === "legal") return LEGAL_METRIC_LABELS;
+  if (persona === "researcher") return RESEARCHER_METRIC_LABELS;
+  if (persona === "political") return POLITICAL_METRIC_LABELS;
+  return DEFAULT_METRIC_LABELS;
+}
+
 export default function ConsolePage() {
-  const visibleGroups = ALL_GROUPS;
+  const { persona } = usePersona();
+  const visibleGroups = persona === "free"
+    ? ALL_GROUPS.filter(g => g.id === "agent" || g.id === "tools")
+    : ALL_GROUPS;
   const defaultTab = visibleGroups[0]?.tabs[0]?.id ?? "edcm";
 
   const [activeTab, setActiveTab] = useState<TabId>(() => {
@@ -1113,8 +1151,7 @@ function alertColor(value: number): { bg: string; text: string; label: string } 
   return { bg: "bg-amber-500/20", text: "text-amber-400", label: "HYSTERESIS" };
 }
 
-function MetricRow({ metricKey, value, evidence }: { metricKey: string; value: number; evidence: string[] }) {
-  const labels = DEFAULT_METRIC_LABELS;
+function MetricRow({ metricKey, value, evidence, labels = DEFAULT_METRIC_LABELS }: { metricKey: string; value: number; evidence: string[]; labels?: MetricLabelMap }) {
   const info = labels[metricKey] || { label: metricKey, desc: "" };
   const alert = alertColor(value);
   const pct = Math.round(value * 100);
@@ -1211,7 +1248,8 @@ function TranscriptSourcesSection() {
     }
   };
 
-  const metricLabels = DEFAULT_METRIC_LABELS;
+  const { persona: _mPersona } = usePersona();
+  const metricLabels = personaMetricLabels(_mPersona);
   const METRIC_COLORS: Record<string, string> = {
     CM: "text-yellow-400", DA: "text-red-400", DRIFT: "text-blue-400",
     DVG: "text-purple-400", INT: "text-orange-400", TBF: "text-green-400",
@@ -1370,9 +1408,9 @@ function TranscriptSourcesSection() {
   );
 }
 
-const METRIC_LABELS = DEFAULT_METRIC_LABELS;
-
 function EdcmTab() {
+  const { persona: _ePersona } = usePersona();
+  const METRIC_LABELS = personaMetricLabels(_ePersona);
   const { data: snapshots = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/edcm/snapshots"],
     refetchInterval: 10000,
@@ -1437,12 +1475,13 @@ function EdcmTab() {
                       metricKey={key}
                       value={typeof metricVal === "number" ? metricVal : 0}
                       evidence={evidence}
+                      labels={METRIC_LABELS}
                     />
                   );
                 })
               ) : (
                 Object.entries(METRIC_LABELS).map(([key]) => (
-                  <MetricRow key={key} metricKey={key} value={0} evidence={[]} />
+                  <MetricRow key={key} metricKey={key} value={0} evidence={[]} labels={METRIC_LABELS} />
                 ))
               )}
             </div>
