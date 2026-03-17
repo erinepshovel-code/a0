@@ -56,7 +56,7 @@ export default function TopNav() {
             key={item.path}
             href={item.path}
             className={cn(
-              "flex flex-col items-center justify-center flex-1 py-2 gap-0.5 transition-colors",
+              "flex flex-col items-center justify-center flex-1 min-h-[44px] py-2 gap-0.5 transition-colors select-none",
               active ? "text-primary" : "text-muted-foreground"
             )}
             data-testid={`nav-${item.label.toLowerCase()}`}
@@ -70,7 +70,7 @@ export default function TopNav() {
       })}
 
       {activeBrain && (
-        <div className="flex flex-col items-center justify-center px-2 py-2 gap-0.5 text-muted-foreground" data-testid="nav-active-brain">
+        <div className="flex flex-col items-center justify-center px-2 min-h-[44px] gap-0.5 text-muted-foreground" data-testid="nav-active-brain">
           <div className="text-[8px] font-mono leading-none text-primary/70 truncate max-w-[56px] text-center">
             {activeBrain}
           </div>
@@ -80,7 +80,7 @@ export default function TopNav() {
       <button
         onClick={() => createConv.mutate()}
         disabled={createConv.isPending}
-        className="flex flex-col items-center justify-center px-2 py-2 gap-0.5 text-muted-foreground hover:text-foreground transition-colors"
+        className="flex flex-col items-center justify-center px-3 min-h-[44px] gap-0.5 text-muted-foreground hover:text-foreground transition-colors select-none"
         data-testid="nav-new-task"
         title="New Task"
       >
