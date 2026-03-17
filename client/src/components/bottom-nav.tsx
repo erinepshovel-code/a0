@@ -1,5 +1,5 @@
 import { useLocation, Link } from "wouter";
-import { Zap, Terminal, FolderOpen, Shield, CreditCard } from "lucide-react";
+import { Zap, Terminal, FolderOpen, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const tabs = [
@@ -7,7 +7,6 @@ const tabs = [
   { path: "/terminal", icon: Terminal, label: "Term" },
   { path: "/files", icon: FolderOpen, label: "Files" },
   { path: "/console", icon: Shield, label: "Console" },
-  { path: "/pricing", icon: CreditCard, label: "Account" },
 ];
 
 export default function BottomNav() {
