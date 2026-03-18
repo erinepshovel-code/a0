@@ -627,7 +627,7 @@ const SENTINELS = [
     id: "S9", name: "S9_AUTONOMY",
     check: (_req: any, _ctx: any) => {
       const omega = getOmegaState();
-      if (omega.totalEnergy * OMEGA_T4_SIZE >= 120) return false;
+      if (omega.totalEnergy >= 8.0) return false;
       if (omega.goals.filter(g => g.status === "active").length > 20) return false;
       const hist = omega.energyHistory;
       if (hist.length >= 4) {
