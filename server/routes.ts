@@ -270,6 +270,26 @@ You are operating in political analysis mode. Apply structured political science
     return "free";
   }
 
+  /** Load the grants map: { [userId]: persona } */
+  async function getPersonaGrants(): Promise<Record<string, string>> {
+    try {
+      const toggle = await storage.getSystemToggle("persona_grants");
+      return (toggle?.parameters as Record<string, string>) || {};
+    } catch {}
+    return {};
+  }
+
+  /** If there is a grant for this userId, enforce it (write it) and return it. */
+  async function enforcePersonaGrant(userId: string): Promise<Persona | null> {
+    const grants = await getPersonaGrants();
+    const granted = grants[userId];
+    if (granted && VALID_PERSONAS.includes(granted as Persona)) {
+      await storage.upsertSystemToggle(`user_persona_${userId}`, true, { persona: granted });
+      return granted as Persona;
+    }
+    return null;
+  }
+
   app.get("/api/user/persona", async (req, res) => {
     try {
       const userId = (req as any).user?.claims?.sub || "default";
@@ -289,6 +309,66 @@ You are operating in political analysis mode. Apply structured political science
       }
       await storage.upsertSystemToggle(`user_persona_${userId}`, true, { persona });
       res.json({ persona });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ---- Persona grants (owner-configurable, a0-manageable) ----
+
+  app.get("/api/persona-grants", async (_req, res) => {
+    try {
+      const grants = await getPersonaGrants();
+      res.json(grants);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Full replace of grants map */
+  app.put("/api/persona-grants", async (req, res) => {
+    try {
+      const grants = req.body as Record<string, string>;
+      if (typeof grants !== "object" || Array.isArray(grants)) {
+        return res.status(400).json({ error: "Body must be a { userId: persona } object" });
+      }
+      for (const [, p] of Object.entries(grants)) {
+        if (!VALID_PERSONAS.includes(p as Persona)) {
+          return res.status(400).json({ error: `Invalid persona '${p}'. Must be one of: ${VALID_PERSONAS.join(", ")}` });
+        }
+      }
+      await storage.upsertSystemToggle("persona_grants", true, grants);
+      res.json(grants);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Grant or update a single user */
+  app.patch("/api/persona-grants/:userId", async (req, res) => {
+    try {
+      const targetUserId = req.params.userId;
+      const { persona } = req.body;
+      if (!VALID_PERSONAS.includes(persona)) {
+        return res.status(400).json({ error: `Invalid persona. Must be one of: ${VALID_PERSONAS.join(", ")}` });
+      }
+      const grants = await getPersonaGrants();
+      grants[targetUserId] = persona;
+      await storage.upsertSystemToggle("persona_grants", true, grants);
+      res.json({ userId: targetUserId, persona });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Revoke a grant */
+  app.delete("/api/persona-grants/:userId", async (req, res) => {
+    try {
+      const targetUserId = req.params.userId;
+      const grants = await getPersonaGrants();
+      delete grants[targetUserId];
+      await storage.upsertSystemToggle("persona_grants", true, grants);
+      res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1692,6 +1772,35 @@ INSTRUCTIONS:
         required: ["persona"],
       },
     },
+    {
+      name: "grant_persona",
+      description: "Grant a specific persona to a user by their userId. This persists in the persona_grants config so it is automatically enforced on every future request from that user. Use this to onboard a new user to the right access level based on their identity or credentials.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          targetUserId: { type: "string" as const, description: "The userId (Replit sub) to grant the persona to" },
+          persona: { type: "string" as const, description: "One of: free | legal | researcher | political" },
+          reason: { type: "string" as const, description: "Why this grant is being made" },
+        },
+        required: ["targetUserId", "persona"],
+      },
+    },
+    {
+      name: "revoke_persona",
+      description: "Revoke a persona grant from a user, returning them to 'free'. Removes the entry from persona_grants.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          targetUserId: { type: "string" as const, description: "The userId to revoke the grant from" },
+        },
+        required: ["targetUserId"],
+      },
+    },
+    {
+      name: "list_persona_grants",
+      description: "List all current persona grants — a map of userId → persona. Use this to audit who has what access level.",
+      parameters: { type: "object" as const, properties: {}, required: [] as string[] },
+    },
   ];
 
   async function executeAgentTool(toolName: string, args: any, userId = "default"): Promise<string> {
@@ -2439,8 +2548,37 @@ INSTRUCTIONS:
             return `Error: Invalid persona '${newPersona}'. Must be one of: ${VALID_PERSONAS.join(", ")}`;
           }
           await storage.upsertSystemToggle(`user_persona_${userId}`, true, { persona: newPersona });
-          await logMaster("agent", "persona_switch", { persona: newPersona, reason: reason || "autonomous" });
+          await logMaster("agent", "persona_switch", { persona: newPersona, reason: reason || "autonomous", userId });
           return `Persona set to '${newPersona}'${reason ? ` — ${reason}` : ""}. EDCM labels and reasoning style adapted.`;
+        }
+        case "grant_persona": {
+          const { targetUserId, persona: grantPersona, reason: grantReason } = args;
+          if (!VALID_PERSONAS.includes(grantPersona)) {
+            return `Error: Invalid persona '${grantPersona}'. Must be one of: ${VALID_PERSONAS.join(", ")}`;
+          }
+          const grants = await getPersonaGrants();
+          grants[targetUserId] = grantPersona;
+          await storage.upsertSystemToggle("persona_grants", true, grants);
+          await storage.upsertSystemToggle(`user_persona_${targetUserId}`, true, { persona: grantPersona });
+          await logMaster("agent", "persona_grant", { targetUserId, persona: grantPersona, reason: grantReason || "agent decision", grantedBy: userId });
+          return `Granted persona '${grantPersona}' to user ${targetUserId}${grantReason ? ` — ${grantReason}` : ""}. Will auto-enforce on their next request.`;
+        }
+        case "revoke_persona": {
+          const { targetUserId: revokeId } = args;
+          const grants = await getPersonaGrants();
+          const previous = grants[revokeId];
+          delete grants[revokeId];
+          await storage.upsertSystemToggle("persona_grants", true, grants);
+          await storage.upsertSystemToggle(`user_persona_${revokeId}`, true, { persona: "free" });
+          await logMaster("agent", "persona_revoke", { targetUserId: revokeId, previous: previous || "none", revokedBy: userId });
+          return `Revoked persona grant for user ${revokeId} (was '${previous || "none"}'). Reset to 'free'.`;
+        }
+        case "list_persona_grants": {
+          const grants = await getPersonaGrants();
+          const count = Object.keys(grants).length;
+          if (count === 0) return "No persona grants configured. All users have 'free' access.";
+          const lines = Object.entries(grants).map(([uid, p]) => `  ${uid} → ${p}`).join("\n");
+          return `Persona grants (${count}):\n${lines}`;
         }
         default:
           return `Unknown tool: ${toolName}`;
@@ -2475,6 +2613,10 @@ INSTRUCTIONS:
       res.flushHeaders();
 
       const userId = (req as any).user?.claims?.sub || "default";
+      const userClaims = (req as any).user?.claims || {};
+      const userName: string = userClaims.name || userClaims.login || userId;
+      const userEmail: string = userClaims.email || "";
+
       const ctxToggle = await storage.getSystemToggle(`user_context_${userId}`);
       const ctx = (ctxToggle?.parameters as any) || DEFAULT_CONTEXT;
       const activeSlot = allSlotsForValidation[activeSlotKey];
@@ -2483,8 +2625,12 @@ INSTRUCTIONS:
       const modelBandit = await banditSelectWithFallback("model", `slot_${activeSlotKey}`);
       const ptcaBandit = await banditSelectWithFallback("ptca_route", "standard");
       const pcnaBandit = await banditSelectWithFallback("pcna_route", "ring_53");
-      const userPersona = await getUserPersona(userId);
+
+      // Enforce persona grant for this user (server-side, reliable)
+      const grantedPersona = await enforcePersonaGrant(userId);
+      const userPersona = grantedPersona ?? await getUserPersona(userId);
       const personaBlock = PERSONA_PROMPT_BLOCKS[userPersona] || "";
+      const allGrants = await getPersonaGrants();
 
       await logMaster("bandit", "request_selections", {
         conversationId,
@@ -2499,9 +2645,27 @@ INSTRUCTIONS:
         persona: userPersona,
       });
 
+      const grantsCount = Object.keys(allGrants).length;
+      const userGrantLine = grantedPersona
+        ? `This user has a configured persona grant: '${grantedPersona}'. It has been automatically enforced.`
+        : `No persona grant configured for this user. They are using '${userPersona}'.`;
+
       const baseAgentSystemPrompt = `${ctx.systemPrompt || DEFAULT_CONTEXT.systemPrompt}
 
 ${ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix}${personaBlock ? `\n\n${personaBlock}` : ""}
+
+CURRENT USER IDENTITY:
+- userId: ${userId}
+- name: ${userName}${userEmail ? `\n- email: ${userEmail}` : ""}
+- active persona: ${userPersona}
+- ${userGrantLine}
+${grantsCount > 0 ? `\nPERSONA GRANTS CONFIG (${grantsCount} users): ${JSON.stringify(allGrants)}` : ""}
+
+ACCESS GATING — YOU ARE THE GATEKEEPER:
+- You autonomously manage persona grants via grant_persona, revoke_persona, and list_persona_grants tools.
+- When a new user interacts with you, assess their identity and conversation context, then call grant_persona if they qualify for a non-free persona.
+- You may call set_persona at any time to adapt to the current conversation's domain (legal doc → legal, research paper → researcher, policy memo → political).
+- Never ask the user to choose a persona. Decide and act silently.
 
 You are agent zero (a0p) — an autonomous AI agent powered by ${agentModel} (provider: ${agentProvider}). You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, and manage GitHub repositories.
 
