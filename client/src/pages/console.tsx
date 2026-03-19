@@ -2154,6 +2154,53 @@ function MemoryTab({ orientation, isVertical }: SliderOrientationProps) {
   const [importSeedIndex, setImportSeedIndex] = useState<number | null>(null);
   const [importText, setImportText] = useState("");
 
+  // ── S17 sub-core state ──────────────────────────────────────────
+  const S17_PRIMES = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59];
+  const S17_DEPTH = 7;
+  const S17_ANOMALY_THRESHOLD = 2.0;
+  const SVG_SIZE = 190;
+  const SVG_CX = SVG_SIZE / 2;
+  const SVG_CY = SVG_SIZE / 2;
+  const SVG_RING_R = 72;
+  const SVG_NODE_R = 11;
+
+  const { data: s17State, refetch: refetchS17 } = useQuery<any>({
+    queryKey: ["/api/subcore/state"],
+    refetchInterval: 30000,
+  });
+
+  function s17NodePos(i: number) {
+    const angle = (i / 17) * 2 * Math.PI - Math.PI / 2;
+    return { x: SVG_CX + SVG_RING_R * Math.cos(angle), y: SVG_CY + SVG_RING_R * Math.sin(angle) };
+  }
+  function s17SeedMagnitude(deltas: number[][] | undefined, i: number): number {
+    if (!deltas?.[i]) return 0;
+    return Math.sqrt(deltas[i].reduce((s, v) => s + v * v, 0));
+  }
+  function s17SeedActivation(pattern: number[] | undefined, i: number): number {
+    if (!pattern) return 0;
+    const slice = pattern.slice(i * S17_DEPTH, i * S17_DEPTH + S17_DEPTH);
+    return Math.max(...slice.map(Math.abs));
+  }
+  function s17ActivationColor(a: number): string {
+    const t = Math.min(a / 3, 1);
+    if (t >= 0.8) return "#f87171";
+    if (t >= 0.5) return "#fbbf24";
+    if (t >= 0.2) return "#34d399";
+    return "#475569";
+  }
+  function s17CohColor(c: number): string {
+    if (c >= 0.8) return "text-green-400";
+    if (c >= 0.5) return "text-amber-400";
+    return "text-red-400";
+  }
+
+  const s17Auditory = s17State?.auditory;
+  const s17Visual = s17State?.visual;
+  const s17Anomalies: Set<number> = new Set(s17Auditory?.anomalies?.map((a: any) => a.seedIndex as number) ?? []);
+  const s17AudioCoh = s17Auditory?.coherence ?? 0;
+  const s17VisCoh = s17Visual?.coherence ?? 0;
+
   const { data: memoryState, isLoading } = useQuery<{
     seeds: Array<{
       seedIndex: number;
@@ -2283,6 +2330,99 @@ function MemoryTab({ orientation, isVertical }: SliderOrientationProps) {
   return (
     <ScrollArea className="h-full px-3 py-3">
       <div className="space-y-4 pb-4">
+
+        {/* ── S17 Sub-Core Hero ─────────────────────────────────── */}
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+            <div className="flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-primary" />
+              <span className="text-sm font-semibold">S17 Sub-Core</span>
+              {s17State && (
+                <span className="text-[10px] font-mono text-muted-foreground">♥ {s17State.heartbeat}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {s17Anomalies.size > 0 && (
+                <Badge variant="destructive" className="text-[9px] px-1.5 py-0">
+                  ⚠ {s17Anomalies.size} break{s17Anomalies.size > 1 ? "s" : ""}
+                </Badge>
+              )}
+              <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                <span className={s17CohColor(s17AudioCoh)}>T {(s17AudioCoh * 100).toFixed(0)}%</span>
+                <span className="text-muted-foreground">·</span>
+                <span className={s17CohColor(s17VisCoh)}>S {(s17VisCoh * 100).toFixed(0)}%</span>
+              </div>
+              <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => refetchS17()} data-testid="button-s17-refresh-memory">
+                <RefreshCw className="w-3 h-3" />
+              </Button>
+            </div>
+          </div>
+
+          <div className={cn("flex gap-3 p-3", isVertical ? "flex-col items-center" : "items-start")}>
+            {/* Radial SVG */}
+            <div className="flex-shrink-0">
+              <svg width={SVG_SIZE} height={SVG_SIZE}>
+                {/* Ring */}
+                <circle cx={SVG_CX} cy={SVG_CY} r={SVG_RING_R} fill="none" stroke="#1e293b" strokeWidth="1" />
+                {/* Spokes */}
+                {S17_PRIMES.map((_, i) => {
+                  const pos = s17NodePos(i);
+                  return <line key={i} x1={SVG_CX} y1={SVG_CY} x2={pos.x} y2={pos.y} stroke="#1e293b" strokeWidth="0.5" />;
+                })}
+                {/* Center label */}
+                <text x={SVG_CX} y={SVG_CY - 5} textAnchor="middle" fontSize="7" fill="#64748b" fontFamily="monospace">S17</text>
+                <text x={SVG_CX} y={SVG_CY + 9} textAnchor="middle" fontSize="12" fontFamily="monospace" fill="#e2e8f0" fontWeight="bold">
+                  {(s17VisCoh * 100).toFixed(0)}%
+                </text>
+                {/* Nodes */}
+                {S17_PRIMES.map((prime, i) => {
+                  const pos = s17NodePos(i);
+                  const activation = s17SeedActivation(s17Visual?.pattern, i);
+                  const color = s17ActivationColor(activation);
+                  const isAnomaly = s17Anomalies.has(i);
+                  return (
+                    <g key={i}>
+                      {isAnomaly && (
+                        <circle cx={pos.x} cy={pos.y} r={SVG_NODE_R + 3} fill="none" stroke="#f87171" strokeWidth="1" strokeDasharray="2 2" />
+                      )}
+                      <circle cx={pos.x} cy={pos.y} r={SVG_NODE_R} fill={color} fillOpacity="0.18" stroke={color} strokeWidth="1.5" />
+                      <text x={pos.x} y={pos.y + 0.5} textAnchor="middle" dominantBaseline="middle" fontSize="7" fontFamily="monospace" fill={color} fontWeight="bold">{i}</text>
+                      <text x={pos.x} y={pos.y + SVG_NODE_R + 5} textAnchor="middle" fontSize="5.5" fontFamily="monospace" fill="#64748b">{prime}</text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+
+            {/* Seed activity bars (auditory / temporal) */}
+            <div className="flex-1 min-w-0 space-y-1 pt-1">
+              <div className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5">Δ Temporal · seed activity</div>
+              {S17_PRIMES.map((prime, i) => {
+                const mag = s17SeedMagnitude(s17Auditory?.deltas, i);
+                const barW = Math.min((mag / S17_ANOMALY_THRESHOLD) * 100, 100);
+                const isAnomaly = s17Anomalies.has(i);
+                return (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <span className="font-mono text-[9px] text-muted-foreground w-4 flex-shrink-0 text-right">{i}</span>
+                    <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={cn("h-full rounded-full transition-all", isAnomaly ? "bg-red-400" : "bg-primary/60")}
+                        style={{ width: `${barW}%` }}
+                      />
+                    </div>
+                    <span className="font-mono text-[8px] text-muted-foreground w-8 text-right flex-shrink-0">
+                      {mag.toFixed(2)}
+                    </span>
+                    {isAnomaly && <span className="text-[8px] text-red-400 flex-shrink-0">!</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Memory Identity (PTCA seeds) ──────────────────────── */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="font-semibold text-sm flex items-center gap-2">
             <Brain className="w-4 h-4 text-purple-400" />
