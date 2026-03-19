@@ -3427,7 +3427,7 @@ MODULE WRITING (write_module tool):
     } catch (e: any) {
       console.error("Agent error:", e);
       if (res.headersSent) {
-        res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: e.message, done: true })}\n\n`);
         res.end();
       } else {
         res.status(500).json({ error: e.message });

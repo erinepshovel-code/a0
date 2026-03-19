@@ -158,7 +158,7 @@ export default function ChatPage() {
     setToolActions([]);
 
     qc.setQueryData(
-      ["/api/conversations", convId],
+      ["/api/v1/conversations", convId],
       (prev: any) => ({
         ...prev,
         messages: [
@@ -182,6 +182,7 @@ export default function ChatPage() {
       let buffer = "";
       let accumulated = "";
 
+      let gotDone = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -203,6 +204,7 @@ export default function ChatPage() {
                 setToolActions((prev) => [...prev, { type: "tool_result", name: data.tool_result.name, result: data.tool_result.result }]);
               }
               if (data.done) {
+                gotDone = true;
                 setStreaming(false);
                 setStreamContent("");
                 setToolActions([]);
@@ -212,6 +214,13 @@ export default function ChatPage() {
             } catch {}
           }
         }
+      }
+      if (!gotDone) {
+        setStreaming(false);
+        setStreamContent("");
+        setToolActions([]);
+        qc.invalidateQueries({ queryKey: ["/api/v1/conversations", convId] });
+        qc.invalidateQueries({ queryKey: ["/api/v1/conversations"] });
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
