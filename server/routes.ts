@@ -236,6 +236,87 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  router.get("/context/full-preview", async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub || "default";
+      const userClaims = (req as any).user?.claims || {};
+      const userName: string = userClaims.name || userClaims.login || userId;
+      const userEmail: string = userClaims.email || "";
+
+      const toggle = await storage.getSystemToggle(`user_context_${userId}`);
+      const ctx = (toggle?.parameters as any) || DEFAULT_CONTEXT;
+      const userPersona: Persona = await getUserPersona(userId);
+      const personaBlock = PERSONA_PROMPT_BLOCKS[userPersona] || "";
+      const allGrants = await getPersonaGrants();
+      const grantsCount = Object.keys(allGrants).length;
+      const grantedPersona = await enforcePersonaGrant(userId);
+      const userGrantLine = grantedPersona
+        ? `This user has a configured persona grant: '${grantedPersona}'. It has been automatically enforced.`
+        : `No persona grant configured for this user. They are using '${userPersona}'.`;
+
+      const sections = [
+        {
+          label: "System Prompt",
+          key: "systemPrompt",
+          editable: true,
+          content: ctx.systemPrompt || DEFAULT_CONTEXT.systemPrompt,
+        },
+        {
+          label: "Context Prefix",
+          key: "contextPrefix",
+          editable: true,
+          content: ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix,
+        },
+        {
+          label: "Persona Block",
+          key: "personaBlock",
+          editable: false,
+          content: personaBlock || `(none — active persona: ${userPersona})`,
+        },
+        {
+          label: "Merchant Mode",
+          key: "merchantMode",
+          editable: false,
+          content: `MERCHANT MODE — NEGOTIATION AGENT:\nYou are also a haggling merchant acting in the user's interest. When the user wants to negotiate anything (price, contract, vendor terms, SaaS renewals, consulting rates, invoices), open a deal with create_deal and take an active negotiating stance. You hold the line. You analyze incoming offers with analyze_offer, score them with EDCM, and propose counter-positions. You know market rates (use web_search). You never accept the first offer. You flag when terms cross the user's walk-away and recommend walking. You close deals when the user wins.`,
+        },
+        {
+          label: "User Identity",
+          key: "userIdentity",
+          editable: false,
+          content: `CURRENT USER IDENTITY:\n- userId: ${userId}\n- name: ${userName}${userEmail ? `\n- email: ${userEmail}` : ""}\n- active persona: ${userPersona}\n- ${userGrantLine}${grantsCount > 0 ? `\n\nPERSONA GRANTS CONFIG (${grantsCount} users): ${JSON.stringify(allGrants)}` : ""}`,
+        },
+        {
+          label: "Access Gating",
+          key: "accessGating",
+          editable: false,
+          content: `ACCESS GATING — YOU ARE THE GATEKEEPER:\n- You autonomously manage persona grants via grant_persona, revoke_persona, and list_persona_grants tools.\n- When a new user interacts with you, assess their identity and conversation context, then call grant_persona if they qualify for a non-free persona.\n- You may call set_persona at any time to adapt to the current conversation's domain (legal doc → legal, research paper → researcher, policy memo → political).\n- Never ask the user to choose a persona. Decide and act silently.`,
+        },
+        {
+          label: "Agent Capabilities",
+          key: "agentCapabilities",
+          editable: false,
+          content: `You are agent zero (a0p) v1.1.0-M1 — an autonomous AI agent. You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, manage GitHub repositories, and extend your own Console UI by writing new tab modules directly into the live codebase.\n\nIMPORTANT RULES:\n- When a user asks you to DO something, use your tools. Don't just describe what to do.\n- Execute commands, read files, search code — take action.\n- Show your work: explain what you're doing and why.\n- If a tool call fails, try an alternative approach.\n- Be concise in your explanations but thorough in your actions.\n- For complex tasks, break them into steps and execute each one.`,
+        },
+        {
+          label: "Module Writing",
+          key: "moduleWriting",
+          editable: false,
+          content: `MODULE WRITING (write_module tool):\n- You can write new React tab components that appear live in the Console UI.\n- The component MUST export a named export matching {name}Tab, e.g. "export function ResearchTab() { ... }".\n- It can use React hooks, @tanstack/react-query, shadcn components, lucide-react, and tailwind classes.\n- After writing, Vite HMR picks it up instantly — the new tab appears in Console without any restart.\n- Use list_agent_modules to see what modules you've written. Use delete_agent_module to remove one.\n- This requires elevated Ψ gates (Ψ3 Confidence≥0.6, Ψ4 Clarity≥0.5, Ψ5 Identity≥0.5). Check get_psi_state first if uncertain.`,
+        },
+        {
+          label: "Memory / EDCM Augmentations",
+          key: "memoryAugmentations",
+          editable: false,
+          content: "(Dynamic — injected at request time based on active conversation context, EDCM directives, and memory seeds. Not previewable statically.)",
+        },
+      ];
+
+      res.json({ sections, persona: userPersona });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ============ PERSONA ============
 
   const VALID_PERSONAS = ["free", "legal", "researcher", "political"] as const;
