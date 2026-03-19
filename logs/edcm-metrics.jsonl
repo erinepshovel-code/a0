@@ -271,3 +271,4 @@
 {"timestamp":"2026-03-19T05:25:30.035Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"41ae48dd7101","conversationsScanned":10,"totalMessages":92,"highEdcmCount":0,"findingsCount":0}}
 {"timestamp":"2026-03-19T05:35:47.368Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"ede94123eb0e","conversationsScanned":10,"totalMessages":92,"highEdcmCount":0,"findingsCount":0}}
 {"timestamp":"2026-03-19T05:46:31.772Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"35a9e2e4dee9","conversationsScanned":10,"totalMessages":92,"highEdcmCount":0,"findingsCount":0}}
+{"timestamp":"2026-03-19T05:57:20.378Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"e681d1efcacc","conversationsScanned":10,"totalMessages":92,"highEdcmCount":0,"findingsCount":0}}
