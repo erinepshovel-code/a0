@@ -5,6 +5,7 @@ from .contract import A0Request, A0Response
 from .logging import log_event
 from .state import load_state, save_state
 from .adapters import get_adapter
+from .ptca import assemble_system
 
 from .tools.edcm_tool import run_edcm
 from .tools.pdf_tool import run_pdf_extract
@@ -15,7 +16,9 @@ LOG_DIR = Path(__file__).resolve().parent / "logs"
 def handle(req: A0Request) -> A0Response:
     state = load_state()
     adapter = get_adapter()
+    stack = assemble_system()
     state["last_model"] = adapter.name
+    state["meta_sentinel_codes"] = stack.meta_sentinel.integrated_codes
     save_state(state)
 
     log_event(LOG_DIR, req.task_id, {
