@@ -4,14 +4,12 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ArrowLeftRight, ArrowUpDown, Loader2, Shield } from "lucide-react";
 import { useSliderOrientation } from "@/hooks/use-slider-orientation";
-import { usePersona, PERSONA_META } from "@/hooks/use-persona";
 import { useLocation } from "wouter";
 import {
   type TabGroup,
   type AgentModule,
   ALL_GROUPS,
   STATIC_TAB_IDS,
-  PERSONA_VISIBLE_TABS,
   buildAgentGroups,
   resolveIcon,
 } from "@/lib/console-config";
@@ -44,8 +42,6 @@ function toPascalCase(slug: string): string {
 }
 
 export default function ConsolePage() {
-  const { persona, isOwner } = usePersona();
-
   const { data: agentModules = [] } = useQuery<AgentModule[]>({
     queryKey: ["/api/v1/agent/modules"],
     staleTime: 30000,
@@ -66,43 +62,34 @@ export default function ConsolePage() {
     return [...merged, ...pureNewGroups];
   }, [agentTabGroups]);
 
-  const visibleGroups = useMemo<TabGroup[]>(() => {
-    if (isOwner) return mergedGroups;
-    const allowed = PERSONA_VISIBLE_TABS[persona];
-    if (!allowed) return mergedGroups;
-    return mergedGroups
-      .map(g => ({ ...g, tabs: g.tabs.filter(t => allowed.includes(t.id)) }))
-      .filter(g => g.tabs.length > 0);
-  }, [persona, isOwner, mergedGroups]);
-
-  const defaultTab = visibleGroups[0]?.tabs[0]?.id ?? "edcm";
+  const defaultTab = mergedGroups[0]?.tabs[0]?.id ?? "workflow";
 
   const [activeTab, setActiveTab] = useState<string>(() => {
     const saved = localStorage.getItem("a0p-console-tab") ?? "";
-    const inGroup = visibleGroups.some(g => g.tabs.some(t => t.id === saved));
+    const inGroup = mergedGroups.some(g => g.tabs.some(t => t.id === saved));
     return inGroup ? saved : defaultTab;
   });
 
   const [activeGroup, setActiveGroup] = useState<string>(() => {
     const saved = localStorage.getItem("a0p-console-tab") ?? "";
-    const owning = visibleGroups.find(g => g.tabs.some(t => t.id === saved));
-    return owning?.id ?? visibleGroups[0]?.id ?? "agent";
+    const owning = mergedGroups.find(g => g.tabs.some(t => t.id === saved));
+    return owning?.id ?? mergedGroups[0]?.id ?? "agent";
   });
 
   useEffect(() => {
-    const stillVisible = visibleGroups.some(g => g.tabs.some(t => t.id === activeTab));
+    const stillVisible = mergedGroups.some(g => g.tabs.some(t => t.id === activeTab));
     if (!stillVisible) {
-      const first = visibleGroups[0]?.tabs[0]?.id ?? "workflow";
+      const first = mergedGroups[0]?.tabs[0]?.id ?? "workflow";
       setActiveTab(first);
-      setActiveGroup(visibleGroups[0]?.id ?? "agent");
+      setActiveGroup(mergedGroups[0]?.id ?? "agent");
     }
-  }, [persona, isOwner, visibleGroups]);
+  }, [mergedGroups]);
 
   const { orientation, toggleOrientation, isVertical } = useSliderOrientation();
 
   function selectGroup(groupId: string) {
     setActiveGroup(groupId);
-    const group = visibleGroups.find(g => g.id === groupId);
+    const group = mergedGroups.find(g => g.id === groupId);
     if (group && !group.tabs.find(t => t.id === activeTab)) {
       const firstTab = group.tabs[0].id;
       setActiveTab(firstTab);
@@ -115,9 +102,8 @@ export default function ConsolePage() {
     localStorage.setItem("a0p-console-tab", tabId);
   }
 
-  const currentGroup = visibleGroups.find(g => g.id === activeGroup) ?? visibleGroups[0];
+  const currentGroup = mergedGroups.find(g => g.id === activeGroup) ?? mergedGroups[0];
   const [, navigate] = useLocation();
-  const personaMeta = PERSONA_META[persona];
 
   const dynCache = useRef<Map<string, React.ComponentType<any>>>(new Map());
   const [DynComp, setDynComp] = useState<React.ComponentType<any> | null>(null);
@@ -150,15 +136,6 @@ export default function ConsolePage() {
       <header className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card flex-shrink-0 min-w-0">
         <Shield className="w-4 h-4 text-primary flex-shrink-0" />
         <span className="font-semibold text-sm flex-shrink-0">Console</span>
-        <button
-          onClick={() => navigate("/pricing")}
-          className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-border hover:border-primary/50 hover:bg-accent transition-colors text-[11px] text-muted-foreground hover:text-foreground flex-1 min-w-0 max-w-fit"
-          data-testid="button-persona-badge"
-          title={`Current plan: ${personaMeta.label} — tap to change`}
-        >
-          <span>{personaMeta.icon}</span>
-          <span className={cn("font-medium truncate", personaMeta.color)}>{personaMeta.label}</span>
-        </button>
         <div className="flex-1" />
         <Button
           size="icon"
@@ -171,7 +148,7 @@ export default function ConsolePage() {
       </header>
 
       <div className="flex gap-1 px-2 py-1 bg-card border-b border-border flex-shrink-0 overflow-x-auto min-w-0 max-w-full scrollbar-none">
-        {visibleGroups.map((group) => (
+        {mergedGroups.map((group) => (
           <button
             key={group.id}
             onClick={() => selectGroup(group.id)}

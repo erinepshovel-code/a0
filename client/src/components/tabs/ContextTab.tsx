@@ -6,11 +6,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Check, ChevronDown, ChevronRight, Crown, Lock, Pencil } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Lock, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Section = { label: string; key: string; editable: boolean; content: string };
-type FullPreview = { sections: Section[]; persona: string; isOwner?: boolean };
+type FullPreview = { sections: Section[] };
 
 function SectionBlock({ section, value, onChange, onSave, saving }: {
   section: Section;
@@ -118,8 +118,6 @@ export function ContextTab() {
     }
   }
 
-  const isOwner = preview?.isOwner ?? false;
-
   const rawAssembled = preview?.sections.map(s => {
     const val = values[s.key] ?? s.content;
     return `# ${s.label.toUpperCase()}${s.editable ? " [editable]" : " [system]"}\n${val}`;
@@ -138,23 +136,11 @@ export function ContextTab() {
           className={cn("px-3 py-1 rounded-full text-[11px] font-medium transition-colors", view === "raw" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
           data-testid="button-view-raw"
         >Full Prompt</button>
-        {preview && (
-          <div className="ml-auto flex items-center gap-1.5">
-            {isOwner && <Badge variant="outline" className="text-[9px] border-amber-400/50 text-amber-400 gap-0.5"><Crown className="w-2.5 h-2.5" />owner</Badge>}
-            <Badge variant="outline" className="text-[9px]">persona: {preview.persona}</Badge>
-          </div>
-        )}
       </div>
 
       <ScrollArea className="flex-1 px-3">
         <div className="space-y-2 pb-4">
           {isLoading && <div className="text-xs text-muted-foreground text-center py-8">Loading prompt…</div>}
-
-          {!isOwner && !isLoading && (
-            <div className="rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-[10px] text-amber-500">
-              System blocks are read-only. Owner account can edit all sections.
-            </div>
-          )}
 
           {view === "sections" && preview?.sections.map(section => (
             <SectionBlock
