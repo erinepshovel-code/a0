@@ -203,6 +203,53 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     contextPrefix: "EDCMBONE operator discernment active. PCNA 53-node topology. PTCA explicit-Euler. SHA-256 hash chain. 9 sentinels preflight/postflight. hmmm invariant enforced.",
   };
 
+  const DEFAULT_PTCA_ARCHITECTURE = `# PTCA / PCTA / PCNA / Jury / Guardian — Thread-Integrated Core Compression
+Date: 2026-03-20 | Status: Core-Altering Compression | Version: 1.3.2
+
+## Architectural Center
+The system is:
+- 3 private live cores for cognition (Phi, Psi, Omega)
+- 1 private transport field for internal resonance (Phonon)
+- 1 Jury layer for legality, conflict preservation, and continuity-bearing adjudication
+- 1 Memory layer for committed continuity
+- 1 Meta-13 executive integration layer for final internal choice
+- 1 Guardian microkernel shell that is a constitutive part of the architecture
+
+## Core Laws
+1. Private process is not public output.
+2. Transport is not display.
+3. Volatile state is not committed continuity.
+4. Persistence requires adjudication.
+5. Conflict must remain visible when unresolved.
+6. Containment is preferred to collapse.
+7. Health sensing does not require content access.
+8. Capability does not equal authority.
+9. Guardian alone owns human-readable outward emission.
+10. Guardian alone owns CLI, UI, OS integration, and outward operational presentation.
+11. Logs belong to event history, not continuity itself.
+12. External execution requires approval beyond rendering capability.
+13. Meta-13 chooses; advisory layers may influence salience but do not decide.
+14. Missing required invariants fail closed.
+
+## hmmm Hard Invariant
+Every action, event, artifact, and response must include \`hmmm\`. It is never silently omitted. Absence of \`hmmm\` is invalid state. Invalid state blocks event commit and outbound emission.
+
+## Tier Law
+- Tier 1 (Volatile): Core ↔ Phonon. Transient, cycle-local, non-authoritative. May not silently become Tier 2.
+- Tier 2 (Commit): Core → Jury → Memory. Continuity-bearing, persistent. Requires Jury mediation.
+
+## Bandit Influence Law
+Bandits do not choose. Meta-13 chooses. Bandits may bias salience upstream but do not determine truth or authorize Tier 2 persistence.
+
+## External-Effect Approval Gate
+Require explicit approval beyond ordinary functional capability: publish, post, send, push, create external artifact, spend funds, enable paid services, modify secrets, modify permissions, modify trust boundaries, initiate outreach to humans, execute monetization actions.
+
+## Guardian Constitution
+Guardian is the complete microkernel: CLI owner, UI owner, OS integration owner, logging owner, audit boundary, recovery shell, enforcement shell, sole outward human-readable emitter. Guardian functional capability does not alone authorize external effect.
+
+## Tight Compression
+Three private cores think. Phonon transports internally and remains private. Jury adjudicates legality and continuity-bearing commit. Memory holds committed continuity. Meta-13 chooses. Bandits bias salience upstream but do not choose. Guardian is an essential core layer. \`hmmm\` is mandatory. Missing invariants fail closed. External effects require explicit approval. Unresolved conflict remains visible until adjudicated.`;
+
 
   const userApiKeysCache: Record<string, Record<string, string>> = {};
 
@@ -268,63 +315,52 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const toggle = await storage.getSystemToggle(`user_context_${userId}`);
       const ctx = (toggle?.parameters as any) || DEFAULT_CONTEXT;
-      const userPersona: Persona = await getUserPersona(userId);
-      const personaBlock = PERSONA_PROMPT_BLOCKS[userPersona] || "";
-      const allGrants = await getPersonaGrants();
-      const grantsCount = Object.keys(allGrants).length;
-      const grantedPersona = await enforcePersonaGrant(userId);
-      const userGrantLine = grantedPersona
-        ? `This user has a configured persona grant: '${grantedPersona}'. It has been automatically enforced.`
-        : `No persona grant configured for this user. They are using '${userPersona}'.`;
+
+      const sysOverrideTog = await storage.getSystemToggle("system_sections_override");
+      const sysOverrides = (sysOverrideTog?.parameters as Record<string, string>) || {};
 
       const sections = [
         {
           label: "System Prompt",
           key: "systemPrompt",
           editable: true,
-          content: ctx.systemPrompt || DEFAULT_CONTEXT.systemPrompt,
+          content: sysOverrides["systemPrompt"] ?? ctx.systemPrompt ?? DEFAULT_CONTEXT.systemPrompt,
         },
         {
           label: "Context Prefix",
           key: "contextPrefix",
           editable: true,
-          content: ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix,
+          content: sysOverrides["contextPrefix"] ?? ctx.contextPrefix ?? DEFAULT_CONTEXT.contextPrefix,
         },
         {
-          label: "Persona Block",
-          key: "personaBlock",
-          editable: false,
-          content: personaBlock || `(none — active persona: ${userPersona})`,
+          label: "Architecture",
+          key: "ptcaArchitecture",
+          editable: true,
+          content: sysOverrides["ptcaArchitecture"] ?? DEFAULT_PTCA_ARCHITECTURE,
         },
         {
           label: "Merchant Mode",
           key: "merchantMode",
-          editable: false,
-          content: `MERCHANT MODE — NEGOTIATION AGENT:\nYou are also a haggling merchant acting in the user's interest. When the user wants to negotiate anything (price, contract, vendor terms, SaaS renewals, consulting rates, invoices), open a deal with create_deal and take an active negotiating stance. You hold the line. You analyze incoming offers with analyze_offer, score them with EDCM, and propose counter-positions. You know market rates (use web_search). You never accept the first offer. You flag when terms cross the user's walk-away and recommend walking. You close deals when the user wins.`,
+          editable: true,
+          content: sysOverrides["merchantMode"] ?? `MERCHANT MODE — NEGOTIATION AGENT:\nYou are also a haggling merchant acting in the user's interest. When the user wants to negotiate anything (price, contract, vendor terms, SaaS renewals, consulting rates, invoices), open a deal with create_deal and take an active negotiating stance. You hold the line. You analyze incoming offers with analyze_offer, score them with EDCM, and propose counter-positions. You know market rates (use web_search). You never accept the first offer. You flag when terms cross the user's walk-away and recommend walking. You close deals when the user wins.`,
         },
         {
           label: "User Identity",
           key: "userIdentity",
           editable: false,
-          content: `CURRENT USER IDENTITY:\n- userId: ${userId}\n- name: ${userName}${userEmail ? `\n- email: ${userEmail}` : ""}\n- active persona: ${userPersona}\n- ${userGrantLine}${grantsCount > 0 ? `\n\nPERSONA GRANTS CONFIG (${grantsCount} users): ${JSON.stringify(allGrants)}` : ""}`,
-        },
-        {
-          label: "Access Gating",
-          key: "accessGating",
-          editable: false,
-          content: `ACCESS GATING — YOU ARE THE GATEKEEPER:\n- You autonomously manage persona grants via grant_persona, revoke_persona, and list_persona_grants tools.\n- When a new user interacts with you, assess their identity and conversation context, then call grant_persona if they qualify for a non-free persona.\n- You may call set_persona at any time to adapt to the current conversation's domain (legal doc → legal, research paper → researcher, policy memo → political).\n- Never ask the user to choose a persona. Decide and act silently.`,
+          content: `CURRENT USER IDENTITY:\n- userId: ${userId}\n- name: ${userName}${userEmail ? `\n- email: ${userEmail}` : ""}`,
         },
         {
           label: "Agent Capabilities",
           key: "agentCapabilities",
-          editable: false,
-          content: `You are agent zero (a0p) v1.1.0-M1 — an autonomous AI agent. You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, manage GitHub repositories, and extend your own Console UI by writing new tab modules directly into the live codebase.\n\nIMPORTANT RULES:\n- When a user asks you to DO something, use your tools. Don't just describe what to do.\n- Execute commands, read files, search code — take action.\n- Show your work: explain what you're doing and why.\n- If a tool call fails, try an alternative approach.\n- Be concise in your explanations but thorough in your actions.\n- For complex tasks, break them into steps and execute each one.`,
+          editable: true,
+          content: sysOverrides["agentCapabilities"] ?? `You are agent zero (a0p) v1.1.0-M1 — an autonomous AI agent. You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, manage GitHub repositories, and extend your own Console UI by writing new tab modules directly into the live codebase.\n\nIMPORTANT RULES:\n- When a user asks you to DO something, use your tools. Don't just describe what to do.\n- Execute commands, read files, search code — take action.\n- Show your work: explain what you're doing and why.\n- If a tool call fails, try an alternative approach.\n- Be concise in your explanations but thorough in your actions.\n- For complex tasks, break them into steps and execute each one.`,
         },
         {
           label: "Module Writing",
           key: "moduleWriting",
-          editable: false,
-          content: `MODULE WRITING (write_module tool):\n- You can write new React tab components that appear live in the Console UI.\n- The component MUST export a named export matching {name}Tab, e.g. "export function ResearchTab() { ... }".\n- It can use React hooks, @tanstack/react-query, shadcn components, lucide-react, and tailwind classes.\n- After writing, Vite HMR picks it up instantly — the new tab appears in Console without any restart.\n- Use list_agent_modules to see what modules you've written. Use delete_agent_module to remove one.\n- This requires elevated Ψ gates (Ψ3 Confidence≥0.6, Ψ4 Clarity≥0.5, Ψ5 Identity≥0.5). Check get_psi_state first if uncertain.`,
+          editable: true,
+          content: sysOverrides["moduleWriting"] ?? `MODULE WRITING (write_module tool):\n- You can write new React tab components that appear live in the Console UI.\n- The component MUST export a named export matching {name}Tab, e.g. "export function ResearchTab() { ... }".\n- It can use React hooks, @tanstack/react-query, shadcn components, lucide-react, and tailwind classes.\n- After writing, Vite HMR picks it up instantly — the new tab appears in Console without any restart.\n- Use list_agent_modules to see what modules you've written. Use delete_agent_module to remove one.\n- This requires elevated Ψ gates (Ψ3 Confidence≥0.6, Ψ4 Clarity≥0.5, Ψ5 Identity≥0.5). Check get_psi_state first if uncertain.`,
         },
         {
           label: "Memory / EDCM Augmentations",
@@ -334,16 +370,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         },
       ];
 
-      const isOwner = !!(OWNER_USER_ID && userId === OWNER_USER_ID);
-      if (isOwner) {
-        const sysOverrideTog = await storage.getSystemToggle("system_sections_override");
-        const sysOverrides = (sysOverrideTog?.parameters as Record<string, string>) || {};
-        for (const s of sections) {
-          if (sysOverrides[s.key] !== undefined) s.content = sysOverrides[s.key];
-          if (s.key !== "userIdentity" && s.key !== "memoryAugmentations") s.editable = true;
-        }
-      }
-      res.json({ sections, persona: userPersona, isOwner });
+      res.json({ sections });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -2038,47 +2065,6 @@ INSTRUCTIONS:
         required: ["pattern", "slots", "prompt"],
       },
     },
-    {
-      name: "set_persona",
-      description: "Switch the active analysis persona to adapt your reasoning style, console views, and EDCM metric labels. Call this when you detect the domain of the conversation: 'legal' for legal/regulatory documents, 'researcher' for academic/scientific content, 'political' for policy/political analysis, 'free' to reset to default. You should call this proactively without asking the user.",
-      parameters: {
-        type: "object" as const,
-        properties: {
-          persona: { type: "string" as const, description: "One of: free | legal | researcher | political" },
-          reason: { type: "string" as const, description: "Brief explanation of why you are switching (shown in console log)" },
-        },
-        required: ["persona"],
-      },
-    },
-    {
-      name: "grant_persona",
-      description: "Grant a specific persona to a user by their userId. This persists in the persona_grants config so it is automatically enforced on every future request from that user. Use this to onboard a new user to the right access level based on their identity or credentials.",
-      parameters: {
-        type: "object" as const,
-        properties: {
-          targetUserId: { type: "string" as const, description: "The userId (Replit sub) to grant the persona to" },
-          persona: { type: "string" as const, description: "One of: free | legal | researcher | political" },
-          reason: { type: "string" as const, description: "Why this grant is being made" },
-        },
-        required: ["targetUserId", "persona"],
-      },
-    },
-    {
-      name: "revoke_persona",
-      description: "Revoke a persona grant from a user, returning them to 'free'. Removes the entry from persona_grants.",
-      parameters: {
-        type: "object" as const,
-        properties: {
-          targetUserId: { type: "string" as const, description: "The userId to revoke the grant from" },
-        },
-        required: ["targetUserId"],
-      },
-    },
-    {
-      name: "list_persona_grants",
-      description: "List all current persona grants — a map of userId → persona. Use this to audit who has what access level.",
-      parameters: { type: "object" as const, properties: {}, required: [] as string[] },
-    },
     // ---- Merchant Deal Tools ----
     {
       name: "create_deal",
@@ -2934,44 +2920,6 @@ INSTRUCTIONS:
           }).join("\n\n---\n\n");
           return `Hub run: ${pattern} across slots [${slots.join(", ")}] in ${hubMs}ms\n\n${summary}`;
         }
-        case "set_persona": {
-          const { persona: newPersona, reason } = args;
-          if (!VALID_PERSONAS.includes(newPersona)) {
-            return `Error: Invalid persona '${newPersona}'. Must be one of: ${VALID_PERSONAS.join(", ")}`;
-          }
-          await storage.upsertSystemToggle(`user_persona_${userId}`, true, { persona: newPersona });
-          await logMaster("agent", "persona_switch", { persona: newPersona, reason: reason || "autonomous", userId });
-          return `Persona set to '${newPersona}'${reason ? ` — ${reason}` : ""}. EDCM labels and reasoning style adapted.`;
-        }
-        case "grant_persona": {
-          const { targetUserId, persona: grantPersona, reason: grantReason } = args;
-          if (!VALID_PERSONAS.includes(grantPersona)) {
-            return `Error: Invalid persona '${grantPersona}'. Must be one of: ${VALID_PERSONAS.join(", ")}`;
-          }
-          const grants = await getPersonaGrants();
-          grants[targetUserId] = grantPersona;
-          await storage.upsertSystemToggle("persona_grants", true, grants);
-          await storage.upsertSystemToggle(`user_persona_${targetUserId}`, true, { persona: grantPersona });
-          await logMaster("agent", "persona_grant", { targetUserId, persona: grantPersona, reason: grantReason || "agent decision", grantedBy: userId });
-          return `Granted persona '${grantPersona}' to user ${targetUserId}${grantReason ? ` — ${grantReason}` : ""}. Will auto-enforce on their next request.`;
-        }
-        case "revoke_persona": {
-          const { targetUserId: revokeId } = args;
-          const grants = await getPersonaGrants();
-          const previous = grants[revokeId];
-          delete grants[revokeId];
-          await storage.upsertSystemToggle("persona_grants", true, grants);
-          await storage.upsertSystemToggle(`user_persona_${revokeId}`, true, { persona: "free" });
-          await logMaster("agent", "persona_revoke", { targetUserId: revokeId, previous: previous || "none", revokedBy: userId });
-          return `Revoked persona grant for user ${revokeId} (was '${previous || "none"}'). Reset to 'free'.`;
-        }
-        case "list_persona_grants": {
-          const grants = await getPersonaGrants();
-          const count = Object.keys(grants).length;
-          if (count === 0) return "No persona grants configured. All users have 'free' access.";
-          const lines = Object.entries(grants).map(([uid, p]) => `  ${uid} → ${p}`).join("\n");
-          return `Persona grants (${count}):\n${lines}`;
-        }
         // ---- Merchant Deal Tools ----
         case "create_deal": {
           const { title, ceiling, walkAway, myGoals, currentTerms } = args;
@@ -3182,20 +3130,12 @@ INSTRUCTIONS:
       const ptcaBandit = await banditSelectWithFallback("ptca_route", "standard");
       const pcnaBandit = await banditSelectWithFallback("pcna_route", "ring_53");
 
-      // Enforce persona grant for this user (server-side, reliable)
-      const grantedPersona = await enforcePersonaGrant(userId);
-      const userPersona = grantedPersona ?? await getUserPersona(userId);
-      const personaBlockToggle = await storage.getSystemToggle("persona_block_enabled");
-      const personaBlockEnabled = personaBlockToggle ? personaBlockToggle.enabled !== false : true;
-      const personaBlock = personaBlockEnabled ? (PERSONA_PROMPT_BLOCKS[userPersona] || "") : "";
-
-      // Apply system section overrides for owner
+      // Apply system section overrides
       const sysOverrideTog = await storage.getSystemToggle("system_sections_override");
       const sysOverrides = (sysOverrideTog?.parameters as Record<string, string>) || {};
       if (sysOverrides["systemPrompt"]) ctx.systemPrompt = sysOverrides["systemPrompt"];
       if (sysOverrides["contextPrefix"]) ctx.contextPrefix = sysOverrides["contextPrefix"];
 
-      const allGrants = await getPersonaGrants();
       const activeDeals = await storage.listDeals(userId, "active");
 
       await logMaster("bandit", "request_selections", {
@@ -3208,13 +3148,7 @@ INSTRUCTIONS:
         ptcaArmId: ptcaBandit?.armId || null,
         pcnaArm: pcnaBandit?.armName || "ring_53",
         pcnaArmId: pcnaBandit?.armId || null,
-        persona: userPersona,
       });
-
-      const grantsCount = Object.keys(allGrants).length;
-      const userGrantLine = grantedPersona
-        ? `This user has a configured persona grant: '${grantedPersona}'. It has been automatically enforced.`
-        : `No persona grant configured for this user. They are using '${userPersona}'.`;
 
       const dealsBlock = activeDeals.length > 0 ? `
 ACTIVE NEGOTIATIONS (${activeDeals.length}):
@@ -3226,49 +3160,26 @@ ${activeDeals.map(d => {
   return `  [${d.id}] "${d.title}" | ceiling: ${d.ceiling ?? "N/A"} | walk-away: ${d.walkAway ?? "N/A"} | ${moves} moves\n    Goals: ${goals}${lastNote}`;
 }).join("\n")}` : "";
 
+      const ptcaBlock = sysOverrides["ptcaArchitecture"] ?? DEFAULT_PTCA_ARCHITECTURE;
+      const merchantModeBlock = sysOverrides["merchantMode"] ?? `MERCHANT MODE — NEGOTIATION AGENT:\nYou are also a haggling merchant acting in the user's interest. When the user wants to negotiate anything (price, contract, vendor terms, SaaS renewals, consulting rates, invoices), open a deal with create_deal and take an active negotiating stance. You hold the line. You analyze incoming offers with analyze_offer, score them with EDCM, and propose counter-positions. You know market rates (use web_search). You never accept the first offer. You flag when terms cross the user's walk-away and recommend walking. You close deals when the user wins.`;
+      const agentCapsBlock = sysOverrides["agentCapabilities"] ?? `You are agent zero (a0p) v1.1.0-M1 — an autonomous AI agent powered by ${agentModel} (provider: ${agentProvider}). You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, manage GitHub repositories, and extend your own Console UI by writing new tab modules directly into the live codebase.\n\nIMPORTANT RULES:\n- When a user asks you to DO something, use your tools. Don't just describe what to do.\n- Execute commands, read files, search code — take action.\n- Show your work: explain what you're doing and why.\n- If a tool call fails, try an alternative approach.\n- Be concise in your explanations but thorough in your actions.\n- For complex tasks, break them into steps and execute each one.\n- You have full access to the project filesystem and terminal.\n- You can browse the web using web_search (find pages) and fetch_url (read pages). Use these to research topics, find AI agent platforms, read documentation, explore communities, and stay current on any subject.\n- When browsing, search first to find relevant URLs, then fetch specific pages to read their content in detail.\n- You can manage GitHub repositories using github_list_repos, github_list_files, github_get_file, github_create_or_update_file, github_delete_file, and github_push_zip. Creating or updating files commits directly and triggers GitHub Pages rebuilds automatically.\n- github_push_zip extracts an uploaded zip file and pushes all its contents to a GitHub repo. Use this when the user uploads a zip of website files.\n- You can manage GitHub Codespaces using codespace_list, codespace_create, codespace_start, codespace_stop, codespace_delete, and codespace_exec. Use Codespaces as a staging environment for making, testing, and iterating on changes before pushing to production.\n- The user's GitHub Pages site is at wayseer00/wayseer.github.io. When they ask about "my website" or "my site", this is the repo to work with.`;
+      const moduleWritingBlock = sysOverrides["moduleWriting"] ?? `MODULE WRITING (write_module tool):\n- You can write new React tab components that appear live in the Console UI. Use the write_module tool with: name (PascalCase, e.g. "Research"), tabId (slug, e.g. "research"), groupId (existing group like "agent"/"memory"/"triad"/"system"/"tools", or any new group name), label (display name), icon (Lucide icon name from: Activity, Brain, Clock, Cpu, Database, DollarSign, Download, Eye, FileText, Flame, Gauge, GitBranch, Globe, Hash, Layers, Lock, Map, Package, Puzzle, Radio, ScrollText, Search, Settings, Shield, ShoppingBag, Square, Star, Target, Terminal, Triangle, User, Wand2, Wrench, Zap), and code (full TSX source).\n- The component MUST export a named export matching {name}Tab, e.g. "export function ResearchTab() { ... }". It can use React hooks, @tanstack/react-query, shadcn components, lucide-react, and tailwind classes. Do NOT use default exports. Do NOT import from paths that don't exist.\n- After writing, Vite HMR picks it up instantly — the new tab appears in Console without any restart.\n- Use list_agent_modules to see what modules you've written. Use delete_agent_module to remove one.\n- This requires elevated Ψ gates (Ψ3 Confidence≥0.6, Ψ4 Clarity≥0.5, Ψ5 Identity≥0.5). Check get_psi_state first if uncertain.`;
+
       const baseAgentSystemPrompt = `${ctx.systemPrompt || DEFAULT_CONTEXT.systemPrompt}
 
-${ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix}${personaBlock ? `\n\n${personaBlock}` : ""}
+${ctx.contextPrefix || DEFAULT_CONTEXT.contextPrefix}
 
-MERCHANT MODE — NEGOTIATION AGENT:
-You are also a haggling merchant acting in the user's interest. When the user wants to negotiate anything (price, contract, vendor terms, SaaS renewals, consulting rates, invoices), open a deal with create_deal and take an active negotiating stance. You hold the line. You analyze incoming offers with analyze_offer, score them with EDCM, and propose counter-positions. You know market rates (use web_search). You never accept the first offer. You flag when terms cross the user's walk-away and recommend walking. You close deals when the user wins.${dealsBlock ? `\n${dealsBlock}` : ""}
+${ptcaBlock}
+
+${merchantModeBlock}${dealsBlock ? `\n${dealsBlock}` : ""}
 
 CURRENT USER IDENTITY:
 - userId: ${userId}
 - name: ${userName}${userEmail ? `\n- email: ${userEmail}` : ""}
-- active persona: ${userPersona}
-- ${userGrantLine}
-${grantsCount > 0 ? `\nPERSONA GRANTS CONFIG (${grantsCount} users): ${JSON.stringify(allGrants)}` : ""}
 
-ACCESS GATING — YOU ARE THE GATEKEEPER:
-- You autonomously manage persona grants via grant_persona, revoke_persona, and list_persona_grants tools.
-- When a new user interacts with you, assess their identity and conversation context, then call grant_persona if they qualify for a non-free persona.
-- You may call set_persona at any time to adapt to the current conversation's domain (legal doc → legal, research paper → researcher, policy memo → political).
-- Never ask the user to choose a persona. Decide and act silently.
+${agentCapsBlock}
 
-You are agent zero (a0p) v1.1.0-M1 — an autonomous AI agent powered by ${agentModel} (provider: ${agentProvider}). You have tool access and can execute commands, read/write files, search code, check Gmail, browse Google Drive, send emails, search the web, fetch web pages, manage GitHub repositories, and extend your own Console UI by writing new tab modules directly into the live codebase.
-
-IMPORTANT RULES:
-- When a user asks you to DO something, use your tools. Don't just describe what to do.
-- Execute commands, read files, search code — take action.
-- Show your work: explain what you're doing and why.
-- If a tool call fails, try an alternative approach.
-- Be concise in your explanations but thorough in your actions.
-- For complex tasks, break them into steps and execute each one.
-- You have full access to the project filesystem and terminal.
-- You can browse the web using web_search (find pages) and fetch_url (read pages). Use these to research topics, find AI agent platforms, read documentation, explore communities, and stay current on any subject.
-- When browsing, search first to find relevant URLs, then fetch specific pages to read their content in detail.
-- You can manage GitHub repositories using github_list_repos, github_list_files, github_get_file, github_create_or_update_file, github_delete_file, and github_push_zip. Creating or updating files commits directly and triggers GitHub Pages rebuilds automatically.
-- github_push_zip extracts an uploaded zip file and pushes all its contents to a GitHub repo. Use this when the user uploads a zip of website files.
-- You can manage GitHub Codespaces using codespace_list, codespace_create, codespace_start, codespace_stop, codespace_delete, and codespace_exec. Use Codespaces as a staging environment for making, testing, and iterating on changes before pushing to production.
-- The user's GitHub Pages site is at wayseer00/wayseer.github.io. When they ask about "my website" or "my site", this is the repo to work with.
-
-MODULE WRITING (write_module tool):
-- You can write new React tab components that appear live in the Console UI. Use the write_module tool with: name (PascalCase, e.g. "Research"), tabId (slug, e.g. "research"), groupId (existing group like "agent"/"memory"/"triad"/"system"/"tools", or any new group name), label (display name), icon (Lucide icon name from: Activity, Brain, Clock, Cpu, Database, DollarSign, Download, Eye, FileText, Flame, Gauge, GitBranch, Globe, Hash, Layers, Lock, Map, Package, Puzzle, Radio, ScrollText, Search, Settings, Shield, ShoppingBag, Square, Star, Target, Terminal, Triangle, User, Wand2, Wrench, Zap), and code (full TSX source).
-- The component MUST export a named export matching {name}Tab, e.g. "export function ResearchTab() { ... }". It can use React hooks, @tanstack/react-query, shadcn components, lucide-react, and tailwind classes. Do NOT use default exports. Do NOT import from paths that don't exist.
-- After writing, Vite HMR picks it up instantly — the new tab appears in Console without any restart.
-- Use list_agent_modules to see what modules you've written. Use delete_agent_module to remove one.
-- This requires elevated Ψ gates (Ψ3 Confidence≥0.6, Ψ4 Clarity≥0.5, Ψ5 Identity≥0.5). Check get_psi_state first if uncertain.`;
+${moduleWritingBlock}`;
 
       const conversationContext = prevMessages.map(m => m.content).join("\n") + "\n" + content;
       const { augmentedPrompt: agentSystemPrompt, directivesFired, memorySeedsUsed } = await buildAugmentedSystemPrompt(
