@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "a0python"
+version = "0.1.0"
+description = "a0 — PTCA-structured cognitive routing shell"
+requires-python = ">=3.10"
+
+dependencies = [
+    "anyio>=4.0",
+    "textual>=0.50",
+]
+
+[project.optional-dependencies]
+agent = [
+    "claude-agent-sdk",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+a0 = "a0.a0:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["a0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
