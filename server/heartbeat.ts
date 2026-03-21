@@ -1499,7 +1499,7 @@ async function tick(): Promise<void> {
           if (process.env.XAI_API_KEY) hubConnections.push({ name: "xai-grok", toolName: "query_xai_hub", desc: "Query the xAI Grok hub model for general knowledge and analysis" });
           try {
             const toggles = await storage.getSystemToggles();
-            const hubToggle = toggles.find((t: any) => t.key === "hub_connections");
+            const hubToggle = toggles.find((t: any) => t.subsystem === "hub_connections");
             if (hubToggle?.parameters && Array.isArray((hubToggle.parameters as any).hubs)) {
               for (const h of (hubToggle.parameters as any).hubs) {
                 const hName = (h.name || "unknown").replace(/[^a-z0-9]/gi, "_").toLowerCase();
