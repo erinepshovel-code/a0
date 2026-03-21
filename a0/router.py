@@ -22,7 +22,7 @@ def handle(req: A0Request) -> A0Response:
         "type": "request",
         "mode": req.mode,
         "tools_allowed": req.tools_allowed,
-        "hmm": req.hmm
+        "hmmm": req.hmmm,
     })
 
     text = (req.input or {}).get("text", "")
@@ -30,19 +30,19 @@ def handle(req: A0Request) -> A0Response:
 
     if "pdf_extract" in req.tools_allowed and files:
         out = run_pdf_extract(files)
-        log_event(LOG_DIR, req.task_id, {"type": "tool", "name": "pdf_extract"})
-        return A0Response(task_id=req.task_id, result={"text": "", "artifacts": [out]}, hmm=req.hmm)
+        log_event(LOG_DIR, req.task_id, {"type": "tool", "name": "pdf_extract", "hmmm": []})
+        return A0Response(task_id=req.task_id, result={"text": "", "artifacts": [out]}, hmmm=req.hmmm)
 
     if "whisper" in req.tools_allowed and files:
         out = run_whisper_segments(files)
-        log_event(LOG_DIR, req.task_id, {"type": "tool", "name": "whisper"})
-        return A0Response(task_id=req.task_id, result={"text": "", "artifacts": [out]}, hmm=req.hmm)
+        log_event(LOG_DIR, req.task_id, {"type": "tool", "name": "whisper", "hmmm": []})
+        return A0Response(task_id=req.task_id, result={"text": "", "artifacts": [out]}, hmmm=req.hmmm)
 
     if "edcm" in req.tools_allowed:
         out = run_edcm(text)
-        log_event(LOG_DIR, req.task_id, {"type": "tool", "name": "edcm"})
-        return A0Response(task_id=req.task_id, result={"text": "", "artifacts": [out]}, hmm=req.hmm)
+        log_event(LOG_DIR, req.task_id, {"type": "tool", "name": "edcm", "hmmm": []})
+        return A0Response(task_id=req.task_id, result={"text": "", "artifacts": [out]}, hmmm=req.hmmm)
 
     resp = adapter.complete([{"role": "user", "content": text}])
-    log_event(LOG_DIR, req.task_id, {"type": "model", "name": adapter.name})
-    return A0Response(task_id=req.task_id, result={"text": resp.get("text", ""), "artifacts": []}, hmm=req.hmm)
+    log_event(LOG_DIR, req.task_id, {"type": "model", "name": adapter.name, "hmmm": []})
+    return A0Response(task_id=req.task_id, result={"text": resp.get("text", ""), "artifacts": []}, hmmm=req.hmmm)

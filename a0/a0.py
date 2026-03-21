@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import json
 import sys
 from uuid import uuid4
 
+import json
+
 from .contract import A0Request
+from .guardian.emitter import emit
 from .router import handle
 
 def main() -> None:
@@ -16,11 +18,11 @@ def main() -> None:
         input=data.get("input") or {"text": "", "files": [], "metadata": {}},
         tools_allowed=data.get("tools_allowed") or ["none"],
         mode=data.get("mode") or "analyze",
-        hmm=data.get("hmm") or ["hmm"],
+        hmmm=data.get("hmmm") or data.get("hmm") or [],
     )
 
     resp = handle(req)
-    print(json.dumps(resp.__dict__, indent=2, ensure_ascii=False))
+    emit(resp)
 
 if __name__ == "__main__":
     main()

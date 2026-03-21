@@ -6,7 +6,7 @@ REQ = {
   "input": {"text": "hello a0", "files": [], "metadata": {}},
   "tools_allowed": ["none"],
   "mode": "analyze",
-  "hmm": ["hmm"]
+  "hmmm": ["hmm"]
 }
 
 def main():

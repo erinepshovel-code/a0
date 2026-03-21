@@ -10,11 +10,11 @@ class A0Request:
     input: Dict[str, Any]
     tools_allowed: List[str] = field(default_factory=lambda: ["none"])
     mode: Mode = "analyze"
-    hmm: List[str] = field(default_factory=list)
+    hmmm: List[str] = field(default_factory=list)
 
 @dataclass
 class A0Response:
     task_id: str
     result: Dict[str, Any]
     logs: Dict[str, Any] = field(default_factory=lambda: {"events": []})
-    hmm: List[str] = field(default_factory=list)
+    hmmm: List[str] = field(default_factory=list)
