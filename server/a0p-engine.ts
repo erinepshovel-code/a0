@@ -955,6 +955,18 @@ export function resumeEngine() {
 const DEFAULT_COST_RATES: Record<string, { prompt: number; completion: number; cache: number }> = {
   "gemini": { prompt: 0.075 / 1_000_000, completion: 0.30 / 1_000_000, cache: 0.01875 / 1_000_000 },
   "grok": { prompt: 0.30 / 1_000_000, completion: 0.50 / 1_000_000, cache: 0.075 / 1_000_000 },
+  // Anthropic Claude rate cards (per million tokens)
+  "claude-3-5-sonnet": { prompt: 3.0 / 1_000_000, completion: 15.0 / 1_000_000, cache: 0.30 / 1_000_000 },
+  "claude-3-5-sonnet-20241022": { prompt: 3.0 / 1_000_000, completion: 15.0 / 1_000_000, cache: 0.30 / 1_000_000 },
+  "claude-3-5-haiku-20241022": { prompt: 0.80 / 1_000_000, completion: 4.0 / 1_000_000, cache: 0.08 / 1_000_000 },
+  "claude-opus-4-5": { prompt: 15.0 / 1_000_000, completion: 75.0 / 1_000_000, cache: 1.50 / 1_000_000 },
+  "claude-sonnet-4-5": { prompt: 3.0 / 1_000_000, completion: 15.0 / 1_000_000, cache: 0.30 / 1_000_000 },
+  "anthropic": { prompt: 3.0 / 1_000_000, completion: 15.0 / 1_000_000, cache: 0.30 / 1_000_000 },
+  // Cohere Command rate cards (per million tokens)
+  "command-r-plus": { prompt: 2.50 / 1_000_000, completion: 10.0 / 1_000_000, cache: 0.0 },
+  "command-r-plus-08-2024": { prompt: 2.50 / 1_000_000, completion: 10.0 / 1_000_000, cache: 0.0 },
+  "command-r-08-2024": { prompt: 0.15 / 1_000_000, completion: 0.60 / 1_000_000, cache: 0.0 },
+  "cohere": { prompt: 2.50 / 1_000_000, completion: 10.0 / 1_000_000, cache: 0.0 },
 };
 
 let cachedTokenRates: Record<string, { prompt: number; completion: number; cache: number }> | null = null;

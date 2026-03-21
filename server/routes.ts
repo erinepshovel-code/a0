@@ -13,6 +13,8 @@ import { getUncachableGoogleDriveClient } from "./drive";
 import { getUncachableGitHubClient, isPublicFallbackMode } from "./github";
 import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
+import { callAnthropic } from "./providers/anthropic";
+import { callCohere } from "./providers/cohere";
 import type { InsertConversation, InsertMessage } from "@shared/schema";
 import {
   processA0Request, verifyHashChain, startHeartbeat, stopHeartbeat,
@@ -585,12 +587,15 @@ Three private cores think. Phonon transports internally and remains private. Jur
     return merged;
   }
 
-  function buildSlotClient(slot: any): { client: OpenAI; model: string } {
+  function buildSlotClient(slot: any): { client: OpenAI; model: string; provider: string; apiKey: string } {
+    const provider = (slot.provider || "xai").toLowerCase();
     const apiKey = slot.apiKey || process.env.XAI_API_KEY || "";
     const baseURL = slot.baseUrl || "https://api.x.ai/v1";
     return {
       client: new OpenAI({ apiKey, baseURL }),
       model: slot.model || "grok-3-mini",
+      provider,
+      apiKey,
     };
   }
 
@@ -810,7 +815,27 @@ Three private cores think. Phonon transports internally and remains private. Jur
       const callFn: CallFn = async (slotKey: string, messages: Message[]): Promise<string> => {
         const slot = allSlots[slotKey];
         if (!slot) return `[ERROR] Unknown slot: ${slotKey}`;
-        const { client, model } = buildSlotClient(slot);
+        const { client, model, provider, apiKey } = buildSlotClient(slot);
+
+        // Route native providers
+        if (provider === "anthropic") {
+          try {
+            const sysMsg = messages.find((m) => m.role === "system");
+            const nonSys = messages.filter((m) => m.role !== "system");
+            const r = await callAnthropic({ messages: nonSys as any, systemPrompt: (sysMsg?.content as string) || "", model, maxTokens: 4096, apiKey });
+            return r.content;
+          } catch (e: any) { return `[ERROR] ${e?.message ?? e}`; }
+        }
+
+        if (provider === "cohere") {
+          try {
+            const sysMsg = messages.find((m) => m.role === "system");
+            const nonSys = messages.filter((m) => m.role !== "system");
+            const r = await callCohere({ messages: nonSys as any, systemPrompt: (sysMsg?.content as string) || "", model, maxTokens: 4096, apiKey });
+            return r.content;
+          } catch (e: any) { return `[ERROR] ${e?.message ?? e}`; }
+        }
+
         const isReasoning = model.toLowerCase().includes("reasoning");
         const abortCtrl = new AbortController();
         const timeout = setTimeout(() => abortCtrl.abort(), 60000);
@@ -1364,10 +1389,34 @@ Three private cores think. Phonon transports internally and remains private. Jur
   ): Promise<{ content: string; promptTokens: number; completionTokens: number }> {
     const allSlots = await getModelSlots();
     const slot = allSlots[slotKey] ?? allSlots["a"];
-    const { client, model } = buildSlotClient(slot);
+    const { client, model, provider, apiKey } = buildSlotClient(slot);
+    const startTime = Date.now();
+
+    // Route native providers through their dedicated adapters
+    if (provider === "anthropic") {
+      try {
+        const result = await callAnthropic({ messages, systemPrompt: sysPrompt, model, maxTokens: maxTokens || 4096, temperature, apiKey });
+        logAiTranscript({ timestamp: new Date().toISOString(), conversationId, messageId, model: `slot_${slotKey}(${model})`, request: { systemPrompt: sysPrompt, messages }, response: result.content, tokens: { prompt: result.promptTokens, completion: result.completionTokens, total: result.promptTokens + result.completionTokens }, latencyMs: Date.now() - startTime, status: "success" }).catch(() => {});
+        return result;
+      } catch (e: any) {
+        logAiTranscript({ timestamp: new Date().toISOString(), conversationId, messageId, model: `slot_${slotKey}(${model})`, request: { systemPrompt: sysPrompt, messages }, response: "", tokens: { prompt: 0, completion: 0, total: 0 }, latencyMs: Date.now() - startTime, status: "error", error: e.message }).catch(() => {});
+        throw e;
+      }
+    }
+
+    if (provider === "cohere") {
+      try {
+        const result = await callCohere({ messages, systemPrompt: sysPrompt, model, maxTokens: maxTokens || 4096, temperature, apiKey });
+        logAiTranscript({ timestamp: new Date().toISOString(), conversationId, messageId, model: `slot_${slotKey}(${model})`, request: { systemPrompt: sysPrompt, messages }, response: result.content, tokens: { prompt: result.promptTokens, completion: result.completionTokens, total: result.promptTokens + result.completionTokens }, latencyMs: Date.now() - startTime, status: "success" }).catch(() => {});
+        return result;
+      } catch (e: any) {
+        logAiTranscript({ timestamp: new Date().toISOString(), conversationId, messageId, model: `slot_${slotKey}(${model})`, request: { systemPrompt: sysPrompt, messages }, response: "", tokens: { prompt: 0, completion: 0, total: 0 }, latencyMs: Date.now() - startTime, status: "error", error: e.message }).catch(() => {});
+        throw e;
+      }
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    const startTime = Date.now();
     try {
       const chatMsgs = [
         { role: "system" as const, content: sysPrompt },
@@ -3020,7 +3069,26 @@ INSTRUCTIONS:
           const hubCallFn: CallFn = async (slotKey: string, messages: Message[]): Promise<string> => {
             const sl = hubAllSlots[slotKey];
             if (!sl) return `[ERROR] Unknown slot: ${slotKey}`;
-            const { client: hc, model: hm } = buildSlotClient(sl);
+            const { client: hc, model: hm, provider: hp, apiKey: hk } = buildSlotClient(sl);
+
+            if (hp === "anthropic") {
+              try {
+                const sysMsg = messages.find((m) => m.role === "system");
+                const nonSys = messages.filter((m) => m.role !== "system");
+                const r = await callAnthropic({ messages: nonSys as any, systemPrompt: (sysMsg?.content as string) || "", model: hm, maxTokens: 4096, apiKey: hk });
+                return r.content;
+              } catch (e: any) { return `[ERROR] ${e?.message ?? e}`; }
+            }
+
+            if (hp === "cohere") {
+              try {
+                const sysMsg = messages.find((m) => m.role === "system");
+                const nonSys = messages.filter((m) => m.role !== "system");
+                const r = await callCohere({ messages: nonSys as any, systemPrompt: (sysMsg?.content as string) || "", model: hm, maxTokens: 4096, apiKey: hk });
+                return r.content;
+              } catch (e: any) { return `[ERROR] ${e?.message ?? e}`; }
+            }
+
             const hIsReasoning = hm.toLowerCase().includes("reasoning");
             const hAbort = new AbortController();
             const hTimeout = setTimeout(() => hAbort.abort(), 60000);
