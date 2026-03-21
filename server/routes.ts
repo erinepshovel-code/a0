@@ -621,6 +621,86 @@ Three private cores think. Phonon transports internally and remains private. Jur
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  router.get("/agent/behavior", async (_req, res) => {
+    try {
+      const toggle = await storage.getSystemToggle("agent_behavior");
+      const params = (toggle?.parameters as any) || {};
+      res.json({ maxToolRounds: params.maxToolRounds ?? 25, pursueToCompletion: params.pursueToCompletion ?? false });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.patch("/agent/behavior", async (req, res) => {
+    try {
+      const { maxToolRounds, pursueToCompletion } = req.body;
+      const toggle = await storage.getSystemToggle("agent_behavior");
+      const params = (toggle?.parameters as any) || {};
+      if (maxToolRounds !== undefined) {
+        const rounds = Math.min(50, Math.max(5, parseInt(maxToolRounds)));
+        if (!isNaN(rounds)) params.maxToolRounds = rounds;
+      }
+      if (pursueToCompletion !== undefined) params.pursueToCompletion = Boolean(pursueToCompletion);
+      await storage.upsertSystemToggle("agent_behavior", true, params);
+      res.json({ ok: true, maxToolRounds: params.maxToolRounds ?? 25, pursueToCompletion: params.pursueToCompletion ?? false });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.get("/tasks", async (_req, res) => {
+    try {
+      const toggle = await storage.getSystemToggle("agent_tasks");
+      const tasks = (toggle?.parameters as any[]) || [];
+      res.json(tasks);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post("/tasks", async (req, res) => {
+    try {
+      const { title } = req.body;
+      if (!title || typeof title !== "string") return res.status(400).json({ error: "title required" });
+      const toggle = await storage.getSystemToggle("agent_tasks");
+      const tasks: any[] = (toggle?.parameters as any[]) || [];
+      const newTask = { id: `task-${Date.now()}`, title: title.trim(), status: "active", goals: [] };
+      tasks.push(newTask);
+      await storage.upsertSystemToggle("agent_tasks", true, tasks);
+      res.json(newTask);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.patch("/tasks/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const toggle = await storage.getSystemToggle("agent_tasks");
+      const tasks: any[] = (toggle?.parameters as any[]) || [];
+      const idx = tasks.findIndex((t: any) => t.id === id);
+      if (idx === -1) return res.status(404).json({ error: "task not found" });
+      const { title, status, goals, addGoal, goalId, goalDone } = req.body;
+      if (title !== undefined) tasks[idx].title = title;
+      if (status !== undefined) tasks[idx].status = status;
+      if (goals !== undefined) tasks[idx].goals = goals;
+      if (addGoal !== undefined) {
+        const newGoal = { id: `goal-${Date.now()}`, text: addGoal.trim(), done: false };
+        tasks[idx].goals = [...(tasks[idx].goals || []), newGoal];
+      }
+      if (goalId !== undefined && goalDone !== undefined) {
+        tasks[idx].goals = (tasks[idx].goals || []).map((g: any) =>
+          g.id === goalId ? { ...g, done: Boolean(goalDone) } : g
+        );
+      }
+      await storage.upsertSystemToggle("agent_tasks", true, tasks);
+      res.json(tasks[idx]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.delete("/tasks/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const toggle = await storage.getSystemToggle("agent_tasks");
+      const tasks: any[] = (toggle?.parameters as any[]) || [];
+      const filtered = tasks.filter((t: any) => t.id !== id);
+      await storage.upsertSystemToggle("agent_tasks", true, filtered);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   router.get("/agent/persona-block-enabled", async (_req, res) => {
     try {
       const toggle = await storage.getSystemToggle("persona_block_enabled");
@@ -1950,17 +2030,17 @@ INSTRUCTIONS:
     },
     {
       name: "set_goal",
-      description: "Add a goal to the PTCA-Ω autonomy goal stack. Goals drive the Goal Persistence dimension energy.",
-      parameters: { type: "object" as const, properties: { description: { type: "string" as const, description: "Goal description" }, priority: { type: "number" as const, description: "Priority 1-10" } }, required: ["description", "priority"] },
+      description: "Create a new task in the agent task list. Tasks are top-level objectives tracked in the Tasks tab.",
+      parameters: { type: "object" as const, properties: { description: { type: "string" as const, description: "Task title/description" } }, required: ["description"] },
     },
     {
       name: "complete_goal",
-      description: "Mark a PTCA-Ω goal as completed",
-      parameters: { type: "object" as const, properties: { goalId: { type: "string" as const, description: "Goal ID to complete" } }, required: ["goalId"] },
+      description: "Mark a task or sub-goal as completed by its ID. Pass taskId or goalId (both resolve to the same parameter).",
+      parameters: { type: "object" as const, properties: { goalId: { type: "string" as const, description: "Task ID or sub-goal ID to mark complete" } }, required: ["goalId"] },
     },
     {
       name: "list_goals",
-      description: "List current PTCA-Ω autonomy goals",
+      description: "List all current agent tasks with their sub-goals and completion status",
       parameters: { type: "object" as const, properties: {}, required: [] as string[] },
     },
     {
@@ -2589,20 +2669,45 @@ INSTRUCTIONS:
           return JSON.stringify(activePreset, null, 2);
         }
         case "set_goal": {
-          const goal = addOmegaGoal(args.description || "", args.priority || 5, "agent_tool");
-          await persistOmegaState();
-          return `Goal added: ${goal.id} — "${goal.description}" (priority: ${goal.priority}). Active goals: ${getOmegaState().goals.filter(g => g.status === "active").length}`;
+          const taskToggle = await storage.getSystemToggle("agent_tasks").catch(() => null);
+          const agentTasks: any[] = (taskToggle?.parameters as any[]) || [];
+          const desc = (args.description || "").trim();
+          if (!desc) return "Error: description required";
+          const newTask = { id: `task-${Date.now()}`, title: desc, status: "active", goals: [] };
+          agentTasks.push(newTask);
+          await storage.upsertSystemToggle("agent_tasks", true, agentTasks);
+          return `Task added: ${newTask.id} — "${newTask.title}". Active tasks: ${agentTasks.filter((t: any) => t.status === "active").length}`;
         }
         case "complete_goal": {
-          const ok = completeOmegaGoal(args.goalId || "", "agent_tool");
-          if (!ok) return `Error: Goal not found or already completed: ${args.goalId}`;
-          await persistOmegaState();
-          return `Goal completed: ${args.goalId}. Active goals: ${getOmegaState().goals.filter(g => g.status === "active").length}`;
+          const taskToggle = await storage.getSystemToggle("agent_tasks").catch(() => null);
+          const agentTasks: any[] = (taskToggle?.parameters as any[]) || [];
+          const targetId = args.goalId || args.taskId || "";
+          const taskIdx = agentTasks.findIndex((t: any) => t.id === targetId);
+          if (taskIdx !== -1) {
+            agentTasks[taskIdx].status = "completed";
+            await storage.upsertSystemToggle("agent_tasks", true, agentTasks);
+            return `Task completed: ${targetId}. Active tasks: ${agentTasks.filter((t: any) => t.status === "active").length}`;
+          }
+          for (const task of agentTasks) {
+            const goalIdx = (task.goals || []).findIndex((g: any) => g.id === targetId);
+            if (goalIdx !== -1) {
+              task.goals[goalIdx].done = true;
+              await storage.upsertSystemToggle("agent_tasks", true, agentTasks);
+              return `Sub-goal completed: ${targetId} in task "${task.title}".`;
+            }
+          }
+          return `Error: Task/goal not found: ${targetId}`;
         }
         case "list_goals": {
-          const state = getOmegaState();
-          if (state.goals.length === 0) return "No goals set.";
-          return state.goals.map(g => `[${g.status}] ${g.id}: ${g.description} (priority: ${g.priority})`).join("\n");
+          const taskToggle = await storage.getSystemToggle("agent_tasks").catch(() => null);
+          const agentTasks: any[] = (taskToggle?.parameters as any[]) || [];
+          if (agentTasks.length === 0) return "No tasks set.";
+          return agentTasks.map((t: any) => {
+            const goalsStr = (t.goals || []).length > 0
+              ? "\n  " + t.goals.map((g: any) => `[${g.done ? "x" : " "}] ${g.id}: ${g.text}`).join("\n  ")
+              : "";
+            return `[${t.status}] ${t.id}: ${t.title}${goalsStr}`;
+          }).join("\n");
         }
         case "get_omega_state": {
           const state = getOmegaState();
@@ -3203,7 +3308,10 @@ ${moduleWritingBlock}`;
       let fullResponse = "";
       let totalPromptTokens = 0;
       let totalCompletionTokens = 0;
-      const MAX_TOOL_ROUNDS = 25;
+      const behaviorToggle = await storage.getSystemToggle("agent_behavior").catch(() => null);
+      const behaviorParams = (behaviorToggle?.parameters as any) || {};
+      const MAX_TOOL_ROUNDS = Math.min(50, Math.max(5, behaviorParams.maxToolRounds ?? 25));
+      const pursueToCompletion = Boolean(behaviorParams.pursueToCompletion ?? false);
       let currentSystemPrompt = agentSystemPrompt;
       const toolsUsedInRequest: string[] = [];
       let roundsExhausted = false;
@@ -3249,6 +3357,8 @@ ${moduleWritingBlock}`;
 
         if (toolCalls.length === 0) break;
 
+        if (round === MAX_TOOL_ROUNDS - 1) { roundsExhausted = true; }
+
         grokMessages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
 
         for (const tc of toolCalls) {
@@ -3279,6 +3389,14 @@ ${moduleWritingBlock}`;
             if (memCtx) currentSystemPrompt += memCtx;
           } catch {}
         }
+      }
+
+      if (roundsExhausted) {
+        const notice = pursueToCompletion
+          ? "\n\n_(Tool-call limit reached. The task may need continuation — reply to continue where I left off.)_"
+          : "\n\n_(Reached the maximum tool-call rounds for this request.)_";
+        fullResponse += notice;
+        res.write(`data: ${JSON.stringify({ content: notice })}\n\n`);
       }
 
       await storage.createMessage({

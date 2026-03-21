@@ -7,16 +7,15 @@ import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Check, Plus, X, Zap, Swords, TrendingDown, TrendingUp } from "lucide-react";
+import { Zap, Swords, TrendingDown, TrendingUp } from "lucide-react";
 import { type SliderOrientationProps } from "@/lib/console-config";
 
 export function OmegaTab({ orientation, isVertical }: SliderOrientationProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [newGoal, setNewGoal] = useState("");
-  const [newGoalPriority, setNewGoalPriority] = useState(5);
   const [batchSteps, setBatchSteps] = useState(50);
   const [batchResult, setBatchResult] = useState<{ delta: number; trajectory: number[] } | null>(null);
   const [competePrompt, setCompetePrompt] = useState("");
@@ -24,24 +23,22 @@ export function OmegaTab({ orientation, isVertical }: SliderOrientationProps) {
 
   const { data: omegaState, isLoading } = useQuery<any>({ queryKey: ["/api/v1/omega/state"], refetchInterval: 5000 });
 
+  const { data: behaviorData } = useQuery<{ maxToolRounds: number; pursueToCompletion: boolean }>({
+    queryKey: ["/api/v1/agent/behavior"],
+    staleTime: 10000,
+  });
+  const behaviorMutation = useMutation({
+    mutationFn: (data: { maxToolRounds?: number; pursueToCompletion?: boolean }) =>
+      apiRequest("PATCH", "/api/v1/agent/behavior", data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/v1/agent/behavior"] }); toast({ title: "Behavior updated" }); },
+  });
+
   const modeMutation = useMutation({
     mutationFn: (mode: string) => apiRequest("POST", "/api/omega/mode", { mode }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/v1/omega/state"] }); toast({ title: "Autonomy mode updated" }); },
   });
   const biasMutation = useMutation({
     mutationFn: ({ dimension, bias }: { dimension: number; bias: number }) => apiRequest("POST", "/api/omega/bias", { dimension, bias }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/v1/omega/state"] }),
-  });
-  const goalMutation = useMutation({
-    mutationFn: (data: { description: string; priority: number }) => apiRequest("POST", "/api/omega/goal", data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/v1/omega/state"] }); setNewGoal(""); toast({ title: "Goal added" }); },
-  });
-  const completeGoalMutation = useMutation({
-    mutationFn: (goalId: string) => apiRequest("POST", `/api/omega/goal/${goalId}/complete`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/v1/omega/state"] }); toast({ title: "Goal completed" }); },
-  });
-  const removeGoalMutation = useMutation({
-    mutationFn: (goalId: string) => apiRequest("POST", `/api/omega/goal/${goalId}/remove`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/v1/omega/state"] }),
   });
   const solveMutation = useMutation({
@@ -72,13 +69,12 @@ export function OmegaTab({ orientation, isVertical }: SliderOrientationProps) {
   const thresholds = omegaState?.dimensionThresholds || [];
   const biases = omegaState?.dimensionBiases || [];
   const crossed = omegaState?.thresholdsCrossed || [];
-  const goals = omegaState?.goals || [];
   const mode = omegaState?.mode || "active";
   const totalEnergy = omegaState?.totalEnergy || 0;
   const history = omegaState?.energyHistory || [];
-  const activeGoals = goals.filter((g: any) => g.status === "active");
-  const completedGoals = goals.filter((g: any) => g.status === "completed");
   const modeDescriptions: Record<string, string> = { active: "High initiative & exploration", passive: "Respond only, low initiative", economy: "Budget-conscious, minimal spend", research: "Deep exploration & learning" };
+  const maxToolRounds = behaviorData?.maxToolRounds ?? 25;
+  const pursueToCompletion = behaviorData?.pursueToCompletion ?? false;
   const getEnergyColor = (e: number, t: number) => e >= t ? "bg-green-500" : e >= t * 0.7 ? "bg-yellow-500" : "bg-red-500/60";
 
   return (
@@ -228,41 +224,37 @@ export function OmegaTab({ orientation, isVertical }: SliderOrientationProps) {
           )}
         </div>
 
-        <div className="space-y-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Goals</h4>
-          <div className="flex gap-2">
-            <Input value={newGoal} onChange={e => setNewGoal(e.target.value)} placeholder="New goal description..." className="text-xs h-7 flex-1" data-testid="input-new-goal" />
-            <Input type="number" value={newGoalPriority} onChange={e => setNewGoalPriority(parseInt(e.target.value) || 5)} className="text-xs h-7 w-14" min={1} max={10} data-testid="input-goal-priority" />
-            <Button size="sm" variant="outline" className="h-7" onClick={() => { if (newGoal.trim()) goalMutation.mutate({ description: newGoal.trim(), priority: newGoalPriority }); }} disabled={goalMutation.isPending || !newGoal.trim()} data-testid="button-add-goal"><Plus className="w-3 h-3" /></Button>
+        <div className="space-y-2 border border-border rounded-lg p-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Behavior</h4>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col">
+              <span className="text-xs font-medium">Max tool rounds</span>
+              <span className="text-[10px] text-muted-foreground">5–50, currently {maxToolRounds}</span>
+            </div>
+            <Input
+              type="number"
+              value={maxToolRounds}
+              min={5}
+              max={50}
+              className="h-7 w-16 text-xs"
+              data-testid="input-max-tool-rounds"
+              onChange={e => {
+                const val = Math.min(50, Math.max(5, parseInt(e.target.value) || 25));
+                behaviorMutation.mutate({ maxToolRounds: val });
+              }}
+            />
           </div>
-
-          {activeGoals.length > 0 && (
-            <div className="space-y-1">
-              {activeGoals.map((g: any) => (
-                <div key={g.id} className="flex items-center justify-between bg-muted/40 rounded px-2 py-1" data-testid={`goal-active-${g.id}`}>
-                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                    <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">P{g.priority}</Badge>
-                    <span className="text-xs truncate">{g.description}</span>
-                  </div>
-                  <div className="flex gap-1 shrink-0">
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => completeGoalMutation.mutate(g.id)} data-testid={`button-complete-goal-${g.id}`}><Check className="w-3 h-3 text-green-500" /></Button>
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => removeGoalMutation.mutate(g.id)} data-testid={`button-remove-goal-${g.id}`}><X className="w-3 h-3 text-destructive" /></Button>
-                  </div>
-                </div>
-              ))}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col">
+              <span className="text-xs font-medium">Pursue to completion</span>
+              <span className="text-[10px] text-muted-foreground">Appends a continuation notice when rounds are exhausted</span>
             </div>
-          )}
-          {completedGoals.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-[10px] text-muted-foreground">Completed ({completedGoals.length})</span>
-              {completedGoals.slice(0, 5).map((g: any) => (
-                <div key={g.id} className="flex items-center gap-1.5 px-2 py-0.5 opacity-50" data-testid={`goal-completed-${g.id}`}>
-                  <Check className="w-3 h-3 text-green-500 shrink-0" /><span className="text-xs truncate line-through">{g.description}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {goals.length === 0 && <p className="text-xs text-muted-foreground">No goals set. Add a goal to energize the Goal Persistence dimension.</p>}
+            <Switch
+              checked={pursueToCompletion}
+              onCheckedChange={v => behaviorMutation.mutate({ pursueToCompletion: v })}
+              data-testid="switch-pursue-completion"
+            />
+          </div>
         </div>
 
         <div className="space-y-1">
@@ -282,7 +274,7 @@ export function OmegaTab({ orientation, isVertical }: SliderOrientationProps) {
             {crossed[7] && <p>Resource-aware — using economy mode</p>}
             {crossed[8] && <p>High exploration — expanding search breadth</p>}
             {crossed[6] && <p>Learning active — writing journal entries</p>}
-            {crossed[0] && activeGoals.length > 0 && <p>Goal-driven — {activeGoals.length} active goal(s)</p>}
+            {crossed[0] && <p>Goal-driven — goal persistence active</p>}
             {!crossed.some((c: boolean) => c) && <p>All dimensions below threshold — nominal operation</p>}
           </div>
         </div>

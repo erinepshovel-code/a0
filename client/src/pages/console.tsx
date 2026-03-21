@@ -14,10 +14,8 @@ import {
   resolveIcon,
 } from "@/lib/console-config";
 import {
-  WorkflowTab,
   BanditTab,
   MetricsTab,
-  DealsTab,
   MemoryTab,
   EdcmTab,
   BrainTab,
@@ -33,6 +31,7 @@ import {
   ApiModelTab,
   HubTab,
   ExportTab,
+  TasksTab,
 } from "@/components/tabs";
 
 const allTabFiles = import.meta.glob("../components/tabs/*Tab.tsx");
@@ -186,7 +185,6 @@ export default function ConsolePage() {
       </div>
 
       <div className="flex-1 overflow-hidden min-w-0">
-        {activeTab === "workflow" && <WorkflowTab />}
         {activeTab === "bandit" && <BanditTab {...sliderProps} />}
         {activeTab === "metrics" && <MetricsTab {...sliderProps} />}
         {activeTab === "edcm" && <EdcmTab />}
@@ -204,7 +202,7 @@ export default function ConsolePage() {
         {activeTab === "omega" && <OmegaTab {...sliderProps} />}
         {activeTab === "psi" && <PsiTab />}
         {activeTab === "s17" && <S17Tab />}
-        {activeTab === "deals" && <DealsTab />}
+        {activeTab === "tasks" && <TasksTab />}
         {!STATIC_TAB_IDS.has(activeTab) && DynComp && (
           <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
             <DynComp />
