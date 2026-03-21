@@ -1,7 +1,7 @@
 import { Activity, Brain, ChevronDown, ChevronRight, Clock, Cpu, Database, DollarSign, Download, Eye, FileText, Flame, Gauge, GitBranch, Globe, Hash, Layers, Lock, Map, Package, Puzzle, Radio, ScrollText, Search, Settings, Shield, ShoppingBag, Square, Star, Target, Terminal, Triangle, User, Wand2, Wrench, Zap } from "lucide-react";
 import type { Persona } from "@/hooks/use-persona";
 
-export type TabId = "workflow" | "bandit" | "metrics" | "edcm" | "memory" | "brain" | "system" | "heartbeat" | "tools" | "credentials" | "export" | "logs" | "context" | "omega" | "psi" | "api" | "s17" | "deals" | "hub";
+export type TabId = "workflow" | "bandit" | "metrics" | "edcm" | "memory" | "brain" | "system" | "heartbeat" | "tools" | "credentials" | "export" | "logs" | "context" | "omega" | "psi" | "api" | "s17" | "deals" | "hub" | "tasks";
 
 export type TabGroup = { id: string; label: string; icon: any; tabs: Array<{ id: string; label: string; icon: any }> };
 
@@ -59,10 +59,8 @@ export const TAB_GROUPS: readonly TabGroup[] = [
   {
     id: "agent", label: "Cognition", icon: Activity,
     tabs: [
-      { id: "workflow", label: "Workflow", icon: Activity },
       { id: "bandit", label: "ε-Explore", icon: GitBranch },
       { id: "metrics", label: "Metrics", icon: DollarSign },
-      { id: "deals", label: "Deals", icon: ShoppingBag },
       { id: "api", label: "API", icon: Cpu },
       { id: "hub", label: "Hub", icon: Radio },
     ],
@@ -71,21 +69,16 @@ export const TAB_GROUPS: readonly TabGroup[] = [
     id: "memory", label: "Memory", icon: Brain,
     tabs: [
       { id: "memory", label: "Memory", icon: Brain },
+      { id: "logs", label: "Logs", icon: ScrollText },
     ],
   },
   {
     id: "triad", label: "Triad", icon: Star,
     tabs: [
       { id: "psi", label: "Psi Ψ", icon: Eye },
+      { id: "tasks", label: "Tasks", icon: Target },
       { id: "omega", label: "Omega Ω", icon: Gauge },
       { id: "heartbeat", label: "Φ Heartbeat", icon: Clock },
-    ],
-  },
-  {
-    id: "system", label: "System", icon: Settings,
-    tabs: [
-      { id: "system", label: "System", icon: Settings },
-      { id: "logs", label: "Logs", icon: ScrollText },
     ],
   },
   {
@@ -102,18 +95,18 @@ export const TAB_GROUPS: readonly TabGroup[] = [
 export const ALL_GROUPS: TabGroup[] = [...TAB_GROUPS];
 
 export const STATIC_TAB_IDS = new Set<string>([
-  "workflow", "bandit", "metrics", "deals",
-  "memory", "edcm", "brain", "s17",
-  "psi", "omega", "heartbeat",
-  "system", "logs",
-  "tools", "credentials", "context", "api", "export", "hub",
+  "bandit", "metrics", "api", "hub",
+  "memory", "edcm", "brain", "s17", "logs",
+  "psi", "omega", "heartbeat", "tasks",
+  "system",
+  "tools", "credentials", "context", "export",
 ]);
 
 export const TAB_TO_GROUP: Record<TabId, string> = {
   workflow: "agent", bandit: "agent", metrics: "agent", deals: "agent", api: "agent", hub: "agent",
-  memory: "memory", edcm: "memory", brain: "memory", s17: "memory",
-  psi: "triad", omega: "triad", heartbeat: "triad",
-  system: "system", logs: "system",
+  memory: "memory", edcm: "memory", brain: "memory", s17: "memory", logs: "memory",
+  psi: "triad", omega: "triad", heartbeat: "triad", tasks: "triad",
+  system: "tools",
   tools: "tools", credentials: "tools", context: "tools", export: "tools",
 };
 
