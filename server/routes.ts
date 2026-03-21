@@ -4,6 +4,7 @@ import { createServer, type Server } from "http";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { readdir, readFile, rename, stat, writeFile, mkdir, unlink, rm } from "fs/promises";
+import fs from "fs";
 import path from "path";
 import archiver from "archiver";
 import multer from "multer";
@@ -6429,6 +6430,86 @@ ${moduleWritingBlock}`;
   });
 
   // ============ PSI SELF-MODEL ENDPOINTS ============
+
+  const TAB_SOURCE_MAP: Record<string, string> = {
+    rt_status: "StatusTab.tsx",
+    heartbeat: "HeartbeatTab.tsx",
+    rt_sentinels: "SentinelsTab.tsx",
+    rt_alerts: "AlertsTab.tsx",
+    rt_control: "ControlTab.tsx",
+    reasoning_overview: "EdcmTab.tsx",
+    psi: "PsiTab.tsx",
+    reasoning_jury: "JuryTab.tsx",
+    reasoning_guardian: "GuardianTab.tsx",
+    reasoning_policies: "PoliciesTab.tsx",
+    memory: "MemoryTab.tsx",
+    logs: "LogsTab.tsx",
+    context: "ContextTab.tsx",
+    memory_hygiene: "HygieneTab.tsx",
+    export: "ExportTab.tsx",
+    tools_builtin: "BuiltinTab.tsx",
+    tools: "CustomToolsTab.tsx",
+    credentials: "CredentialsTab.tsx",
+    tools_permissions: "PermissionsTab.tsx",
+    metrics: "MetricsTab.tsx",
+    system: "SystemTab.tsx",
+    api: "ApiModelTab.tsx",
+    hub: "AimmhTab.tsx",
+    sys_logs: "LogsTab.tsx",
+    sys_audit: "AuditTab.tsx",
+    bandit: "BanditTab.tsx",
+    research_ingest: "IngestTab.tsx",
+    research_runs: "ResearchTab.tsx",
+    research_findings: "FindingsTab.tsx",
+    research_drafts: "DraftsTab.tsx",
+  };
+
+  router.get("/psi/source/:tabId", async (req, res) => {
+    try {
+      const { tabId } = req.params;
+      const filename = TAB_SOURCE_MAP[tabId];
+      if (!filename) return res.status(404).json({ error: "No source mapping for tab", tabId });
+      const filePath = path.join(process.cwd(), "client/src/components/tabs", filename);
+      if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Source file not found", filename });
+      const code = fs.readFileSync(filePath, "utf-8");
+      const lines = code.split("\n").length;
+      const bytes = Buffer.byteLength(code, "utf-8");
+      res.json({ tabId, filename, code, lines, bytes, filePath: `client/src/components/tabs/${filename}` });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get("/psi/sources", async (_req, res) => {
+    try {
+      const result: Record<string, { filename: string; lines: number; bytes: number }> = {};
+      for (const [tabId, filename] of Object.entries(TAB_SOURCE_MAP)) {
+        const filePath = path.join(process.cwd(), "client/src/components/tabs", filename);
+        if (fs.existsSync(filePath)) {
+          const code = fs.readFileSync(filePath, "utf-8");
+          result[tabId] = { filename, lines: code.split("\n").length, bytes: Buffer.byteLength(code, "utf-8") };
+        }
+      }
+      res.json({ sources: result, total: Object.keys(result).length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.put("/psi/source/:tabId", async (req, res) => {
+    try {
+      const { tabId } = req.params;
+      const { code } = req.body as { code: string };
+      if (!code) return res.status(400).json({ error: "code required" });
+      const filename = TAB_SOURCE_MAP[tabId];
+      if (!filename) return res.status(404).json({ error: "No source mapping for tab", tabId });
+      const filePath = path.join(process.cwd(), "client/src/components/tabs", filename);
+      fs.writeFileSync(filePath, code, "utf-8");
+      res.json({ ok: true, tabId, filename, lines: code.split("\n").length, bytes: Buffer.byteLength(code, "utf-8") });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   router.get("/psi/state", async (_req, res) => {
     try {

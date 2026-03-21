@@ -6,7 +6,7 @@ import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Shield } from "lucide-react";
+import { Shield, Code2, ExternalLink, Save, RotateCcw } from "lucide-react";
 import { TAB_GROUPS } from "@/lib/console-config";
 
 interface Props {
@@ -38,8 +38,7 @@ function tabPosition(groupIndex: number, tabIndex: number, R: number) {
   const GAP_DEG = 6;
   const ARC_DEG = 60 - GAP_DEG;
   const startDeg = -90 + groupIndex * 60 + GAP_DEG / 2;
-  const angle = tabIndex === 0 ? startDeg
-    : startDeg + (tabIndex / 4) * ARC_DEG;
+  const angle = tabIndex === 0 ? startDeg : startDeg + (tabIndex / 4) * ARC_DEG;
   const rad = toRad(angle);
   return { x: R * Math.cos(rad), y: R * Math.sin(rad), angle };
 }
@@ -48,6 +47,8 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [editingCode, setEditingCode] = useState<string | null>(null);
   const [psiSliders, setPsiSliders] = useState<Record<number, number>>({});
   const [thrSliders, setThrSliders] = useState<Record<number, number>>({});
   const [editingThreshold, setEditingThreshold] = useState<number | null>(null);
@@ -60,6 +61,14 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
   const { data: omegaState } = useQuery<any>({
     queryKey: ["/api/v1/omega/state"],
     refetchInterval: 8000,
+  });
+
+  const { data: sourceData, isLoading: sourceLoading } = useQuery<{
+    tabId: string; filename: string; code: string; lines: number; bytes: number; filePath: string;
+  }>({
+    queryKey: ["/api/v1/psi/source", selectedNode],
+    enabled: !!selectedNode,
+    staleTime: 5000,
   });
 
   const biasMutation = useMutation({
@@ -91,6 +100,17 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
     },
   });
 
+  const saveMutation = useMutation({
+    mutationFn: ({ tabId, code }: { tabId: string; code: string }) =>
+      apiRequest("PUT", `/api/psi/source/${tabId}`, { code }),
+    onSuccess: (_, { tabId }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/psi/source", tabId] });
+      setEditingCode(null);
+      toast({ title: "Source written to tensor node", description: `${tabId} — Vite HMR active` });
+    },
+    onError: (e: any) => toast({ title: "Write failed", description: e.message, variant: "destructive" }),
+  });
+
   const dims: number[] = psiState?.dimensionEnergies || [];
   const labels: string[] = psiState?.labels || psiState?.dimensionLabels || [];
   const thresholds: number[] = psiState?.thresholds || psiState?.dimensionThresholds || [];
@@ -102,11 +122,8 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
     return vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
   }
 
-  const CX = 160;
-  const CY = 160;
-  const R = 118;
-  const NODE_R = 9;
-  const INNER_R = 32;
+  const CX = 160, CY = 160, R = 118, NODE_R = 9, INNER_R = 32;
+  const overallEnergy = dims.length > 0 ? dims.reduce((a, b) => a + b, 0) / dims.length : 0;
 
   const omegaMode = omegaState?.mode || "active";
   const OMEGA_MODES = ["active", "passive", "economy", "research"];
@@ -122,7 +139,20 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
     e >= t ? "text-green-500" : e >= t * 0.7 ? "text-amber-500" : "text-red-500";
   const gateLabel = (e: number, t: number) => e >= t ? "Open" : "Restricted";
 
-  const overallEnergy = dims.length > 0 ? dims.reduce((a, b) => a + b, 0) / dims.length : 0;
+  const selectedTabDef = selectedNode
+    ? TAB_GROUPS.flatMap(g => g.tabs).find(t => t.id === selectedNode)
+    : null;
+  const selectedGroupIdx = selectedNode
+    ? TAB_GROUPS.findIndex(g => g.tabs.some(t => t.id === selectedNode))
+    : -1;
+
+  function handleNodeClick(tabId: string) {
+    setSelectedNode(tabId);
+    setEditingCode(null);
+    onNavigate?.(tabId);
+  }
+
+  const displayCode = editingCode !== null ? editingCode : (sourceData?.code ?? "");
 
   return (
     <div className="h-full w-full overflow-y-auto overflow-x-hidden px-3 py-3 space-y-4">
@@ -136,7 +166,7 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
 
       {/* ── Tensor Ring ── */}
       <div className="rounded-lg border border-border bg-card p-2 flex flex-col items-center">
-        <p className="text-xs text-muted-foreground mb-1">PTCA-Ψ Node Map — click any circle to navigate</p>
+        <p className="text-xs text-muted-foreground mb-1">PTCA-Ψ Node Map — click a node to inspect its code</p>
         {psiLoading ? (
           <Skeleton className="w-[320px] h-[320px] rounded-full" />
         ) : (
@@ -167,10 +197,8 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
               </filter>
             </defs>
 
-            {/* Outer guide ring */}
             <circle cx={CX} cy={CY} r={R} fill="none" stroke="currentColor" strokeOpacity="0.07" strokeWidth="1" />
 
-            {/* Center core */}
             <circle cx={CX} cy={CY} r={INNER_R} fill="url(#center-grd)" stroke="#6366f1" strokeOpacity="0.3" strokeWidth="1" />
             <text x={CX} y={CY - 6} textAnchor="middle" fill="#a5b4fc" fontSize="8" fontFamily="monospace">PTCA-Ψ</text>
             <text x={CX} y={CY + 5} textAnchor="middle" fill="#818cf8" fontSize="10" fontFamily="monospace" fontWeight="bold">
@@ -178,7 +206,6 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
             </text>
             <text x={CX} y={CY + 16} textAnchor="middle" fill="#6366f1" fontSize="7" fontFamily="monospace">{dims.length}D</text>
 
-            {/* Group arcs and tab nodes */}
             {TAB_GROUPS.map((group, gi) => {
               const gc = GROUP_COLORS[gi] || GROUP_COLORS[0];
               const energy = groupEnergy(gi);
@@ -188,6 +215,7 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
                 const px = CX + nx;
                 const py = CY + ny;
                 const isActive = activeTab === tab.id;
+                const isSelected = selectedNode === tab.id;
                 const isHovered = hoveredTab === tab.id;
                 const tabEnergy = Math.min(1, energy * 0.75 + (dims[(SENTINEL_GROUP_MAP[gi][0] ?? 0) + ti] ?? 0) * 0.25);
                 const nodeRadius = NODE_R + tabEnergy * 2;
@@ -195,67 +223,57 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
 
                 return (
                   <g key={tab.id}>
-                    {/* Spoke line from center */}
                     <line
                       x1={CX + (nx * INNER_R) / R}
                       y1={CY + (ny * INNER_R) / R}
                       x2={px - (nx / R) * nodeRadius}
                       y2={py - (ny / R) * nodeRadius}
                       stroke={gc.fill}
-                      strokeOpacity={0.12 + tabEnergy * 0.15}
-                      strokeWidth="0.5"
+                      strokeOpacity={isSelected ? 0.5 : 0.12 + tabEnergy * 0.15}
+                      strokeWidth={isSelected ? 1 : 0.5}
                     />
 
-                    {/* Active/hover glow ring */}
-                    {(isActive || isHovered) && (
+                    {(isSelected || isActive || isHovered) && (
                       <circle
-                        cx={px}
-                        cy={py}
-                        r={nodeRadius + 4}
+                        cx={px} cy={py}
+                        r={nodeRadius + (isSelected ? 6 : 4)}
                         fill="none"
-                        stroke={isActive ? "#ffffff" : gc.fill}
-                        strokeOpacity={isActive ? 0.7 : 0.5}
-                        strokeWidth={isActive ? 1.5 : 1}
+                        stroke={isSelected ? "#f0abfc" : isActive ? "#ffffff" : gc.fill}
+                        strokeOpacity={isSelected ? 0.9 : isActive ? 0.7 : 0.5}
+                        strokeWidth={isSelected ? 2 : isActive ? 1.5 : 1}
                         filter="url(#glow)"
                       />
                     )}
 
-                    {/* Main node */}
                     <circle
-                      cx={px}
-                      cy={py}
+                      cx={px} cy={py}
                       r={nodeRadius}
                       fill={`url(#grd-${gi})`}
                       fillOpacity={opacity}
-                      stroke={isActive ? "#ffffff" : gc.stroke}
-                      strokeWidth={isActive ? 1.5 : 0.8}
-                      strokeOpacity={isActive ? 1 : 0.6}
-                      filter={tabEnergy > 0.7 ? "url(#glow)" : undefined}
+                      stroke={isSelected ? "#f0abfc" : isActive ? "#ffffff" : gc.stroke}
+                      strokeWidth={isSelected ? 2 : isActive ? 1.5 : 0.8}
+                      strokeOpacity={isSelected || isActive ? 1 : 0.6}
+                      filter={(isSelected || tabEnergy > 0.7) ? "url(#glow)" : undefined}
                       style={{ cursor: "pointer", transition: "all 0.15s ease" }}
-                      onClick={() => onNavigate?.(tab.id)}
+                      onClick={() => handleNodeClick(tab.id)}
                       onMouseEnter={() => setHoveredTab(tab.id)}
                       onMouseLeave={() => setHoveredTab(null)}
                       data-testid={`tensor-node-${tab.id}`}
                     />
 
-                    {/* Energy dot in center of node */}
-                    <circle
-                      cx={px}
-                      cy={py}
-                      r={2}
+                    <circle cx={px} cy={py} r={2}
                       fill="#ffffff"
                       fillOpacity={0.3 + tabEnergy * 0.5}
                       style={{ pointerEvents: "none" }}
                     />
 
-                    {/* Label (visible on hover or if active) */}
-                    {(isActive || isHovered) && (
+                    {(isSelected || isActive || isHovered) && (
                       <text
                         x={px + (nx / R) * (nodeRadius + 10)}
                         y={py + (ny / R) * (nodeRadius + 10)}
                         textAnchor={nx > 10 ? "start" : nx < -10 ? "end" : "middle"}
                         dominantBaseline={ny > 10 ? "auto" : ny < -10 ? "hanging" : "middle"}
-                        fill="#e2e8f0"
+                        fill={isSelected ? "#f0abfc" : "#e2e8f0"}
                         fontSize="7"
                         fontFamily="monospace"
                         style={{ pointerEvents: "none" }}
@@ -268,7 +286,6 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
               });
             })}
 
-            {/* Group labels around the ring */}
             {TAB_GROUPS.map((group, gi) => {
               const GAP_DEG = 6;
               const ARC_DEG = 60 - GAP_DEG;
@@ -280,18 +297,9 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
               const ly = CY + labelR * Math.sin(rad);
               const gc = GROUP_COLORS[gi];
               return (
-                <text
-                  key={group.id}
-                  x={lx}
-                  y={ly}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fill={gc.fill}
-                  fontSize="6.5"
-                  fontFamily="monospace"
-                  fontWeight="bold"
-                  fillOpacity="0.8"
-                >
+                <text key={group.id} x={lx} y={ly}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill={gc.fill} fontSize="6.5" fontFamily="monospace" fontWeight="bold" fillOpacity="0.8">
                   {group.label.toUpperCase()}
                 </text>
               );
@@ -299,7 +307,6 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
           </svg>
         )}
 
-        {/* Group legend */}
         <div className="flex flex-wrap justify-center gap-2 mt-1">
           {GROUP_COLORS.map((c, i) => (
             <div key={i} className="flex items-center gap-1">
@@ -309,6 +316,78 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
           ))}
         </div>
       </div>
+
+      {/* ── Source Code Panel ── */}
+      {selectedNode && (
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+            <Code2 className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-xs font-mono font-medium flex-1">
+              {sourceData?.filePath ?? selectedNode}
+            </span>
+            {sourceData && (
+              <span className="text-xs text-muted-foreground font-mono">
+                {sourceData.lines}L · {(sourceData.bytes / 1024).toFixed(1)}KB
+              </span>
+            )}
+            <Button
+              size="sm" variant="ghost" className="h-6 text-xs px-2 gap-1"
+              onClick={() => onNavigate?.(selectedNode)}
+              data-testid="button-go-to-tab"
+            >
+              <ExternalLink className="w-3 h-3" /> Go
+            </Button>
+          </div>
+
+          {selectedGroupIdx >= 0 && (
+            <div
+              className="h-1"
+              style={{ backgroundColor: GROUP_COLORS[selectedGroupIdx]?.fill, opacity: 0.6 }}
+            />
+          )}
+
+          {sourceLoading ? (
+            <div className="p-4 space-y-2">
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-4/5" />
+              <Skeleton className="h-3 w-3/5" />
+            </div>
+          ) : sourceData ? (
+            <>
+              <textarea
+                className="w-full font-mono text-xs bg-background text-foreground p-3 resize-none outline-none leading-relaxed"
+                style={{ minHeight: "240px", tabSize: 2 }}
+                value={displayCode}
+                onChange={e => setEditingCode(e.target.value)}
+                spellCheck={false}
+                data-testid="textarea-source-code"
+              />
+              {editingCode !== null && (
+                <div className="flex items-center gap-2 px-3 py-2 border-t border-border bg-muted/20">
+                  <span className="text-xs text-amber-500 flex-1">Unsaved changes — write to tensor node?</span>
+                  <Button
+                    size="sm" variant="ghost" className="h-6 text-xs px-2 gap-1"
+                    onClick={() => setEditingCode(null)}
+                    data-testid="button-discard-code"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Discard
+                  </Button>
+                  <Button
+                    size="sm" variant="default" className="h-6 text-xs px-2 gap-1"
+                    onClick={() => saveMutation.mutate({ tabId: selectedNode, code: editingCode })}
+                    disabled={saveMutation.isPending}
+                    data-testid="button-save-code"
+                  >
+                    <Save className="w-3 h-3" /> Write
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground px-3 py-4">No source mapping for this node.</p>
+          )}
+        </div>
+      )}
 
       {/* ── Ψ Gate Controls ── */}
       <div className="rounded-lg border border-border bg-card p-3 space-y-3">
@@ -336,11 +415,9 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
                 <span className="text-xs text-muted-foreground flex-1">
                   Thr: {thr.toFixed(2)} | Bias: {biasVal.toFixed(2)}
                 </span>
-                <Button
-                  size="sm" variant="ghost" className="h-5 text-xs px-1.5"
+                <Button size="sm" variant="ghost" className="h-5 text-xs px-1.5"
                   onClick={() => setEditingThreshold(isEditingThr ? null : idx)}
-                  data-testid={`button-edit-threshold-psi${idx}`}
-                >
+                  data-testid={`button-edit-threshold-psi${idx}`}>
                   {isEditingThr ? "↑ bias" : "edit thr"}
                 </Button>
               </div>
