@@ -40,6 +40,13 @@ def _select_adapter(req: A0Request):
         except ImportError:
             pass
 
+    if A0_MODEL == "emergent":
+        try:
+            from .adapters.emergent_adapter import EmergentAdapter
+            return EmergentAdapter()
+        except (ImportError, NotImplementedError):
+            pass  # placeholder not yet configured — fall through to local-echo
+
     return LocalEchoAdapter()
 
 
