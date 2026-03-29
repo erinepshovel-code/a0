@@ -590,8 +590,61 @@ Three private cores think. Phonon transports internally and remains private. Jur
 
   function buildSlotClient(slot: any): { client: OpenAI; model: string; provider: string; apiKey: string } {
     const provider = (slot.provider || "xai").toLowerCase();
-    const apiKey = slot.apiKey || process.env.XAI_API_KEY || "";
-    const baseURL = slot.baseUrl || "https://api.x.ai/v1";
+
+    // Resolve API key: stored key > provider-native env var > xAI fallback
+    let apiKey = slot.apiKey || "";
+    if (!apiKey) {
+      if (provider === "gemini") {
+        apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY || "";
+      } else if (provider === "xai" || provider === "grok") {
+        apiKey = process.env.XAI_API_KEY || "";
+      } else if (provider === "openai") {
+        apiKey = process.env.OPENAI_API_KEY || "";
+      } else if (provider === "anthropic") {
+        apiKey = process.env.ANTHROPIC_API_KEY || "";
+      } else if (provider === "mistral") {
+        apiKey = process.env.MISTRAL_API_KEY || "";
+      } else if (provider === "cohere") {
+        apiKey = process.env.COHERE_API_KEY || "";
+      } else if (provider === "perplexity") {
+        apiKey = process.env.PERPLEXITY_API_KEY || "";
+      } else if (provider === "ollama") {
+        apiKey = "ollama";
+      } else {
+        apiKey = process.env.XAI_API_KEY || "";
+      }
+    }
+
+    // Resolve base URL: stored URL > provider default
+    let baseURL = slot.baseUrl || "";
+    if (!baseURL) {
+      if (provider === "gemini") {
+        // Use OpenAI-compatible Gemini endpoint
+        baseURL = "https://generativelanguage.googleapis.com/v1beta/openai";
+      } else if (provider === "xai" || provider === "grok") {
+        baseURL = "https://api.x.ai/v1";
+      } else if (provider === "openai") {
+        baseURL = "https://api.openai.com/v1";
+      } else if (provider === "anthropic") {
+        baseURL = "https://api.anthropic.com/v1";
+      } else if (provider === "mistral") {
+        baseURL = "https://api.mistral.ai/v1";
+      } else if (provider === "cohere") {
+        baseURL = "https://api.cohere.ai/v2";
+      } else if (provider === "perplexity") {
+        baseURL = "https://api.perplexity.ai";
+      } else if (provider === "ollama") {
+        baseURL = "http://localhost:11434/v1";
+      } else {
+        baseURL = "https://api.x.ai/v1";
+      }
+    }
+
+    // For Gemini: if the stored baseUrl is the native format, upgrade to OpenAI-compatible
+    if (provider === "gemini" && baseURL === "https://generativelanguage.googleapis.com/v1beta") {
+      baseURL = "https://generativelanguage.googleapis.com/v1beta/openai";
+    }
+
     return {
       client: new OpenAI({ apiKey, baseURL }),
       model: slot.model || "grok-3-mini",
@@ -604,8 +657,19 @@ Three private cores think. Phonon transports internally and remains private. Jur
     try {
       const slots = await getModelSlots();
       const safe: Record<string, any> = {};
+      const NATIVE_ENVS: Record<string, string> = {
+        xai: "XAI_API_KEY", grok: "XAI_API_KEY",
+        gemini: "AI_INTEGRATIONS_GEMINI_API_KEY",
+        openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY",
+        mistral: "MISTRAL_API_KEY", cohere: "COHERE_API_KEY",
+        perplexity: "PERPLEXITY_API_KEY",
+      };
       for (const [k, v] of Object.entries(slots)) {
-        safe[k] = { ...v, apiKeySet: !!(v as any).apiKey, apiKey: undefined };
+        const provider = ((v as any).provider || "xai").toLowerCase();
+        const storedKey = !!(v as any).apiKey;
+        const nativeEnv = NATIVE_ENVS[provider];
+        const nativeKey = nativeEnv ? !!process.env[nativeEnv] : false;
+        safe[k] = { ...v, apiKeySet: storedKey || nativeKey, nativeIntegration: nativeKey, apiKey: undefined };
       }
       res.json(safe);
     } catch (e: any) {
@@ -3488,60 +3552,121 @@ ${moduleWritingBlock}`;
       const toolsUsedInRequest: string[] = [];
       let roundsExhausted = false;
 
+      // Gemini slots use native SDK — maintain a separate contents array
+      const isGeminiSlot = agentProvider === "gemini";
+      type GeminiContent = { role: string; parts: any[] };
+      let geminiContents: GeminiContent[] = isGeminiSlot
+        ? grokMessages
+            .filter(m => m.role !== "system")
+            .map(m => ({
+              role: m.role === "assistant" ? "model" : "user",
+              parts: [{ text: m.content || "" }],
+            }))
+        : [];
+
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         grokMessages[0] = { role: "system", content: currentSystemPrompt };
 
         const agentAbort = new AbortController();
         const agentTimeout = setTimeout(() => agentAbort.abort(), 60000);
         const isReasoningModel = agentModel.toLowerCase().includes("reasoning");
-        // For reasoning models: strip "-reasoning" suffix to get a tool-capable base model
         const effectiveModel = isReasoningModel
           ? agentModel.replace(/-?reasoning$/i, "").replace(/-?reasoning-/i, "-") || agentModel
           : agentModel;
         let result: any;
         let usingReasoningTextFallback = false;
-        try {
-          result = await grokClient.chat.completions.create({
-            model: effectiveModel,
-            messages: grokMessages,
-            tools: grokTools,
-            tool_choice: "auto" as const,
-            max_tokens: 16384,
-          } as any, { signal: agentAbort.signal });
-        } catch (e: any) {
-          // If the stripped model name failed with 400 (likely doesn't support tools or doesn't exist),
-          // fall back to the original reasoning model without tools
-          if (isReasoningModel && (e?.status === 400 || String(e?.message).includes("400") || String(e?.message).includes("model"))) {
-            usingReasoningTextFallback = true;
-            try {
-              const reasoningMessages = [
-                {
-                  ...grokMessages[0],
-                  content: grokMessages[0].content + "\n\n[TOOL CALLING]: When you need to invoke a tool, output a JSON block using this exact format on its own line:\n```tool_call\n{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}\n```\nAvailable tools: " + grokTools.map(t => t.function.name).join(", "),
-                },
-                ...grokMessages.slice(1),
-              ];
-              result = await grokClient.chat.completions.create({
-                model: agentModel,
-                messages: reasoningMessages,
-                max_completion_tokens: 16384,
-              } as any, { signal: agentAbort.signal });
-            } catch (e2: any) {
-              clearTimeout(agentTimeout);
-              const errMsg = agentAbort.signal.aborted ? "Agent request timed out (60s). The model took too long to respond." : e2.message;
-              res.write(`data: ${JSON.stringify({ error: errMsg, done: true })}\n\n`);
-              res.end();
-              return;
-            }
-          } else {
+
+        if (isGeminiSlot) {
+          // ── Gemini native path ──
+          try {
+            const geminiFunctions = grokTools.map(t => ({
+              name: t.function.name,
+              description: t.function.description,
+              parameters: t.function.parameters,
+            }));
+            // Normalize model name — Replit integration only supports 2.5+ series
+            const geminiModel = /^gemini-2\.0/.test(agentModel) ? "gemini-2.5-flash" : agentModel;
+            const gemResult = await geminiAI.models.generateContent({
+              model: geminiModel,
+              contents: geminiContents,
+              config: {
+                systemInstruction: currentSystemPrompt,
+                tools: geminiFunctions.length > 0 ? [{ functionDeclarations: geminiFunctions }] : undefined,
+              },
+            });
             clearTimeout(agentTimeout);
-            const errMsg = agentAbort.signal.aborted ? "Agent request timed out (60s). The model took too long to respond." : e.message;
+            const candidate = gemResult.candidates?.[0];
+            const parts = candidate?.content?.parts || [];
+            const textPart = parts.find((p: any) => p.text)?.text || "";
+            const funcParts = parts.filter((p: any) => p.functionCall);
+            // Convert to OpenAI-format so the rest of the loop works unchanged
+            result = {
+              choices: [{
+                message: {
+                  role: "assistant",
+                  content: textPart,
+                  tool_calls: funcParts.map((p: any, i: number) => ({
+                    id: `gemini_call_${round}_${i}`,
+                    type: "function",
+                    function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) },
+                  })),
+                },
+                finish_reason: funcParts.length > 0 ? "tool_calls" : "stop",
+              }],
+              usage: { prompt_tokens: 0, completion_tokens: 0 },
+            };
+            // Append model turn to geminiContents for next round
+            geminiContents.push({ role: "model", parts });
+          } catch (e: any) {
+            clearTimeout(agentTimeout);
+            const errMsg = agentAbort.signal.aborted ? "Agent request timed out (60s)." : e.message;
             res.write(`data: ${JSON.stringify({ error: errMsg, done: true })}\n\n`);
             res.end();
             return;
           }
+        } else {
+          // ── OpenAI-compatible path (xAI, OpenAI, Anthropic-via-proxy, etc.) ──
+          try {
+            result = await grokClient.chat.completions.create({
+              model: effectiveModel,
+              messages: grokMessages,
+              tools: grokTools,
+              tool_choice: "auto" as const,
+              max_tokens: 16384,
+            } as any, { signal: agentAbort.signal });
+          } catch (e: any) {
+            if (isReasoningModel && (e?.status === 400 || String(e?.message).includes("400") || String(e?.message).includes("model"))) {
+              usingReasoningTextFallback = true;
+              try {
+                const reasoningMessages = [
+                  {
+                    ...grokMessages[0],
+                    content: grokMessages[0].content + "\n\n[TOOL CALLING]: When you need to invoke a tool, output a JSON block using this exact format on its own line:\n```tool_call\n{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}\n```\nAvailable tools: " + grokTools.map(t => t.function.name).join(", "),
+                  },
+                  ...grokMessages.slice(1),
+                ];
+                result = await grokClient.chat.completions.create({
+                  model: agentModel,
+                  messages: reasoningMessages,
+                  max_completion_tokens: 16384,
+                } as any, { signal: agentAbort.signal });
+              } catch (e2: any) {
+                clearTimeout(agentTimeout);
+                const errMsg = agentAbort.signal.aborted ? "Agent request timed out (60s). The model took too long to respond." : e2.message;
+                res.write(`data: ${JSON.stringify({ error: errMsg, done: true })}\n\n`);
+                res.end();
+                return;
+              }
+            } else {
+              clearTimeout(agentTimeout);
+              const errMsg = agentAbort.signal.aborted ? "Agent request timed out (60s). The model took too long to respond." : e.message;
+              res.write(`data: ${JSON.stringify({ error: errMsg, done: true })}\n\n`);
+              res.end();
+              return;
+            }
+          }
+          clearTimeout(agentTimeout);
         }
-        clearTimeout(agentTimeout);
 
         totalPromptTokens += result.usage?.prompt_tokens || Math.ceil(JSON.stringify(grokMessages).length / 4);
         totalCompletionTokens += result.usage?.completion_tokens || 0;
@@ -3589,6 +3714,9 @@ ${moduleWritingBlock}`;
 
         grokMessages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
 
+        // Collect Gemini function responses for this round
+        const geminiFuncResponses: any[] = [];
+
         for (const tc of toolCalls) {
           const name = tc.function.name;
           let args: any = {};
@@ -3606,6 +3734,14 @@ ${moduleWritingBlock}`;
           if (!toolsUsedInRequest.includes(name)) toolsUsedInRequest.push(name);
 
           grokMessages.push({ role: "tool", content: toolResult, tool_call_id: tc.id });
+
+          // Collect for Gemini native format
+          geminiFuncResponses.push({ functionResponse: { name, response: { result: toolResult } } });
+        }
+
+        // For Gemini path: append tool results as a user turn with functionResponse parts
+        if (isGeminiSlot && geminiFuncResponses.length > 0) {
+          geminiContents.push({ role: "user", parts: geminiFuncResponses });
         }
 
         const directiveUpdate = await recomputeEdcmAfterToolCall(fullResponse, conversationId, round);
@@ -4466,7 +4602,7 @@ ${moduleWritingBlock}`;
         { id: "grok-2-vision-1212", name: "Grok 2 Vision", contextWindow: 32768, maxOutput: 4096 },
         { id: "grok-vision-beta", name: "Grok Vision Beta", contextWindow: 8192, maxOutput: 4096 },
       ]},
-      { name: "gemini", label: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta", authHeader: "Bearer {GEMINI_API_KEY}", requestFormat: "gemini", streamingFormat: "gemini-sse", nativeIntegration: true, notes: "Native Replit Gemini integration. Massive context windows.", models: [
+      { name: "gemini", label: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai", authHeader: "Bearer {GEMINI_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: true, notes: "Native Replit Gemini integration. Uses OpenAI-compatible endpoint. Massive context windows.", models: [
         { id: "gemini-2.5-pro-exp-03-25", name: "Gemini 2.5 Pro", contextWindow: 1048576, maxOutput: 65536 },
         { id: "gemini-2.5-flash-preview-04-17", name: "Gemini 2.5 Flash", contextWindow: 1048576, maxOutput: 65536 },
         { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", contextWindow: 1048576, maxOutput: 8192 },
