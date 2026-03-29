@@ -39,5 +39,9 @@ A0_MODEL: str = os.environ.get("A0_MODEL", "local-echo")
 ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 A0_PORT: int = int(os.environ.get("A0_PORT", "7860"))
 A0_HOST: str = os.environ.get("A0_HOST", "0.0.0.0")
+# Internal encryption key (Fernet). Generate with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Store in Replit Secrets or .env — never commit the key.
+A0_MEMORY_KEY: str = os.environ.get("A0_MEMORY_KEY", "")
 
 ENV_PATH: Path = _ENV_FILE

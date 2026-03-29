@@ -30,6 +30,9 @@ tools = [
     "pypdf>=4.0",
     "openai-whisper",
 ]
+encryption = [
+    "cryptography>=42.0",
+]
 dev = [
     "pytest>=7.0",
 ]

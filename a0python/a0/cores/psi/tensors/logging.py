@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from a0.encryption import encrypt
 from a0.invariants import require_hmmm
 
 
@@ -14,5 +15,6 @@ def log_event(log_dir: Path, task_id: str, event: Dict[str, Any]) -> None:
     path = log_dir / f"{task_id}.jsonl"
     e = dict(event)
     e["ts"] = datetime.now(timezone.utc).isoformat()
+    line = encrypt(json.dumps(e, ensure_ascii=False))
     with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        f.write(line + "\n")

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .encryption import decrypt, encrypt
 from .invariants import InvalidStateError
 from .tiers import Tier2
 
@@ -75,14 +76,15 @@ class Memory:
             for k, e in self._store.items()
         }
         self._path.write_text(
-            json.dumps(serialized, indent=2, ensure_ascii=False), encoding="utf-8"
+            encrypt(json.dumps(serialized, indent=2, ensure_ascii=False)),
+            encoding="utf-8",
         )
 
     def _load(self) -> None:
         if not self._path.exists():
             return
         try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
+            data = json.loads(decrypt(self._path.read_text(encoding="utf-8")))
             for k, v in data.items():
                 self._store[k] = MemoryEntry(
                     key=v["key"],
