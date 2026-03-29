@@ -34,3 +34,4 @@ export { IngestTab } from "./IngestTab";
 export { FindingsTab } from "./FindingsTab";
 export { DraftsTab } from "./DraftsTab";
 export { ResearchTab } from "./ResearchTab";
+export { ModelFlowTab } from "./ModelFlowTab";

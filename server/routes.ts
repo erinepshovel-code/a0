@@ -4689,6 +4689,30 @@ ${moduleWritingBlock}`;
     }
   });
 
+  // ============ MODEL FLOW REGISTRY (slot-level routing) ============
+
+  router.get("/model-slots", async (_req, res) => {
+    try {
+      const { listSlots } = await import("./model-registry");
+      res.json(await listSlots());
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.put("/model-slots/:key", async (req, res) => {
+    try {
+      const { updateSlot, invalidateCache } = await import("./model-registry");
+      const key = decodeURIComponent(req.params.key);
+      const patch = req.body as Record<string, any>;
+      invalidateCache();
+      const slots = await updateSlot(key, patch);
+      res.json(slots);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ============ OLLAMA EMBEDDED SERVER ============
 
   let ollamaProcess: ChildProcess | null = null;

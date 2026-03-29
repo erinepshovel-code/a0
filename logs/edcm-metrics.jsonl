@@ -422,3 +422,4 @@
 {"timestamp":"2026-03-29T16:50:36.787Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"8e204260a881","conversationsScanned":10,"totalMessages":18,"highEdcmCount":0,"findingsCount":0}}
 {"timestamp":"2026-03-29T17:09:38.664Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"aae0f67a1989","conversationsScanned":10,"totalMessages":18,"highEdcmCount":0,"findingsCount":0}}
 {"timestamp":"2026-03-29T17:26:09.940Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"947a0f5e2028","conversationsScanned":10,"totalMessages":18,"highEdcmCount":0,"findingsCount":0}}
+{"timestamp":"2026-03-29T17:36:34.916Z","stream":"edcm","subsystem":"edcm","event":"transcript_search_batch","data":{"transcriptHash":"9a610cd3dcd4","conversationsScanned":10,"totalMessages":18,"highEdcmCount":0,"findingsCount":0}}
