@@ -1,6 +1,5 @@
 import { storage } from "./storage";
 import { logMaster, logTranscript, logEdcm, logOmega, logPsi } from "./logger";
-import OpenAI from "openai";
 import { computeEdcmMetrics, updateSemanticMemory, omegaSolve, applyCrossTensorCoupling, applyMemoryBridge, persistOmegaState, getOmegaState, psiSolve, applyPsiOmegaCoupling, persistPsiState, ptcaSolveDetailed, touchOmegaGoalPursuit } from "./a0p-engine";
 import { getUncachableGitHubClient } from "./github";
 import { createHash } from "crypto";
