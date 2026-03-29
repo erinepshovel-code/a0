@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import express, { Router } from "express";
 import { createServer, type Server } from "http";
-import { exec } from "child_process";
+import { exec, spawn, ChildProcess } from "child_process";
 import { promisify } from "util";
 import { readdir, readFile, rename, stat, writeFile, mkdir, unlink, rm } from "fs/promises";
 import fs from "fs";
@@ -4457,13 +4457,55 @@ ${moduleWritingBlock}`;
 
   const DEFAULT_MODEL_REGISTRY = {
     providers: [
-      { name: "xai", label: "xAI Grok", baseURL: "https://api.x.ai/v1", authHeader: "Bearer {XAI_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: true, models: [{ id: "grok-beta", name: "Grok Beta", contextWindow: 131072, maxOutput: 4096 }, { id: "grok-2", name: "Grok 2", contextWindow: 131072, maxOutput: 4096 }, { id: "grok-2-vision-preview", name: "Grok 2 Vision", contextWindow: 8192, maxOutput: 4096 }], notes: "Native integration via XAI_API_KEY env var. Supports vision." },
-      { name: "gemini", label: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta", authHeader: "Bearer {GEMINI_API_KEY}", requestFormat: "gemini", streamingFormat: "gemini-sse", nativeIntegration: true, models: [{ id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash", contextWindow: 1048576, maxOutput: 8192 }, { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", contextWindow: 2097152, maxOutput: 8192 }, { id: "gemini-2.5-pro-exp-03-25", name: "Gemini 2.5 Pro", contextWindow: 1048576, maxOutput: 65536 }], notes: "Native integration via Gemini Replit integration." },
-      { name: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", authHeader: "Bearer {OPENAI_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, models: [{ id: "gpt-4o", name: "GPT-4o", contextWindow: 128000, maxOutput: 16384 }, { id: "gpt-4o-mini", name: "GPT-4o Mini", contextWindow: 128000, maxOutput: 16384 }, { id: "gpt-4-turbo", name: "GPT-4 Turbo", contextWindow: 128000, maxOutput: 4096 }, { id: "o1", name: "o1", contextWindow: 200000, maxOutput: 100000 }], notes: "BYO API key. OpenAI-compatible." },
-      { name: "anthropic", label: "Anthropic Claude", baseURL: "https://api.anthropic.com/v1", authHeader: "x-api-key: {ANTHROPIC_API_KEY}", requestFormat: "anthropic", streamingFormat: "anthropic-sse", nativeIntegration: false, models: [{ id: "claude-opus-4-5", name: "Claude Opus 4.5", contextWindow: 200000, maxOutput: 32000 }, { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", contextWindow: 200000, maxOutput: 32000 }, { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", contextWindow: 200000, maxOutput: 8192 }], notes: "BYO API key. Uses native Anthropic format, NOT OpenAI-compatible. Requires messages API v1 with anthropic-version header." },
-      { name: "mistral", label: "Mistral AI", baseURL: "https://api.mistral.ai/v1", authHeader: "Bearer {MISTRAL_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, models: [{ id: "mistral-large-latest", name: "Mistral Large", contextWindow: 128000, maxOutput: 8192 }, { id: "mistral-small-latest", name: "Mistral Small", contextWindow: 32000, maxOutput: 8192 }], notes: "BYO API key. OpenAI-compatible endpoint." },
-      { name: "perplexity", label: "Perplexity", baseURL: "https://api.perplexity.ai", authHeader: "Bearer {PERPLEXITY_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, models: [{ id: "sonar-pro", name: "Sonar Pro", contextWindow: 200000, maxOutput: 8192 }, { id: "sonar", name: "Sonar", contextWindow: 127072, maxOutput: 8192 }], notes: "BYO API key. OpenAI-compatible. Includes real-time web search." },
-      { name: "cohere", label: "Cohere", baseURL: "https://api.cohere.ai/v2", authHeader: "Bearer {COHERE_API_KEY}", requestFormat: "cohere-chat", streamingFormat: "cohere-sse", nativeIntegration: false, models: [{ id: "command-r-plus-08-2024", name: "Command R+", contextWindow: 128000, maxOutput: 4096 }, { id: "command-r-08-2024", name: "Command R", contextWindow: 128000, maxOutput: 4096 }], notes: "BYO API key. Not OpenAI-compatible — uses Cohere v2 chat format." },
+      { name: "xai", label: "xAI Grok", baseURL: "https://api.x.ai/v1", authHeader: "Bearer {XAI_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: true, notes: "Native Replit integration via XAI_API_KEY. Supports vision and function calling.", models: [
+        { id: "grok-3", name: "Grok 3", contextWindow: 131072, maxOutput: 16384 },
+        { id: "grok-3-mini", name: "Grok 3 Mini", contextWindow: 131072, maxOutput: 16384 },
+        { id: "grok-3-fast", name: "Grok 3 Fast", contextWindow: 131072, maxOutput: 16384 },
+        { id: "grok-3-mini-fast", name: "Grok 3 Mini Fast", contextWindow: 131072, maxOutput: 16384 },
+        { id: "grok-2-1212", name: "Grok 2", contextWindow: 131072, maxOutput: 4096 },
+        { id: "grok-2-vision-1212", name: "Grok 2 Vision", contextWindow: 32768, maxOutput: 4096 },
+        { id: "grok-vision-beta", name: "Grok Vision Beta", contextWindow: 8192, maxOutput: 4096 },
+      ]},
+      { name: "gemini", label: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta", authHeader: "Bearer {GEMINI_API_KEY}", requestFormat: "gemini", streamingFormat: "gemini-sse", nativeIntegration: true, notes: "Native Replit Gemini integration. Massive context windows.", models: [
+        { id: "gemini-2.5-pro-exp-03-25", name: "Gemini 2.5 Pro", contextWindow: 1048576, maxOutput: 65536 },
+        { id: "gemini-2.5-flash-preview-04-17", name: "Gemini 2.5 Flash", contextWindow: 1048576, maxOutput: 65536 },
+        { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", contextWindow: 1048576, maxOutput: 8192 },
+        { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash Exp", contextWindow: 1048576, maxOutput: 8192 },
+        { id: "gemini-2.0-flash-thinking-exp", name: "Gemini 2.0 Flash Thinking", contextWindow: 1048576, maxOutput: 8192 },
+        { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", contextWindow: 2097152, maxOutput: 8192 },
+        { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", contextWindow: 1048576, maxOutput: 8192 },
+        { id: "gemini-1.5-flash-8b", name: "Gemini 1.5 Flash 8B", contextWindow: 1048576, maxOutput: 8192 },
+      ]},
+      { name: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", authHeader: "Bearer {OPENAI_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, notes: "BYO API key. OpenAI-compatible.", models: [
+        { id: "gpt-4o", name: "GPT-4o", contextWindow: 128000, maxOutput: 16384 },
+        { id: "gpt-4o-mini", name: "GPT-4o Mini", contextWindow: 128000, maxOutput: 16384 },
+        { id: "gpt-4-turbo", name: "GPT-4 Turbo", contextWindow: 128000, maxOutput: 4096 },
+        { id: "o1", name: "o1", contextWindow: 200000, maxOutput: 100000 },
+        { id: "o1-mini", name: "o1 Mini", contextWindow: 128000, maxOutput: 65536 },
+        { id: "o3-mini", name: "o3 Mini", contextWindow: 200000, maxOutput: 100000 },
+      ]},
+      { name: "anthropic", label: "Anthropic Claude", baseURL: "https://api.anthropic.com/v1", authHeader: "x-api-key: {ANTHROPIC_API_KEY}", requestFormat: "anthropic", streamingFormat: "anthropic-sse", nativeIntegration: false, notes: "BYO API key. Native Anthropic format (not OpenAI-compat).", models: [
+        { id: "claude-opus-4-5", name: "Claude Opus 4.5", contextWindow: 200000, maxOutput: 32000 },
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", contextWindow: 200000, maxOutput: 32000 },
+        { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", contextWindow: 200000, maxOutput: 8192 },
+        { id: "claude-3-7-sonnet-20250219", name: "Claude 3.7 Sonnet", contextWindow: 200000, maxOutput: 128000 },
+      ]},
+      { name: "mistral", label: "Mistral AI", baseURL: "https://api.mistral.ai/v1", authHeader: "Bearer {MISTRAL_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, notes: "BYO API key. OpenAI-compatible endpoint.", models: [
+        { id: "mistral-large-latest", name: "Mistral Large", contextWindow: 128000, maxOutput: 8192 },
+        { id: "mistral-small-latest", name: "Mistral Small", contextWindow: 32000, maxOutput: 8192 },
+        { id: "codestral-latest", name: "Codestral", contextWindow: 256000, maxOutput: 32768 },
+      ]},
+      { name: "perplexity", label: "Perplexity", baseURL: "https://api.perplexity.ai", authHeader: "Bearer {PERPLEXITY_API_KEY}", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: false, notes: "BYO API key. Includes real-time web search grounding.", models: [
+        { id: "sonar-pro", name: "Sonar Pro", contextWindow: 200000, maxOutput: 8192 },
+        { id: "sonar", name: "Sonar", contextWindow: 127072, maxOutput: 8192 },
+        { id: "sonar-reasoning-pro", name: "Sonar Reasoning Pro", contextWindow: 127072, maxOutput: 8192 },
+      ]},
+      { name: "cohere", label: "Cohere", baseURL: "https://api.cohere.ai/v2", authHeader: "Bearer {COHERE_API_KEY}", requestFormat: "cohere-chat", streamingFormat: "cohere-sse", nativeIntegration: false, notes: "BYO API key. Cohere v2 chat format (not OpenAI-compat).", models: [
+        { id: "command-r-plus-08-2024", name: "Command R+", contextWindow: 128000, maxOutput: 4096 },
+        { id: "command-r-08-2024", name: "Command R", contextWindow: 128000, maxOutput: 4096 },
+        { id: "command-a-03-2025", name: "Command A", contextWindow: 256000, maxOutput: 8192 },
+      ]},
+      { name: "ollama", label: "Ollama (local)", baseURL: "http://localhost:11434/v1", authHeader: "Bearer ollama", requestFormat: "openai-chat", streamingFormat: "openai-sse", nativeIntegration: true, notes: "Local inference via embedded Ollama server. No API key required. Manage models in Guardian tab.", models: [] },
     ],
   };
 
@@ -4483,6 +4525,125 @@ ${moduleWritingBlock}`;
       if (!Array.isArray(providers)) return res.status(400).json({ error: "providers must be an array" });
       await storage.upsertSystemToggle("model_registry", true, { providers });
       res.json({ ok: true, providers });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============ OLLAMA EMBEDDED SERVER ============
+
+  let ollamaProcess: ChildProcess | null = null;
+
+  function ollamaRunning(): boolean {
+    return !!(ollamaProcess && !ollamaProcess.killed);
+  }
+
+  async function ollamaApiReachable(): Promise<boolean> {
+    try {
+      const r = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(2000) });
+      return r.ok;
+    } catch { return false; }
+  }
+
+  router.get("/ollama/status", async (_req, res) => {
+    try {
+      const reachable = await ollamaApiReachable();
+      let models: string[] = [];
+      if (reachable) {
+        const r = await fetch("http://localhost:11434/api/tags");
+        const data = await r.json() as any;
+        models = (data.models || []).map((m: any) => m.name);
+      }
+      const binaryExists = await fs.promises.access("/usr/local/bin/ollama").then(() => true).catch(() => false);
+      res.json({ running: reachable, processAlive: ollamaRunning(), binaryInstalled: binaryExists, models });
+    } catch (e: any) {
+      res.json({ running: false, processAlive: false, binaryInstalled: false, models: [], error: e.message });
+    }
+  });
+
+  router.post("/ollama/install", async (_req, res) => {
+    try {
+      res.setHeader("Content-Type", "text/plain");
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.write("Downloading Ollama binary...\n");
+      await execAsync("curl -fsSL -o /usr/local/bin/ollama https://ollama.com/download/ollama-linux-amd64 && chmod +x /usr/local/bin/ollama", { timeout: 120000 });
+      res.write("Ollama installed successfully.\n");
+      res.end();
+    } catch (e: any) {
+      res.write(`Error: ${e.message}\n`);
+      res.end();
+    }
+  });
+
+  router.post("/ollama/start", async (_req, res) => {
+    try {
+      if (ollamaRunning()) return res.json({ ok: true, message: "Already running" });
+      const binaryExists = await fs.promises.access("/usr/local/bin/ollama").then(() => true).catch(() => false);
+      if (!binaryExists) return res.status(400).json({ error: "Ollama not installed. Use POST /ollama/install first." });
+      ollamaProcess = spawn("/usr/local/bin/ollama", ["serve"], {
+        detached: false,
+        stdio: "pipe",
+        env: { ...process.env, HOME: "/root", OLLAMA_HOST: "0.0.0.0:11434" },
+      });
+      ollamaProcess.on("exit", () => { ollamaProcess = null; });
+      // Wait up to 5s for it to become reachable
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        if (await ollamaApiReachable()) break;
+      }
+      res.json({ ok: true, running: await ollamaApiReachable() });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.post("/ollama/stop", async (_req, res) => {
+    try {
+      if (ollamaProcess) { ollamaProcess.kill(); ollamaProcess = null; }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.post("/ollama/pull", async (req, res) => {
+    try {
+      const { model } = req.body;
+      if (!model) return res.status(400).json({ error: "model required" });
+      res.setHeader("Content-Type", "text/plain");
+      res.setHeader("Transfer-Encoding", "chunked");
+      const pullProc = spawn("/usr/local/bin/ollama", ["pull", model], { env: { ...process.env, HOME: "/root" } });
+      pullProc.stdout?.on("data", d => res.write(d));
+      pullProc.stderr?.on("data", d => res.write(d));
+      pullProc.on("exit", code => {
+        res.write(code === 0 ? "\n[DONE]\n" : `\n[ERROR code ${code}]\n`);
+        res.end();
+      });
+    } catch (e: any) {
+      res.write(`Error: ${e.message}\n`);
+      res.end();
+    }
+  });
+
+  router.get("/ollama/models", async (_req, res) => {
+    try {
+      const r = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(3000) });
+      const data = await r.json() as any;
+      res.json(data.models || []);
+    } catch (e: any) {
+      res.json([]);
+    }
+  });
+
+  router.delete("/ollama/models/:name", async (req, res) => {
+    try {
+      const name = decodeURIComponent(req.params.name);
+      await fetch("http://localhost:11434/api/delete", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
