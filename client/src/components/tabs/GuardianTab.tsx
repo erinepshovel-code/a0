@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, Code2, ExternalLink, Save, RotateCcw } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Shield, Code2, ExternalLink, Save, RotateCcw, Download, Play, Square, Trash2 } from "lucide-react";
 import { TAB_GROUPS } from "@/lib/console-config";
 
 interface Props {
@@ -467,6 +469,206 @@ export function GuardianTab({ activeTab, onNavigate }: Props) {
         </div>
         <p className="text-xs text-muted-foreground">Current: <span className="font-medium capitalize">{omegaMode}</span></p>
       </div>
+
+      {/* ── Ollama Embedded Server ── */}
+      <OllamaPanel />
+    </div>
+  );
+}
+
+function OllamaPanel() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [pullModel, setPullModel] = useState("");
+  const [pullLog, setPullLog] = useState("");
+  const [pulling, setPulling] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const { data: status, isLoading } = useQuery<{
+    running: boolean; processAlive: boolean; binaryInstalled: boolean; models: string[];
+  }>({
+    queryKey: ["/api/v1/ollama/status"],
+    refetchInterval: 5000,
+  });
+
+  const installMutation = useMutation({
+    mutationFn: async () => {
+      setPullLog("Installing Ollama...\n");
+      const r = await fetch("/api/v1/ollama/install", { method: "POST" });
+      const reader = r.body!.getReader();
+      const dec = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        setPullLog(prev => prev + dec.decode(value));
+      }
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/v1/ollama/status"] }); toast({ title: "Ollama installed" }); },
+    onError: (e: any) => toast({ title: "Install failed", description: e.message, variant: "destructive" }),
+  });
+
+  const startMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/v1/ollama/start", {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/v1/ollama/status"] }); toast({ title: "Ollama started" }); },
+    onError: (e: any) => toast({ title: "Start failed", description: e.message, variant: "destructive" }),
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/v1/ollama/stop", {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/v1/ollama/status"] }); toast({ title: "Ollama stopped" }); },
+    onError: (e: any) => toast({ title: "Stop failed", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (name: string) => apiRequest("DELETE", `/api/v1/ollama/models/${encodeURIComponent(name)}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/v1/ollama/status", "/api/v1/ollama/models"] }),
+    onError: (e: any) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: ({ slotKey, model }: { slotKey: string; model: string }) =>
+      apiRequest("PATCH", `/api/agent/slots/${slotKey}`, {
+        provider: "ollama", model, baseUrl: "http://localhost:11434/v1", label: slotKey.toUpperCase(),
+      }),
+    onSuccess: (_, { slotKey, model }) => toast({ title: `Slot ${slotKey.toUpperCase()} → ${model}` }),
+    onError: (e: any) => toast({ title: "Assign failed", description: e.message, variant: "destructive" }),
+  });
+
+  async function handlePull() {
+    if (!pullModel.trim()) return;
+    setPullLog("");
+    setPulling(true);
+    abortRef.current = new AbortController();
+    try {
+      const r = await fetch("/api/v1/ollama/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: pullModel.trim() }),
+        signal: abortRef.current.signal,
+      });
+      const reader = r.body!.getReader();
+      const dec = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        setPullLog(prev => prev + dec.decode(value));
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/ollama/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/ollama/models"] });
+      toast({ title: `Pulled ${pullModel.trim()}` });
+    } catch (e: any) {
+      if (e.name !== "AbortError") toast({ title: "Pull failed", description: e.message, variant: "destructive" });
+    } finally {
+      setPulling(false);
+    }
+  }
+
+  const SLOT_COLORS: Record<string, string> = {
+    a: "border-blue-400/50 text-blue-400 hover:bg-blue-500/10",
+    b: "border-orange-400/50 text-orange-400 hover:bg-orange-500/10",
+    c: "border-purple-400/50 text-purple-400 hover:bg-purple-500/10",
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-3 space-y-3" data-testid="panel-ollama">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Ollama (Local Models)</h4>
+        <div className="flex items-center gap-2">
+          {isLoading ? (
+            <Skeleton className="w-12 h-4" />
+          ) : (
+            <Badge
+              variant="outline"
+              className={cn("text-[9px]", status?.running ? "text-green-500 border-green-500/40" : "text-muted-foreground")}
+              data-testid="badge-ollama-status"
+            >
+              {status?.running ? "running" : "stopped"}
+            </Badge>
+          )}
+          {!status?.binaryInstalled ? (
+            <Button size="sm" className="h-6 text-[10px] gap-1" onClick={() => installMutation.mutate()} disabled={installMutation.isPending} data-testid="button-ollama-install">
+              <Download className="w-3 h-3" />{installMutation.isPending ? "Installing…" : "Install"}
+            </Button>
+          ) : status?.running ? (
+            <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1 text-destructive border-destructive/30" onClick={() => stopMutation.mutate()} disabled={stopMutation.isPending} data-testid="button-ollama-stop">
+              <Square className="w-3 h-3" />{stopMutation.isPending ? "…" : "Stop"}
+            </Button>
+          ) : (
+            <Button size="sm" className="h-6 text-[10px] gap-1" onClick={() => startMutation.mutate()} disabled={startMutation.isPending} data-testid="button-ollama-start">
+              <Play className="w-3 h-3" />{startMutation.isPending ? "Starting…" : "Start"}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Pull model */}
+      {status?.binaryInstalled && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-muted-foreground">Pull model</p>
+          <div className="flex gap-1.5">
+            <Input
+              value={pullModel}
+              onChange={e => setPullModel(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && !pulling && handlePull()}
+              placeholder="e.g. llama3.2, mistral, phi3…"
+              className="h-7 text-xs font-mono flex-1"
+              data-testid="input-ollama-pull-model"
+            />
+            <Button size="sm" className="h-7 px-2 gap-1" onClick={handlePull} disabled={pulling || !pullModel.trim()} data-testid="button-ollama-pull">
+              <Download className="w-3 h-3" />{pulling ? "Pulling…" : "Pull"}
+            </Button>
+          </div>
+          {pullLog && (
+            <pre className="text-[8px] font-mono bg-muted/30 rounded p-2 max-h-20 overflow-y-auto whitespace-pre-wrap" data-testid="pre-ollama-pull-log">
+              {pullLog}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Local models list */}
+      {status?.running && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-muted-foreground">Local models ({(status?.models ?? []).length})</p>
+          {(status?.models ?? []).length === 0 ? (
+            <p className="text-[9px] text-muted-foreground">No models pulled yet. Pull one above.</p>
+          ) : (
+            <div className="space-y-1">
+              {(status?.models ?? []).map(m => (
+                <div key={m} className="flex items-center gap-1.5 rounded border border-border bg-background px-2 py-1.5">
+                  <span className="font-mono text-[9px] flex-1 truncate">{m}</span>
+                  <div className="flex gap-0.5">
+                    {(["a", "b", "c"] as const).map(s => (
+                      <button
+                        key={s}
+                        onClick={() => assignMutation.mutate({ slotKey: s, model: m })}
+                        className={cn("w-5 h-5 rounded border text-[8px] font-bold transition-all", SLOT_COLORS[s])}
+                        title={`Assign to slot ${s.toUpperCase()}`}
+                        data-testid={`assign-ollama-${s}-${m}`}
+                      >
+                        {s.toUpperCase()}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => deleteMutation.mutate(m)}
+                      className="w-5 h-5 rounded border border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center justify-center"
+                      title="Delete model"
+                      data-testid={`delete-ollama-${m}`}
+                    >
+                      <Trash2 className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Install log */}
+      {installMutation.isPending && pullLog && (
+        <pre className="text-[8px] font-mono bg-muted/30 rounded p-2 max-h-16 overflow-y-auto">{pullLog}</pre>
+      )}
     </div>
   );
 }
