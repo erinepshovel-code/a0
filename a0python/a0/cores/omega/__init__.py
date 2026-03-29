@@ -23,4 +23,8 @@ class Omega(PrivateCore):
     name = "omega"
 
     def _process(self, stimulus: Any) -> Any:
-        return {"core": self.name, "processed": True, "stimulus_type": type(stimulus).__name__}
+        from ..pcna.omega import OmegaTensor
+        text = stimulus if isinstance(stimulus, str) else str(stimulus)
+        result = OmegaTensor().process(text)
+        result["core"] = self.name
+        return result

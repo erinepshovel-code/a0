@@ -21,4 +21,8 @@ class Psi(PrivateCore):
     name = "psi"
 
     def _process(self, stimulus: Any) -> Any:
-        return {"core": self.name, "processed": True, "stimulus_type": type(stimulus).__name__}
+        from ..pcna.psi import PsiTensor
+        text = stimulus if isinstance(stimulus, str) else str(stimulus)
+        result = PsiTensor().process(text)
+        result["core"] = self.name
+        return result

@@ -18,4 +18,8 @@ class Phi(PrivateCore):
     name = "phi"
 
     def _process(self, stimulus: Any) -> Any:
-        return {"core": self.name, "processed": True, "stimulus_type": type(stimulus).__name__}
+        from ..pcna.phi import PhiTensor
+        text = stimulus if isinstance(stimulus, str) else str(stimulus)
+        result = PhiTensor().process(text)
+        result["core"] = self.name
+        return result
