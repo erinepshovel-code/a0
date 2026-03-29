@@ -3554,6 +3554,8 @@ ${moduleWritingBlock}`;
 
       // Gemini slots use native SDK — maintain a separate contents array
       const isGeminiSlot = agentProvider === "gemini";
+      // Ollama is OpenAI-compat but most local models don't support the tools parameter
+      const isOllamaSlot = agentProvider === "ollama";
       type GeminiContent = { role: string; parts: any[] };
       let geminiContents: GeminiContent[] = isGeminiSlot
         ? grokMessages
@@ -3625,30 +3627,51 @@ ${moduleWritingBlock}`;
             return;
           }
         } else {
-          // ── OpenAI-compatible path (xAI, OpenAI, Anthropic-via-proxy, etc.) ──
+          // ── OpenAI-compatible path (xAI, OpenAI, Ollama, Anthropic-via-proxy, etc.) ──
+          // Ollama local models mostly don't support the `tools` parameter.
+          // We always send them text-embedded tool instructions and parse the output.
+          const ollamaToolSuffix = isOllamaSlot && grokTools.length > 0
+            ? "\n\n[TOOL CALLING]: When you need to invoke a tool, output a JSON block using this exact format on its own line:\n```tool_call\n{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}\n```\nAvailable tools: " + grokTools.map(t => `${t.function.name}: ${t.function.description}`).join("; ")
+            : "";
+
+          // For Ollama: convert unsupported message roles to plain user/assistant turns
+          const messagesForProvider = isOllamaSlot
+            ? grokMessages.map((m, i) => {
+                if (i === 0) return { ...m, content: m.content + ollamaToolSuffix }; // inject tool syntax into system
+                if (m.role === "tool") return { role: "user" as const, content: `[Tool result for ${m.tool_call_id || "tool"}: ${m.content}]` };
+                if (m.role === "assistant" && m.tool_calls?.length) {
+                  const names = m.tool_calls.map((tc: any) => tc.function?.name || "tool").join(", ");
+                  return { role: "assistant" as const, content: m.content || `[Calling tools: ${names}]` };
+                }
+                return m;
+              })
+            : grokMessages;
+
+          if (isOllamaSlot) usingReasoningTextFallback = true;
+
           try {
             result = await grokClient.chat.completions.create({
               model: effectiveModel,
-              messages: grokMessages,
-              tools: grokTools,
-              tool_choice: "auto" as const,
+              messages: messagesForProvider,
+              ...(isOllamaSlot ? {} : { tools: grokTools, tool_choice: "auto" as const }),
               max_tokens: 16384,
             } as any, { signal: agentAbort.signal });
           } catch (e: any) {
-            if (isReasoningModel && (e?.status === 400 || String(e?.message).includes("400") || String(e?.message).includes("model"))) {
+            const is400 = e?.status === 400 || e?.status === 422 || String(e?.message).includes("400") || String(e?.message).includes("422");
+            if ((isReasoningModel && (is400 || String(e?.message).includes("model"))) || (isOllamaSlot && is400)) {
               usingReasoningTextFallback = true;
               try {
-                const reasoningMessages = [
+                const textToolMessages = [
                   {
                     ...grokMessages[0],
-                    content: grokMessages[0].content + "\n\n[TOOL CALLING]: When you need to invoke a tool, output a JSON block using this exact format on its own line:\n```tool_call\n{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}\n```\nAvailable tools: " + grokTools.map(t => t.function.name).join(", "),
+                    content: grokMessages[0].content + (ollamaToolSuffix || "\n\n[TOOL CALLING]: When you need to invoke a tool, output a JSON block using this exact format on its own line:\n```tool_call\n{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}\n```\nAvailable tools: " + grokTools.map(t => t.function.name).join(", ")),
                   },
                   ...grokMessages.slice(1),
                 ];
                 result = await grokClient.chat.completions.create({
                   model: agentModel,
-                  messages: reasoningMessages,
-                  max_completion_tokens: 16384,
+                  messages: textToolMessages,
+                  max_tokens: 16384,
                 } as any, { signal: agentAbort.signal });
               } catch (e2: any) {
                 clearTimeout(agentTimeout);
