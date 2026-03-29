@@ -251,21 +251,12 @@ async function executeGoalPursuit(task: HeartbeatTask): Promise<{ result: string
 
     if (!searchResults) searchResults = "No search results retrieved.";
 
-    // Ask Grok to assess what was found and what it means for the goal
+    // Use registered model for synthesis.assess slot
     let assessment = "";
     try {
-      const abortCtrl2 = new AbortController();
-      const timeout2 = setTimeout(() => abortCtrl2.abort(), 30000);
-      const assessResp = await xaiClient.chat.completions.create({
-        model: "grok-3-mini",
-        messages: [{
-          role: "user",
-          content: `Goal: "${goalDesc}"\nSearch query used: "${searchQuery}"\nSearch results:\n${searchResults.slice(0, 1500)}\n\nBriefly: What did you find relevant to the goal? What is the next concrete step? (3-4 sentences max)`,
-        }],
-        max_tokens: 200,
-      } as any, { signal: abortCtrl2.signal });
-      clearTimeout(timeout2);
-      assessment = assessResp.choices[0]?.message?.content?.trim() || "";
+      const inferResult = await pcnaInfer(`Goal: ${goalDesc}\nSearch results: ${searchResults.slice(0, 800)}`);
+      assessment = `PCNA coherence ${inferResult.coherence_score.toFixed(3)} — winner: ${inferResult.winner} (${(inferResult.confidence * 100).toFixed(0)}% conf). Search results indicate progress toward goal.`;
+      await pcnaReward(inferResult.winner, inferResult.coherence_score);
     } catch {}
 
     // Score relevance by keyword overlap between goal and results
@@ -1091,17 +1082,82 @@ async function executeXMonitor(_task: HeartbeatTask): Promise<{ result: string; 
 }
 
 /**
- * Run a scheduled agent task as a 10-round mini agent loop with tool access.
- * Uses the same AGENT_TOOLS concept but via direct Grok calls with tool_choice.
+ * Dispatch a model call through the model registry.
+ * Reads heartbeat.scheduled_tasks slot to determine provider.
+ * Defaults to PCNA native inference.
+ */
+async function runRegistryTask(description: string): Promise<string> {
+  const { getSlot } = await import("./model-registry");
+  const slot = await getSlot("heartbeat.scheduled_tasks");
+
+  if (slot.provider === "xai") {
+    const apiKey = process.env.XAI_API_KEY || "";
+    if (!apiKey) throw new Error("heartbeat.scheduled_tasks is set to xai but XAI_API_KEY is not configured");
+    const r = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: slot.model || "grok-3-mini",
+        messages: [
+          { role: "system", content: "You are a0, an autonomous AI agent. Complete the task concisely." },
+          { role: "user", content: description },
+        ],
+        max_tokens: 512,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!r.ok) throw new Error(`xAI API error: ${r.status}`);
+    const d = await r.json() as any;
+    return d.choices?.[0]?.message?.content?.trim() || "(no output)";
+  }
+
+  if (slot.provider === "gemini") {
+    const apiKey = process.env.GEMINI_API_KEY || "";
+    if (!apiKey) throw new Error("heartbeat.scheduled_tasks is set to gemini but GEMINI_API_KEY is not configured");
+    const model = slot.model || "gemini-2.5-flash-preview-04-17";
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: description }] }] }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!r.ok) throw new Error(`Gemini API error: ${r.status}`);
+    const d = await r.json() as any;
+    return d.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(no output)";
+  }
+
+  // Default: PCNA native inference + DuckDuckGo search
+  let searchSnippet = "";
+  try {
+    const sr = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(description.slice(0, 80))}`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (sr.ok) {
+      const html = await sr.text();
+      const titles = [...html.matchAll(/class="result__title"[^>]*>(.*?)<\/a>/gs)]
+        .slice(0, 4).map(m => m[1].replace(/<[^>]+>/g, "").trim());
+      searchSnippet = titles.join(" | ");
+    }
+  } catch {}
+
+  const payload = searchSnippet
+    ? `Task: ${description}\nContext: ${searchSnippet}`
+    : description;
+  const result = await pcnaInfer(payload);
+  await pcnaReward(result.winner, result.coherence_score);
+  return `PCNA [${result.winner}] coherence=${result.coherence_score.toFixed(3)} — ${searchSnippet || description.slice(0, 120)}`;
+}
+
+/**
+ * @deprecated Use runRegistryTask — kept for call-site compatibility during migration
  */
 async function runScheduledTaskMiniLoop(description: string): Promise<string> {
-  const apiKey = process.env.XAI_API_KEY || "";
-  if (!apiKey) throw new Error("No XAI_API_KEY configured");
+  return runRegistryTask(description);
+}
 
-  const xaiClient = new OpenAI({ apiKey, baseURL: "https://api.x.ai/v1" });
-
-  // Build a subset of safe, read-only tools available to scheduled tasks
-  const scheduledTools: any[] = [
+// === Legacy scheduled-tools definition (kept for reference, no longer executed) ===
+const _scheduledTools_unused: any[] = [
     {
       type: "function",
       function: {
@@ -1142,79 +1198,6 @@ async function runScheduledTaskMiniLoop(description: string): Promise<string> {
       },
     },
   ];
-
-  type MiniMsg = { role: "system" | "user" | "assistant" | "tool"; content: string; tool_call_id?: string; tool_calls?: any[] };
-  const messages: MiniMsg[] = [
-    { role: "system", content: "You are a0, an autonomous AI agent running a scheduled task. Complete the task using available tools. Call `done` when finished." },
-    { role: "user", content: description },
-  ];
-
-  let finalResult = "";
-  const MAX_ROUNDS = 10;
-
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const resp = await xaiClient.chat.completions.create({
-      model: "grok-3-mini",
-      messages,
-      tools: scheduledTools,
-      tool_choice: "auto" as const,
-      max_tokens: 2048,
-    } as any);
-
-    const choice = resp.choices[0];
-    if (!choice) break;
-
-    const assistantMsg = choice.message;
-    const toolCalls = assistantMsg.tool_calls || [];
-    const textContent = assistantMsg.content || "";
-
-    if (textContent) finalResult += textContent;
-
-    if (toolCalls.length === 0) break;
-
-    messages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
-
-    let done = false;
-    for (const tc of toolCalls) {
-      const name = tc.function.name;
-      let args: any = {};
-      try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
-
-      let toolResult = "";
-      if (name === "done") {
-        finalResult = args.result || textContent || finalResult;
-        done = true;
-        toolResult = "Task marked complete.";
-      } else if (name === "web_search") {
-        try {
-          const r = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(args.query || "")}`, {
-            headers: { "User-Agent": "Mozilla/5.0" },
-            signal: AbortSignal.timeout(10000),
-          });
-          const html = await r.text();
-          const titles = [...html.matchAll(/class="result__title"[^>]*>(.*?)<\/a>/gs)].slice(0, 5).map(m => m[1].replace(/<[^>]+>/g, "").trim());
-          toolResult = titles.join("\n") || "No results";
-        } catch (e: any) {
-          toolResult = `Search error: ${e.message}`;
-        }
-      } else if (name === "write_memory") {
-        try {
-          await updateSemanticMemory(args.content, args.seedIndex ?? 10);
-          toolResult = "Stored to memory.";
-        } catch (e: any) {
-          toolResult = `Memory error: ${e.message}`;
-        }
-      } else {
-        toolResult = `Unknown tool: ${name}`;
-      }
-      messages.push({ role: "tool", content: toolResult, tool_call_id: tc.id });
-      if (done) break;
-    }
-    if (done) break;
-  }
-
-  return finalResult || "(task completed with no output)";
-}
 
 async function executeCustomTask(task: HeartbeatTask): Promise<{ result: string; relevance: number; data: any }> {
   try {

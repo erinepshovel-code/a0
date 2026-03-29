@@ -8,7 +8,8 @@ export type TabId =
   | "tools_builtin" | "tools" | "credentials" | "tools_permissions" | "metrics"
   | "system" | "api" | "hub" | "sys_logs" | "sys_audit"
   | "bandit" | "research_ingest" | "research_runs" | "research_findings" | "research_drafts"
-  | "workflow" | "omega" | "edcm" | "brain" | "s17" | "deals" | "tasks";
+  | "workflow" | "omega" | "edcm" | "brain" | "s17" | "deals" | "tasks"
+  | "model_flow";
 
 export type TabGroup = { id: string; label: string; icon: any; tabs: Array<{ id: string; label: string; icon: any }> };
 
@@ -108,6 +109,7 @@ export const TAB_GROUPS: readonly TabGroup[] = [
     tabs: [
       { id: "system", label: "Config", icon: Settings },
       { id: "api", label: "Models", icon: Cpu },
+      { id: "model_flow", label: "Flow", icon: GitBranch },
       { id: "hub", label: "aimmh-lib", icon: Radio },
       { id: "sys_logs", label: "Logs", icon: ScrollText },
       { id: "sys_audit", label: "Audit", icon: FileSearch },
@@ -134,6 +136,7 @@ export const STATIC_TAB_IDS = new Set<string>([
   "tools_builtin", "tools", "credentials", "tools_permissions", "metrics",
   "system", "api", "hub", "sys_logs", "sys_audit",
   "bandit", "research_ingest", "research_runs", "research_findings", "research_drafts",
+  "model_flow",
 ]);
 
 export const TAB_TO_GROUP: Record<TabId, string> = {
@@ -144,6 +147,7 @@ export const TAB_TO_GROUP: Record<TabId, string> = {
   system: "system", api: "system", hub: "system", sys_logs: "system", sys_audit: "system",
   bandit: "research", research_ingest: "research", research_runs: "research", research_findings: "research", research_drafts: "research",
   workflow: "runtime", omega: "reasoning", edcm: "reasoning", brain: "memory", s17: "runtime", deals: "tools", tasks: "runtime",
+  model_flow: "system",
 };
 
 export type MetricLabelMap = Record<string, { label: string; desc: string }>;

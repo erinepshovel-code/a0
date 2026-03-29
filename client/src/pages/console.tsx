@@ -45,6 +45,7 @@ import {
   FindingsTab,
   DraftsTab,
   ResearchTab,
+  ModelFlowTab,
 } from "@/components/tabs";
 
 const allTabFiles = import.meta.glob("../components/tabs/*Tab.tsx");
@@ -228,6 +229,7 @@ export default function ConsolePage() {
         {activeTab === "research_runs" && <ResearchTab />}
         {activeTab === "research_findings" && <FindingsTab />}
         {activeTab === "research_drafts" && <DraftsTab />}
+        {activeTab === "model_flow" && <ModelFlowTab />}
         {!STATIC_TAB_IDS.has(activeTab) && DynComp && (
           <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
             <DynComp />
