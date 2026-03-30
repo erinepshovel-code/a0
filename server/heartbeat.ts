@@ -1270,24 +1270,37 @@ async function executeAgentBanditTick(_task: HeartbeatTask): Promise<{ result: s
       }
     }
 
-    // Run ZFAE inference on the agent's directives as a proxy tick
+    // Run agent directives via runRegistryTask with scoped tool context
     await storage.updateAgentInstance(selected.id, { status: "running" });
     let output = "(no output)";
     let coherence = 0.5;
     let winner = "unknown";
     let confidence = 0.5;
     try {
-      const result = await pcnaInfer(selected.directives.slice(0, 400));
-      coherence = result.coherence_score;
-      winner = result.winner;
-      confidence = result.confidence;
-      output = `ZFAE[${winner}] coherence=${coherence.toFixed(3)} conf=${confidence.toFixed(3)}`;
+      const toolContext = (selected.tools || []).length > 0
+        ? `\nAvailable tools: ${(selected.tools as string[]).join(", ")}.`
+        : "";
+      const taskDescription = `${selected.directives}${toolContext}`;
+      // Run directives through the registry model slot, capturing text output
+      let registryOutput = "(no output)";
+      try {
+        registryOutput = await runRegistryTask(taskDescription);
+      } catch (registryErr: any) {
+        registryOutput = `registry_task_failed: ${registryErr.message}`;
+      }
+      output = registryOutput.slice(0, 400);
+      // ZFAE observes the model output
+      const zfaeResult = await pcnaInfer(output);
+      coherence = zfaeResult.coherence_score;
+      winner = zfaeResult.winner;
+      confidence = zfaeResult.confidence;
       await pcnaReward(winner, coherence);
+      output = `[${selected.name}] ${output.slice(0, 200)} | ZFAE[${winner}] coh=${coherence.toFixed(3)}`;
     } catch (err: any) {
-      output = `ZFAE inference failed: ${err.message}`;
+      output = `agent_tick_failed: ${err.message}`;
     }
 
-    // Write ZFAE observation and update sentinel seeds
+    // Write ZFAE observation and update sentinel seeds using agent's sentinelSeedIndices
     const obs = {
       ts: new Date().toISOString(),
       coherence,
@@ -1299,10 +1312,12 @@ async function executeAgentBanditTick(_task: HeartbeatTask): Promise<{ result: s
     const prevObs: typeof obs[] = (selected.zfaeObservations as typeof obs[]) || [];
     const newObs = [...prevObs, obs].slice(-ZFAE_OBS_MAX);
 
+    const sentinelIdx: number[] = (selected.sentinelSeedIndices as number[]) || [10, 11, 12];
+    const [si0, si1, si2] = sentinelIdx;
     const seeds = ((selected.seeds || []) as any[]).map((s: any) => {
-      if (s.index === 10) return { ...s, value: coherence, summary: `coherence=${coherence.toFixed(3)} winner=${winner}` };
-      if (s.index === 11) return { ...s, value: confidence, summary: `confidence=${confidence.toFixed(3)}` };
-      if (s.index === 12) return { ...s, value: Math.min(1, prevObs.length / ZFAE_OBS_MAX), summary: `obs_count=${newObs.length}` };
+      if (s.index === si0) return { ...s, value: coherence, summary: `coherence=${coherence.toFixed(3)} winner=${winner}` };
+      if (s.index === si1) return { ...s, value: confidence, summary: `confidence=${confidence.toFixed(3)}` };
+      if (s.index === si2) return { ...s, value: Math.min(1, prevObs.length / ZFAE_OBS_MAX), summary: `obs_count=${newObs.length}` };
       return s;
     });
 

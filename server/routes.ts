@@ -5025,29 +5025,33 @@ ${moduleWritingBlock}`;
     ];
 
     for (const def of PERSISTENT_AGENTS) {
-      const existing = await storage.getAgentInstance(def.name);
-      if (existing) continue;
+      let agentRow = await storage.getAgentInstance(def.name);
 
-      const seeds = initAgentSeeds();
-      const agent = await storage.createAgentInstance({
-        name: def.name,
-        slot: def.slot,
-        directives: def.directives,
-        tools: def.tools,
-        status: "idle",
-        seeds,
-        sentinelSeedIndices: [10, 11, 12],
-        zfaeObservations: [],
-        isPersistent: true,
-      });
+      if (!agentRow) {
+        const seeds = initAgentSeeds();
+        agentRow = await storage.createAgentInstance({
+          name: def.name,
+          slot: def.slot,
+          directives: def.directives,
+          tools: def.tools,
+          status: "idle",
+          seeds,
+          sentinelSeedIndices: [10, 11, 12],
+          zfaeObservations: [],
+          isPersistent: true,
+        });
+      }
 
+      // Always upsert bandit arm and ensure banditArmId is linked
       const arm = await storage.upsertBanditArm({
         domain: "agent",
         armName: def.name,
         enabled: true,
       });
 
-      await storage.updateAgentInstance(agent.id, { banditArmId: arm.id });
+      if (!agentRow.banditArmId || agentRow.banditArmId !== arm.id) {
+        await storage.updateAgentInstance(agentRow.id, { banditArmId: arm.id });
+      }
     }
   }
 
