@@ -153,19 +153,28 @@ def _build_browser_tab() -> None:
 # Settings tab helpers
 # ---------------------------------------------------------------------------
 
-def _save_settings(model: str, api_key: str, port: int, host: str) -> str:
+def _save_settings(
+    model: str, api_key: str, port: int, host: str,
+    local_model: str, ollama_base: str, model_path: str,
+    memory_key: str,
+    runtime: str, trainer_model: str, training_dir: str,
+) -> str:
     env_path: Path = _env.ENV_PATH
     lines = [
         f"A0_MODEL={model}",
         f"ANTHROPIC_API_KEY={api_key}",
         f"A0_PORT={int(port)}",
         f"A0_HOST={host}",
+        f"A0_LOCAL_MODEL={local_model}",
+        f"A0_OLLAMA_BASE={ollama_base}",
+        f"A0_MODEL_PATH={model_path}",
+        f"A0_MEMORY_KEY={memory_key}",
+        f"A0_RUNTIME={runtime}",
+        f"A0_TRAINER_MODEL={trainer_model}",
+        f"A0_TRAINING_DIR={training_dir}",
     ]
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    # Reload env module so the running process picks up new values
     importlib.reload(_env)
-
     return f"<span class='status-ok'>✓ saved to {env_path}</span>"
 
 
@@ -175,7 +184,7 @@ def _build_settings_tab() -> None:
         with gr.Group(elem_classes="settings-group"):
             model_dd = gr.Dropdown(
                 choices=["local-echo", "local-ollama", "local-llama",
-                         "anthropic-api", "claude-agent"],
+                         "anthropic-api", "claude-agent", "emergent"],
                 label="A0_MODEL",
                 value=_env.A0_MODEL,
                 info="local-ollama: ollama daemon. local-llama: embedded llama-cpp. anthropic-api: Anthropic API.",
@@ -185,6 +194,58 @@ def _build_settings_tab() -> None:
                 type="password",
                 value=_env.ANTHROPIC_API_KEY,
                 placeholder="sk-ant-… (required for anthropic-api)",
+            )
+
+        gr.Markdown("### local model")
+        with gr.Group(elem_classes="settings-group"):
+            local_model_box = gr.Textbox(
+                label="A0_LOCAL_MODEL",
+                value=_env.A0_LOCAL_MODEL,
+                placeholder="llama3.2",
+                info="Model name as shown by `ollama list` (A0_MODEL=local-ollama).",
+            )
+            ollama_base_box = gr.Textbox(
+                label="A0_OLLAMA_BASE",
+                value=_env.A0_OLLAMA_BASE,
+                placeholder="http://localhost:11434",
+                info="Ollama daemon URL. Override if running on a different host.",
+            )
+            model_path_box = gr.Textbox(
+                label="A0_MODEL_PATH",
+                value=_env.A0_MODEL_PATH,
+                placeholder="/path/to/model.gguf",
+                info="Absolute path to a GGUF file (A0_MODEL=local-llama). pip install llama-cpp-python",
+            )
+
+        gr.Markdown("### encryption")
+        with gr.Group(elem_classes="settings-group"):
+            memory_key_box = gr.Textbox(
+                label="A0_MEMORY_KEY",
+                type="password",
+                value=_env.A0_MEMORY_KEY,
+                placeholder="(Fernet key — leave blank for plaintext)",
+                info="Generate: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"",
+            )
+
+        gr.Markdown("### training")
+        with gr.Group(elem_classes="settings-group"):
+            runtime_dd = gr.Dropdown(
+                choices=["inference", "training"],
+                label="A0_RUNTIME",
+                value=_env.A0_RUNTIME,
+                info="training: outside model generates data for a0's native PCNA weights.",
+            )
+            trainer_model_box = gr.Textbox(
+                label="A0_TRAINER_MODEL",
+                value=_env.A0_TRAINER_MODEL,
+                placeholder="claude-sonnet-4-6",
+                info="External model acting as trainer (Path B — native PCNA).",
+            )
+            training_dir_box = gr.Textbox(
+                label="A0_TRAINING_DIR",
+                value=_env.A0_TRAINING_DIR,
+                placeholder="/path/to/training/",
+                info="Where training data and checkpoints are written.",
             )
 
         gr.Markdown("### server")
@@ -198,7 +259,7 @@ def _build_settings_tab() -> None:
             host_box = gr.Textbox(
                 label="A0_HOST",
                 value=_env.A0_HOST,
-                info="0.0.0.0 = all interfaces (GCP accessible). 127.0.0.1 = local only.",
+                info="0.0.0.0 = all interfaces. 127.0.0.1 = local only.",
             )
 
         save_btn = gr.Button("save", variant="primary")
@@ -206,7 +267,12 @@ def _build_settings_tab() -> None:
 
         save_btn.click(
             fn=_save_settings,
-            inputs=[model_dd, api_key_box, port_num, host_box],
+            inputs=[
+                model_dd, api_key_box, port_num, host_box,
+                local_model_box, ollama_base_box, model_path_box,
+                memory_key_box,
+                runtime_dd, trainer_model_box, training_dir_box,
+            ],
             outputs=status_md,
         )
 

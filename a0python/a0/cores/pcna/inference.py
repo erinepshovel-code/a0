@@ -160,7 +160,8 @@ def get_backend() -> Any:
     if _backend is not None:
         return _backend
 
-    model_path = os.getenv("A0_MODEL_PATH", "")
+    from a0.cores.psi.tensors.env import A0_MODEL_PATH
+    model_path = A0_MODEL_PATH
     if model_path:
         try:
             _backend = LlamaCppBackend(model_path)

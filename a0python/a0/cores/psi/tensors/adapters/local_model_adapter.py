@@ -40,8 +40,9 @@ class OllamaAdapter:
     ) -> Dict[str, Any]:
         import httpx
 
-        base = os.getenv("A0_OLLAMA_BASE", "http://localhost:11434")
-        model = os.getenv("A0_LOCAL_MODEL", "llama3.2")
+        from a0.cores.psi.tensors.env import A0_LOCAL_MODEL, A0_OLLAMA_BASE
+        base = A0_OLLAMA_BASE
+        model = A0_LOCAL_MODEL
 
         resp = httpx.post(
             f"{base}/api/chat",
@@ -69,7 +70,8 @@ class LlamaCppAdapter:
     ) -> Dict[str, Any]:
         from llama_cpp import Llama  # type: ignore[import]
 
-        model_path = os.getenv("A0_MODEL_PATH", "")
+        from a0.cores.psi.tensors.env import A0_MODEL_PATH
+        model_path = A0_MODEL_PATH
         if not model_path:
             raise RuntimeError(
                 "A0_MODEL_PATH is not set. "
