@@ -145,11 +145,27 @@ This dovetails with interdependency-based governance, not control-based governan
 
 ---
 
-# Prime Circular Neural Architecture (PCNA)
-
-### 53-Seed Tensor Routing Lattice
+# Prime Circular Neural Architecture — Three-Tier Stack
 
 *GPT generated; context, prompt Erin Spencer*
+
+Three tiers, each adding one layer of structure on top of the one below:
+
+```
+PTCA  =  PCTA  +  seed tensors      (53-node routing lattice)
+PCTA  =  PCNA  +  circle tensors    (unit-circle eigenbasis / phase coordinates)
+PCNA  =  phi + psi + omega + guardian + memory   ← the language model itself
+```
+
+| Tier | Full Name | What It Adds |
+|------|-----------|--------------|
+| **PCNA** | Prime Circular Neural Architecture | The inference engine — five tensor fields |
+| **PCTA** | Prime Circular Tensor Architecture | Phase-coordinate spectral transform layer |
+| **PTCA** | Prime Tensor Circular Architecture | 53-seed distributed routing lattice |
+
+---
+
+## PCNA — The Language Model
 
 PCNA is a distributed tensor-field computation architecture derived from:
 - Markov recursion (memoryless update laws)
@@ -160,6 +176,34 @@ PCNA is a distributed tensor-field computation architecture derived from:
 It treats system state as conserved "constraint energy" evolving through time. Instead of dense Cartesian networks, PCNA computes in **circular / phase coordinates**, which are the natural eigenmodes of recursive systems.
 
 Result: stable dynamics, interpretable behavior, low coupling, fault tolerance, minimal bandwidth between regions.
+
+### Five tensor fields
+
+| Field | Role |
+|-------|------|
+| **phi** | structural processing — negation, conditionals, contradiction detection |
+| **psi** | semantic processing — lexical diversity, question signal, semantic density |
+| **omega** | synthesis — coherence, length, resolution, text emission |
+| **guardian** | output gating — sole authorized emitter (Law 9) |
+| **memory** | continuity substrate — Jury-adjudicated, encrypted, persistent |
+
+---
+
+## PCTA — Circle Tensors
+
+The spectral transform layer between PCNA output and PTCA routing.
+
+Converts PCNA's Cartesian output state into phase coordinates:
+
+```
+E → |E| · e^(i·arg(E))        magnitude + phase per field
+```
+
+This is the natural eigenbasis because PCNA's evolution operator has eigenvalues on the unit circle. PCTA makes that coordinate system explicit.
+
+---
+
+## PTCA — Seed Tensors (53-Node Routing Lattice)
 
 ---
 
@@ -187,12 +231,12 @@ So state evolution is spiral/helix motion. Therefore: **circular coordinates are
 
 ---
 
-## Topology Overview
+## PTCA Topology Overview
 
-53 identical seeds organized as:
+53 seeds organized as:
 - 49 compute seeds
 - 4 sentinel seeds
-- 1 global router anchor (G0)
+- 1 global router anchor (G0) — not counted in the 53
 
 ### Layout
 
@@ -257,52 +301,58 @@ Star polygons (7:3, 7:2) provide: sparse edges, fast propagation, decorrelated s
 ## Repository Layout
 
 ```
-edcm-org/
-  README.md
-  LICENSE
-  pyproject.toml
-  src/edcm_org/
-    __init__.py
-    spec_version.py
-    types.py
-    glossary.py
-    metrics/
-      __init__.py
-      primary.py
-      secondary.py
-      progress.py
-      extraction_helpers.py
-    params/
-      __init__.py
-      alpha.py
-      delta_max.py
-      complexity.py
-    basins/
-      __init__.py
-      taxonomy.py
-      detect.py
-    governance/
-      __init__.py
-      privacy.py
-      gaming.py
-      interventions.py
-    eval/
-      __init__.py
-      protocol.py
-    io/
-      __init__.py
-      loaders.py
-      schemas.py
-    cli.py
-  examples/
-    sample_meeting.txt
-    sample_tickets.csv
-    run_demo.sh
+a0python/                       PTCA implementation (active)
+  .env.example                  all config vars documented
+  a0/
+    agent.py                    AgentZero — single importable entry point
+    lifecycle.py                spawn, clone, merge, diversify, soft_reset
+    memory.py                   continuity substrate (Jury-adjudicated writes)
+    encryption.py               Fernet AES-128-CBC + HMAC-SHA256
+    jury.py                     adjudication layer (Laws 4, 5)
+    tiers.py                    Tier1 (volatile) / Tier2 (committed) separation
+    state.py                    volatile config (last_model)
+    provenance.py               append-only event logs with hash-chain
+    heartbeat.py                maintenance cycle (verify, snapshot, hygiene)
+    invariants.py               hmmm invariant + InvalidStateError
+    laws.py                     14 PTCA governing laws
+    cores/
+      pcna/                     PCNA inference engine
+        inference.py            PatternMatchBackend + LlamaCppBackend
+        phi.py                  structural tensor field
+        psi.py                  semantic tensor field
+        omega.py                synthesis tensor field
+      pcta/
+        circle_tensors.py       phase-coordinate spectral transform
+      ptca/
+        seed_router.py          53-node routing lattice
+      phi/                      phi tensor stub (→ pcna/phi.py)
+      psi/
+        tensors/
+          env.py                single source of truth for all config vars
+          router.py             adapter dispatch + event logging
+          adapters/             anthropic, claude-agent, ollama, llama-cpp, emergent, echo
+      omega/                    omega tensor stub (→ pcna/omega.py)
+    guardian/
+      meta13.py                 G0 executive (Law 13)
+      sentinels.py              12 PTCA sentinel checks
+      jury_gate.py              Jury-gated commit interface
+      recovery.py               quarantine + RecoveryShell
+      ui/
+        web/app.py              Gradio 3-tab interface (chat / browser / settings)
+        circles.py              PCTA circle tensor UI
+        seeds.py                PTCA seed tensor UI
   tests/
-    test_metrics_ranges.py
-    test_basin_detection.py
-    test_privacy_guard.py
-    test_no_individual_outputs.py
+    test_smoke.py
+
+edcm-org/                       EDCM metrics library
+  src/edcm_org/
+    metrics/                    primary, secondary, progress
+    params/                     alpha, delta_max, complexity
+    basins/                     taxonomy, detection
+    governance/                 privacy, gaming, interventions
+    eval/                       protocol
+    io/                         loaders, schemas
+    cli.py
   spec/
     edcm-org-v0.1.md
     metric-glossary.md
@@ -312,11 +362,53 @@ edcm-org/
 
 ---
 
+## a0python — Configuration
+
+All configuration lives in `a0python/a0/cores/psi/tensors/env.py` (the psi tensor).
+Copy `.env.example` to `.env` and fill in values.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `A0_MODEL` | `local-echo` | adapter: `local-echo` / `anthropic-api` / `claude-agent` / `local-ollama` / `local-llama` / `emergent` |
+| `A0_LOCAL_MODEL` | `llama3.2` | ollama model name |
+| `A0_OLLAMA_BASE` | `http://localhost:11434` | ollama daemon URL |
+| `A0_MODEL_PATH` | _(empty)_ | absolute path to `.gguf` model file |
+| `ANTHROPIC_API_KEY` | _(empty)_ | required for `anthropic-api` |
+| `EMERGENT_API_KEY` | _(empty)_ | required for `emergent` |
+| `EMERGENT_API_BASE` | _(empty)_ | Emergent Labs endpoint |
+| `A0_MEMORY_KEY` | _(empty)_ | Fernet key for memory/log encryption |
+| `A0_PORT` | `7860` | Gradio server port |
+| `A0_HOST` | `0.0.0.0` | Gradio server host |
+| `A0_RUNTIME` | `inference` | `inference` \| `training` (Path B) |
+| `A0_TRAINER_MODEL` | _(empty)_ | external trainer model (e.g. `claude-opus-4-6`) |
+| `A0_TRAINING_DIR` | _(empty)_ | path for training data / checkpoints |
+
+---
+
+## a0python — Lifecycle Operations
+
+```python
+from a0.lifecycle import spawn, clone, merge, diversify, soft_reset, root_instance
+
+parent = root_instance()
+
+child   = spawn(parent, name="worker-1", seed_keys=["goal"])   # child with seeded memory
+backup  = clone(parent, name="backup")                         # exact copy, new identity
+merged  = merge(parent, child)                                 # Jury-adjudicated merge (Law 5)
+fleet   = diversify(parent, [{"A0_MODEL": "anthropic-api"},    # N config variants
+                              {"A0_MODEL": "local-llama"}])
+soft_reset(child)                                              # clear Tier 1; keep Tier 2 memory
+```
+
+Each instance has an isolated home directory with its own `state/`, `logs/`, and `instance.json`.
+
+---
+
 ## Status
 
 This defines the canonical topology for:
 - EDCM tensor engine
-- Prime Circular Neural Architecture
+- Prime Circular Neural Architecture / three-tier stack
 - distributed analysis network
 
 Implementation layers may evolve; topology and invariants remain stable.
