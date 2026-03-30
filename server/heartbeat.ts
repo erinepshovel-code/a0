@@ -1096,9 +1096,12 @@ async function executeXMonitor(_task: HeartbeatTask): Promise<{ result: string; 
  * Reads heartbeat.scheduled_tasks slot to determine provider.
  * Defaults to PCNA native inference.
  */
-async function runRegistryTask(description: string): Promise<string> {
+async function runRegistryTask(description: string, slotKey?: string): Promise<string> {
   const { getSlot } = await import("./model-registry");
-  const slot = await getSlot("heartbeat.scheduled_tasks");
+  // Map agent slot shorthand (a/b/c/zfae) to registry key; default to heartbeat.scheduled_tasks
+  const agentSlotMap: Record<string, string> = { a: "chat.slot_a", b: "chat.slot_b", c: "chat.slot_c" };
+  const resolvedKey = slotKey ? (agentSlotMap[slotKey] || slotKey) : "heartbeat.scheduled_tasks";
+  const slot = await getSlot(resolvedKey);
 
   if (slot.provider === "xai") {
     const apiKey = process.env.XAI_API_KEY || "";
@@ -1281,10 +1284,10 @@ async function executeAgentBanditTick(_task: HeartbeatTask): Promise<{ result: s
         ? `\nAvailable tools: ${(selected.tools as string[]).join(", ")}.`
         : "";
       const taskDescription = `${selected.directives}${toolContext}`;
-      // Run directives through the registry model slot, capturing text output
+      // Run directives through the agent's own model slot (a/b/c) or fallback to heartbeat slot
       let registryOutput = "(no output)";
       try {
-        registryOutput = await runRegistryTask(taskDescription);
+        registryOutput = await runRegistryTask(taskDescription, selected.slot || undefined);
       } catch (registryErr: any) {
         registryOutput = `registry_task_failed: ${registryErr.message}`;
       }

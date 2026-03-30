@@ -2408,6 +2408,26 @@ INSTRUCTIONS:
         required: ["taskId"],
       },
     },
+    {
+      name: "spawn_agent",
+      description: "Instantiate a named autonomous sub-agent with its own 13-seed private memory (seeds 10-12 are sentinels by default), directives, scoped tool subset, and a ZFAE-powered observation loop. Returns the new agent instance.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          name: { type: "string" as const, description: "Unique agent name (lowercase, hyphens ok, e.g. 'researcher-1')" },
+          slot: { type: "string" as const, description: "Model slot to use: a, b, c, or zfae (default: zfae)" },
+          directives: { type: "string" as const, description: "System goal and directive text for this agent" },
+          tools: { type: "array" as const, items: { type: "string" as const }, description: "Subset of tool names this agent can use (empty = no tools)" },
+          sentinel_seed_indices: { type: "array" as const, items: { type: "number" as const }, description: "Which of the 13 seed indices are sentinel seeds (default [10,11,12])" },
+        },
+        required: ["name", "directives"],
+      },
+    },
+    {
+      name: "list_agents",
+      description: "List all spawned sub-agent instances with their status, last output, sentinel seed values, and ZFAE observation count.",
+      parameters: { type: "object" as const, properties: {}, required: [] as string[] },
+    },
   ];
 
   async function executeAgentTool(toolName: string, args: any, userId = "default"): Promise<string> {
@@ -3385,6 +3405,41 @@ INSTRUCTIONS:
           await storage.upsertSystemToggle(`agent_scheduled_tasks_${userId}`, true, { tasks });
           await logMaster("agent", "cancel_scheduled_task", { taskId, userId });
           return `Task ${taskId} (${tasks[idx].label}) cancelled.`;
+        }
+
+        case "spawn_agent": {
+          const agentName = (args.name || "").trim().toLowerCase().replace(/[^a-z0-9-]/g, "-");
+          if (!agentName) return "Error: agent name is required";
+          if (!args.directives) return "Error: directives are required";
+          const existingAgent = await storage.getAgentInstance(agentName);
+          if (existingAgent) return `Error: agent "${agentName}" already exists (id: ${existingAgent.id})`;
+          const sentinelSeedIndices: number[] = Array.isArray(args.sentinel_seed_indices) && args.sentinel_seed_indices.length === 3
+            ? args.sentinel_seed_indices
+            : [10, 11, 12];
+          const seeds = initAgentSeeds().map((s: any) => ({ ...s, isSentinel: sentinelSeedIndices.includes(s.index) }));
+          const newAgent = await storage.createAgentInstance({
+            name: agentName,
+            slot: args.slot || "zfae",
+            directives: args.directives,
+            tools: Array.isArray(args.tools) ? args.tools : [],
+            status: "idle",
+            seeds,
+            sentinelSeedIndices,
+            zfaeObservations: [],
+            isPersistent: false,
+          });
+          await logMaster("agent", "spawn_agent", { name: agentName, slot: newAgent.slot });
+          return JSON.stringify({ id: newAgent.id, name: newAgent.name, slot: newAgent.slot, status: newAgent.status, seeds: newAgent.seeds?.length, sentinelSeedIndices });
+        }
+
+        case "list_agents": {
+          const allAgents = await storage.getAgentInstances();
+          if (allAgents.length === 0) return "No agent instances found.";
+          return allAgents.map((a: any) => {
+            const sentinels = (a.seeds || []).filter((s: any) => (a.sentinelSeedIndices || []).includes(s.index));
+            const sentinelSummary = sentinels.map((s: any) => `s${s.index}=${(s.value ?? 0).toFixed(3)}:${(s.summary || "").slice(0, 30) || "—"}`).join(" | ");
+            return `[${a.id}] ${a.name} (slot:${a.slot}, status:${a.status}, persistent:${a.isPersistent}) obs:${(a.zfaeObservations || []).length} sentinels:[${sentinelSummary}] last:"${(a.lastOutput || "").slice(0, 80)}"`;
+          }).join("\n");
         }
 
         default: {
