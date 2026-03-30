@@ -6,6 +6,7 @@ The four fundamental operations for a multi-agent a0 ecosystem:
     clone      — exact copy (new identity, same state)
     merge      — combine two instances via Jury adjudication (Law 5)
     diversify  — create N variants with different configurations
+    soft_reset — clear volatile (Tier 1) state; preserve Tier 2 memory
 
 Each instance has an isolated home directory:
 
@@ -16,7 +17,7 @@ Each instance has an isolated home directory:
 
 Usage::
 
-    from a0.lifecycle import spawn, clone, merge, diversify, root_instance
+    from a0.lifecycle import spawn, clone, merge, diversify, soft_reset, root_instance
 
     parent = root_instance()                          # the default a0 instance
     child  = spawn(parent, name="worker-1")           # fresh child, empty memory
@@ -360,6 +361,45 @@ def diversify(
         desc = spawn(parent, name=name, seed_keys=seed_keys, config=cfg)
         variants.append(desc)
     return variants
+
+
+# ---------------------------------------------------------------------------
+# soft_reset
+# ---------------------------------------------------------------------------
+
+def soft_reset(instance: InstanceDescriptor) -> InstanceDescriptor:
+    """Reset volatile state while preserving Tier 2 committed memory.
+
+    Tier 1 (volatile) cleared:
+        {home}/state/a0_state.json  → {"last_model": None}
+
+    Tier 2 (committed) preserved:
+        {home}/state/memory.json    — Jury-adjudicated, untouched
+        {home}/logs/                — append-only, untouched
+
+    Returns:
+        The same InstanceDescriptor with reset_at recorded in instance.json.
+    """
+    from a0.state import save_state
+
+    # Reset volatile config to defaults
+    save_state({"last_model": None}, home=instance.home)
+
+    # Record reset timestamp in instance.json
+    data = {
+        "instance_id": instance.instance_id,
+        "name": instance.name,
+        "home": str(instance.home),
+        "parent_id": instance.parent_id,
+        "config": instance.config,
+        "created_at": instance.created_at,
+        "conflicts": instance.conflicts,
+        "reset_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (instance.home / "instance.json").write_text(
+        json.dumps(data, indent=2), encoding="utf-8"
+    )
+    return instance
 
 
 # ---------------------------------------------------------------------------
