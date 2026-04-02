@@ -69,7 +69,7 @@ class NudgeRequest(BaseModel):
 
 
 class PropagateRequest(BaseModel):
-    phi_steps: int = 10
+    steps: int = 10
     guardian_steps: int = 5
 
 
@@ -116,7 +116,7 @@ async def phi_audit():
 
 @app.post("/api/pcna/phi/propagate")
 async def phi_propagate(req: PropagateRequest):
-    get_pcna().phi.propagate(steps=req.phi_steps)
+    get_pcna().phi.propagate(steps=req.steps)
     return get_pcna().phi.state()
 
 
@@ -138,7 +138,7 @@ async def psi_audit():
 
 @app.post("/api/pcna/psi/propagate")
 async def psi_propagate(req: PropagateRequest):
-    get_pcna().psi.propagate(steps=req.phi_steps)
+    get_pcna().psi.propagate(steps=req.steps)
     return get_pcna().psi.state()
 
 
@@ -160,7 +160,7 @@ async def omega_audit():
 
 @app.post("/api/pcna/omega/propagate")
 async def omega_propagate(req: PropagateRequest):
-    get_pcna().omega.propagate(steps=req.phi_steps)
+    get_pcna().omega.propagate(steps=req.steps)
     return get_pcna().omega.state()
 
 
