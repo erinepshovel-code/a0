@@ -1,10 +1,10 @@
 import os
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .database import engine
 from .engine import PCNAEngine
@@ -65,12 +65,18 @@ for r in ALL_ROUTERS:
 
 
 @app.get("/api/auth/user")
-async def auth_user():
-    provider = energy_registry.get_active_provider()
+async def auth_user(request: Request):
+    user_id = request.headers.get("x-replit-user-id", "")
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Not authenticated"})
     return {
-        "id": "a0p-operator",
-        "username": "operator",
-        "displayName": compose_name(provider),
+        "id": user_id,
+        "email": request.headers.get("x-replit-user-email"),
+        "firstName": request.headers.get("x-replit-user-name", "Operator"),
+        "lastName": None,
+        "profileImageUrl": request.headers.get("x-replit-user-profile-image"),
+        "createdAt": None,
+        "updatedAt": None,
     }
 
 

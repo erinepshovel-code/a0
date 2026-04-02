@@ -7,11 +7,25 @@ import TabShell from "@/components/TabShell";
 import FieldRenderer from "@/components/FieldRenderer";
 import type { TabDef, SectionDef } from "@/hooks/use-ui-structure";
 
+function hasTemplateParams(endpoint: string): boolean {
+  return /\{[^}]+\}/.test(endpoint);
+}
+
 function SectionRenderer({ section }: { section: SectionDef }) {
+  const isTemplated = hasTemplateParams(section.endpoint);
   const { data, isLoading, error } = useQuery<unknown>({
     queryKey: [section.endpoint],
     refetchInterval: section.refresh_ms ?? 30_000,
+    enabled: !isTemplated,
   });
+
+  if (isTemplated) {
+    return (
+      <div className="text-xs text-muted-foreground py-4 text-center italic" data-testid={`section-templated-${section.id}`}>
+        Select an item to view {section.label.toLowerCase()}
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
