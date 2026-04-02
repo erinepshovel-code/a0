@@ -50,15 +50,18 @@ class InstanceMerge:
         dominant.guardian._recompute_coherence()
         dominant.memory_l._recompute_hub_avg()
 
+        phi_c = round(dominant.phi.ring_coherence, 4)
+        guard_c = round(float(dominant.guardian.node_coherence.mean()), 4)
+
         return {
             "mode": "absorb",
             "dominant_id": dominant.guardian.instance_id,
             "donor_id": donor.guardian.instance_id,
             "donor_status": "retired",
-            "phi_coherence": round(dominant.phi.ring_coherence, 4),
-            "psi_coherence": round(dominant.psi.ring_coherence, 4),
-            "omega_coherence": round(dominant.omega.ring_coherence, 4),
-            "guardian_coherence": round(float(dominant.guardian.node_coherence.mean()), 4),
+            "dominant_phi_coherence": phi_c,
+            "dominant_guardian_coherence": guard_c,
+            "dominant_psi_coherence": round(dominant.psi.ring_coherence, 4),
+            "dominant_omega_coherence": round(dominant.omega.ring_coherence, 4),
             "circle_counts_after": [int(v) for v in dominant.guardian.circle_count],
             "timestamp": time.time(),
         }
@@ -135,12 +138,14 @@ class InstanceMerge:
             "instance_a": a.guardian.instance_id,
             "instance_b": b.guardian.instance_id,
             "alpha": alpha,
-            "a_phi_coherence": round(a.phi.ring_coherence, 4),
-            "b_phi_coherence": round(b.phi.ring_coherence, 4),
-            "a_psi_coherence": round(a.psi.ring_coherence, 4),
-            "b_psi_coherence": round(b.psi.ring_coherence, 4),
-            "a_omega_coherence": round(a.omega.ring_coherence, 4),
-            "b_omega_coherence": round(b.omega.ring_coherence, 4),
+            "a_phi_coherence_after": round(a.phi.ring_coherence, 4),
+            "b_phi_coherence_after": round(b.phi.ring_coherence, 4),
+            "a_guardian_coherence_after": round(float(a.guardian.node_coherence.mean()), 4),
+            "b_guardian_coherence_after": round(float(b.guardian.node_coherence.mean()), 4),
+            "a_psi_coherence_after": round(a.psi.ring_coherence, 4),
+            "b_psi_coherence_after": round(b.psi.ring_coherence, 4),
+            "a_omega_coherence_after": round(a.omega.ring_coherence, 4),
+            "b_omega_coherence_after": round(b.omega.ring_coherence, 4),
             "both_status": "diverging",
             "timestamp": time.time(),
         }
