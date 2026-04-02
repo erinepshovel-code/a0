@@ -33,6 +33,9 @@ async def lifespan(app: FastAPI):
     provider = energy_registry.get_active_provider()
     agent_name = compose_name(provider)
     print(f"[python] Agent: {agent_name}")
+    from .routes.agents import ensure_primary_agent
+    await ensure_primary_agent(pcna)
+    print("[python] Primary agent verified, deprecated names cleaned")
     await heartbeat_service.start()
     yield
     await heartbeat_service.stop()
@@ -42,9 +45,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="A0P Python Backend", lifespan=lifespan)
 
+_allowed_origins = []
+_domains = os.environ.get("REPLIT_DOMAINS", "")
+if _domains:
+    _allowed_origins = [f"https://{d}" for d in _domains.split(",")]
+_allowed_origins.append("http://localhost:5000")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

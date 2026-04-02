@@ -18,8 +18,8 @@ a0p is a mobile-first autonomous AI agent platform. One agent `a0(zeta fun alpha
 ## System Architecture
 
 ### Runtime
-- **Python/FastAPI backend** on port 8000 — `python/` directory (primary)
-- **Vite dev server** on port 5000 — proxies `/api` to port 8000
+- **Python/FastAPI backend** on port 8001 — `python/` directory (primary)
+- **Vite dev server** on port 5000 — proxies `/api` to port 8001
 - Both start via `scripts/start-dev.sh` through the "Start application" workflow
 
 ### Python Backend (`python/`)
