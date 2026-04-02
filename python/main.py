@@ -64,6 +64,16 @@ for r in ALL_ROUTERS:
     app.include_router(r)
 
 
+@app.get("/api/auth/user")
+async def auth_user():
+    provider = energy_registry.get_active_provider()
+    return {
+        "id": "a0p-operator",
+        "username": "operator",
+        "displayName": compose_name(provider),
+    }
+
+
 @app.get("/api/health")
 async def health():
     pcna = get_pcna()
