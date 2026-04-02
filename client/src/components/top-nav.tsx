@@ -28,16 +28,10 @@ export default function TopNav() {
   const { toast } = useToast();
 
   useEffect(() => {
-    function handleUpgrade(e: Event) {
-      const evt = e as CustomEvent<{ upgrade_url: string }>;
+    function handleUpgrade(_e: Event) {
       toast({
-        title: "Limit reached",
-        description: "Upgrade on the pricing page to continue.",
-        action: (
-          <a href="/pricing" className="underline text-primary text-sm">
-            View pricing
-          </a>
-        ) as any,
+        title: "Limit reached — upgrade on the pricing page",
+        description: "Visit /pricing to choose a plan.",
       });
     }
     window.addEventListener("a0p:upgrade-required", handleUpgrade);

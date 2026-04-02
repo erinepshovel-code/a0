@@ -1,11 +1,11 @@
 import os
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional
 from sqlalchemy import text
 from ..database import engine
 
 ADMIN_USER_ID = os.environ.get("ADMIN_USER_ID", "")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 
 UI_META = {
     "tab_id": "contexts",
@@ -39,6 +39,7 @@ DATA_SCHEMA = {
 router = APIRouter(prefix="/api/v1/contexts", tags=["contexts"])
 
 DEFAULT_CONTEXTS = [
+    "a0_identity",
     "tier_free",
     "tier_seeker",
     "tier_operator",
@@ -71,6 +72,14 @@ async def get_context_value(name: str) -> str:
     return rec["value"] if rec else ""
 
 
+def _is_admin(uid: str, email: str | None) -> bool:
+    if ADMIN_USER_ID and uid == ADMIN_USER_ID:
+        return True
+    if ADMIN_EMAIL and email and email == ADMIN_EMAIL:
+        return True
+    return False
+
+
 @router.get("")
 async def list_contexts():
     await _ensure_defaults()
@@ -101,7 +110,8 @@ class ContextBody(BaseModel):
 @router.put("/{name}")
 async def upsert_context(name: str, body: ContextBody, request: Request):
     uid = request.headers.get("x-replit-user-id", "")
-    if not uid or (ADMIN_USER_ID and uid != ADMIN_USER_ID):
+    email = request.headers.get("x-replit-user-email")
+    if not uid or not _is_admin(uid, email):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     async with engine.begin() as conn:

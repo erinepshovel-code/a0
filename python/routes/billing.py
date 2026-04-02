@@ -4,9 +4,9 @@ import stripe
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
-from sqlalchemy import text, select, update
+from sqlalchemy import text
 from ..database import engine
-from ..services.stripe_service import STRIPE_SECRET_KEY, PRODUCTS
+from ..services.stripe_service import STRIPE_SECRET_KEY, PRODUCTS, PRICE_ID_CACHE
 
 UI_META = {
     "tab_id": "billing",
@@ -17,9 +17,9 @@ UI_META = {
         {
             "id": "subscription",
             "label": "Subscription",
-            "endpoint": "/api/v1/billing/subscription",
+            "endpoint": "/api/v1/billing/status",
             "fields": [
-                {"key": "tier", "type": "badge", "label": "Tier"},
+                {"key": "plan", "type": "badge", "label": "Plan"},
                 {"key": "status", "type": "badge", "label": "Status"},
                 {"key": "byok_enabled", "type": "text", "label": "BYOK"},
             ],
@@ -31,7 +31,7 @@ UI_META = {
             "fields": [
                 {"key": "name", "type": "text", "label": "Plan"},
                 {"key": "amount_display", "type": "text", "label": "Price"},
-                {"key": "lookup_key", "type": "badge", "label": "Key"},
+                {"key": "product_key", "type": "badge", "label": "Key"},
             ],
         },
     ],
@@ -39,7 +39,7 @@ UI_META = {
 
 DATA_SCHEMA = {
     "endpoints": [
-        {"method": "GET", "path": "/api/v1/billing/subscription"},
+        {"method": "GET", "path": "/api/v1/billing/status"},
         {"method": "GET", "path": "/api/v1/billing/plans"},
         {"method": "POST", "path": "/api/v1/billing/checkout"},
         {"method": "POST", "path": "/api/v1/billing/portal"},
@@ -50,35 +50,71 @@ DATA_SCHEMA = {
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
+TIER_MAP = {
+    "tier_seeker_monthly": "seeker",
+    "tier_operator_monthly": "operator",
+    "tier_patron_monthly": "patron",
+    "tier_founder_lifetime": "founder",
+}
+
 
 def _user_id(request: Request) -> Optional[str]:
     return request.headers.get("x-replit-user-id")
 
 
+def _user_email(request: Request) -> Optional[str]:
+    return request.headers.get("x-replit-user-email")
+
+
+def _check_admin(uid: str, email: Optional[str]) -> bool:
+    admin_uid = os.environ.get("ADMIN_USER_ID", "")
+    admin_email = os.environ.get("ADMIN_EMAIL", "")
+    if admin_uid and uid == admin_uid:
+        return True
+    if admin_email and email and email == admin_email:
+        return True
+    return False
+
+
 @router.get("/status")
 async def get_status(request: Request):
-    return await get_subscription(request)
-
-
-@router.get("/subscription")
-async def get_subscription(request: Request):
     uid = _user_id(request)
+    email = _user_email(request)
+    is_admin = _check_admin(uid or "", email)
+
     if not uid:
-        return {"tier": "free", "status": "active", "byok_enabled": False, "founder_slot": None, "is_admin": False}
+        return {
+            "plan": "free",
+            "status": "active",
+            "provider_pool": "standard",
+            "byok_enabled": False,
+            "founder_slot": None,
+            "is_admin": is_admin,
+        }
+
     async with engine.connect() as conn:
         row = await conn.execute(
             text("SELECT subscription_tier, subscription_status, byok_enabled, founder_slot FROM users WHERE id = :id"),
             {"id": uid},
         )
         rec = row.mappings().first()
-    admin_uid = os.environ.get("ADMIN_USER_ID", "")
-    is_admin = bool(admin_uid and uid == admin_uid)
 
     if not rec:
-        return {"tier": "free", "status": "active", "byok_enabled": False, "founder_slot": None, "is_admin": is_admin}
+        return {
+            "plan": "free",
+            "status": "active",
+            "provider_pool": "standard",
+            "byok_enabled": False,
+            "founder_slot": None,
+            "is_admin": is_admin,
+        }
+
+    tier = rec["subscription_tier"]
+    provider_pool = "patron" if tier in ("patron", "founder") else tier if tier != "free" else "standard"
     return {
-        "tier": rec["subscription_tier"],
+        "plan": tier,
         "status": rec["subscription_status"],
+        "provider_pool": provider_pool,
         "byok_enabled": rec["byok_enabled"],
         "founder_slot": rec["founder_slot"],
         "is_admin": is_admin,
@@ -98,6 +134,7 @@ async def list_plans():
             display = f"${amount // 100} one-time"
         plans.append({
             "name": p["name"],
+            "product_key": p["product_key"],
             "lookup_key": p["lookup_key"],
             "amount": amount,
             "amount_display": display,
@@ -108,7 +145,7 @@ async def list_plans():
 
 
 class CheckoutBody(BaseModel):
-    lookup_key: str
+    product: str
     success_url: str
     cancel_url: str
 
@@ -122,10 +159,19 @@ async def create_checkout(body: CheckoutBody, request: Request):
         raise HTTPException(status_code=503, detail="Stripe not configured")
     stripe.api_key = STRIPE_SECRET_KEY
 
-    prices = stripe.Price.list(lookup_keys=[body.lookup_key], limit=1)
-    if not prices.data:
+    spec = next((p for p in PRODUCTS if p["product_key"] == body.product), None)
+    if not spec or spec["amount"] == 0:
         raise HTTPException(status_code=404, detail="Plan not found")
-    price = prices.data[0]
+
+    price_id = PRICE_ID_CACHE.get(body.product)
+    if not price_id:
+        prices = stripe.Price.list(lookup_keys=[spec["lookup_key"]], limit=1)
+        if not prices.data:
+            raise HTTPException(status_code=404, detail="Price not found in Stripe")
+        price_id = prices.data[0].id
+        PRICE_ID_CACHE[body.product] = price_id
+
+    price = stripe.Price.retrieve(price_id)
 
     async with engine.connect() as conn:
         row = await conn.execute(text("SELECT email, stripe_customer_id FROM users WHERE id = :id"), {"id": uid})
@@ -137,10 +183,10 @@ async def create_checkout(body: CheckoutBody, request: Request):
     mode = "subscription" if price.recurring else "payment"
     session_kwargs: dict = {
         "mode": mode,
-        "line_items": [{"price": price.id, "quantity": 1}],
+        "line_items": [{"price": price_id, "quantity": 1}],
         "success_url": body.success_url,
         "cancel_url": body.cancel_url,
-        "metadata": {"user_id": uid, "lookup_key": body.lookup_key},
+        "metadata": {"user_id": uid, "product_key": body.product, "lookup_key": spec["lookup_key"]},
     }
     if customer_id:
         session_kwargs["customer"] = customer_id
@@ -148,7 +194,7 @@ async def create_checkout(body: CheckoutBody, request: Request):
         session_kwargs["customer_email"] = email
 
     session = stripe.checkout.Session.create(**session_kwargs)
-    return {"url": session.url}
+    return {"checkout_url": session.url}
 
 
 class PortalBody(BaseModel):
@@ -211,15 +257,6 @@ async def save_byok(body: ByokBody, request: Request):
     return {"ok": True}
 
 
-TIER_MAP = {
-    "tier_seeker_monthly": "seeker",
-    "tier_operator_monthly": "operator",
-    "tier_patron_monthly": "patron",
-    "tier_founder_lifetime": "founder",
-    "addon_byok_monthly": None,
-}
-
-
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
     webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
@@ -228,78 +265,68 @@ async def stripe_webhook(request: Request):
 
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=503, detail="Stripe not configured")
+    if not webhook_secret:
+        raise HTTPException(status_code=503, detail="Webhook secret not configured")
     stripe.api_key = STRIPE_SECRET_KEY
 
     try:
-        if webhook_secret:
-            event = stripe.Webhook.construct_event(payload, sig, webhook_secret)
-        else:
-            import json
-            event = stripe.Event.construct_from(json.loads(payload), stripe.api_key)
+        event = stripe.Webhook.construct_event(payload, sig, webhook_secret)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        uid = session.get("metadata", {}).get("user_id")
-        lookup_key = session.get("metadata", {}).get("lookup_key", "")
-        customer_id = session.get("customer")
-        subscription_id = session.get("subscription")
+    etype = event["type"]
+
+    if etype == "checkout.session.completed":
+        sess = event["data"]["object"]
+        uid = sess.get("metadata", {}).get("user_id")
+        lookup_key = sess.get("metadata", {}).get("lookup_key", "")
+        customer_id = sess.get("customer")
+        subscription_id = sess.get("subscription")
 
         if uid:
             tier = TIER_MAP.get(lookup_key)
-            async with engine.begin() as conn:
-                updates: dict = {}
-                if customer_id:
-                    updates["stripe_customer_id"] = customer_id
-                if subscription_id:
-                    updates["stripe_subscription_id"] = subscription_id
-                if tier:
-                    updates["subscription_tier"] = tier
-                    updates["subscription_status"] = "active"
-                if lookup_key == "addon_byok_monthly":
-                    updates["byok_enabled"] = True
-                if updates:
-                    set_clause = ", ".join(f"{k} = :{k}" for k in updates)
-                    updates["uid"] = uid
+            updates: dict = {}
+            if customer_id:
+                updates["stripe_customer_id"] = customer_id
+            if subscription_id:
+                updates["stripe_subscription_id"] = subscription_id
+            if tier:
+                updates["subscription_tier"] = tier
+                updates["subscription_status"] = "active"
+            if lookup_key == "addon_byok_monthly":
+                updates["byok_enabled"] = True
+            if updates:
+                set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+                updates["uid"] = uid
+                async with engine.begin() as conn:
                     await conn.execute(
                         text(f"UPDATE users SET {set_clause} WHERE id = :uid"),
                         updates,
                     )
 
-    elif event["type"] in ("customer.subscription.updated", "customer.subscription.created"):
+    elif etype in ("customer.subscription.updated", "customer.subscription.created"):
         sub = event["data"]["object"]
         customer_id = sub.get("customer")
         status = sub.get("status", "active")
         if customer_id:
-            price_id = None
             items = sub.get("items", {}).get("data", [])
-            if items:
-                price_id = items[0].get("price", {}).get("id")
             tier = None
-            if price_id:
-                try:
-                    price = stripe.Price.retrieve(price_id)
-                    lk = price.get("lookup_key", "")
-                    tier = TIER_MAP.get(lk)
-                except Exception:
-                    pass
+            if items:
+                lk = items[0].get("price", {}).get("lookup_key", "")
+                tier = TIER_MAP.get(lk)
+            set_parts = ["subscription_status = :status"]
+            params: dict = {"status": status, "cid": customer_id}
+            if tier:
+                set_parts.append("subscription_tier = :tier")
+                params["tier"] = tier
             async with engine.begin() as conn:
-                updates: dict = {"status": status}
-                if tier:
-                    updates["subscription_tier"] = tier
-                set_parts = ["subscription_status = :status"]
-                if tier:
-                    set_parts.append("subscription_tier = :subscription_tier")
-                updates["cid"] = customer_id
                 await conn.execute(
                     text(f"UPDATE users SET {', '.join(set_parts)} WHERE stripe_customer_id = :cid"),
-                    updates,
+                    params,
                 )
 
-    elif event["type"] == "customer.subscription.deleted":
-        sub = event["data"]["object"]
-        customer_id = sub.get("customer")
+    elif etype == "customer.subscription.deleted":
+        customer_id = event["data"]["object"].get("customer")
         if customer_id:
             async with engine.begin() as conn:
                 await conn.execute(
@@ -307,9 +334,8 @@ async def stripe_webhook(request: Request):
                     {"cid": customer_id},
                 )
 
-    elif event["type"] == "invoice.payment_failed":
-        invoice = event["data"]["object"]
-        customer_id = invoice.get("customer")
+    elif etype == "invoice.payment_failed":
+        customer_id = event["data"]["object"].get("customer")
         if customer_id:
             async with engine.begin() as conn:
                 await conn.execute(
@@ -317,9 +343,8 @@ async def stripe_webhook(request: Request):
                     {"cid": customer_id},
                 )
 
-    elif event["type"] == "invoice.paid":
-        invoice = event["data"]["object"]
-        customer_id = invoice.get("customer")
+    elif etype == "invoice.paid":
+        customer_id = event["data"]["object"].get("customer")
         if customer_id:
             async with engine.begin() as conn:
                 await conn.execute(
