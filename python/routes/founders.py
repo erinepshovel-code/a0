@@ -40,8 +40,9 @@ router = APIRouter(prefix="/api/v1/founders", tags=["founders"])
 async def founder_count():
     async with engine.connect() as conn:
         row = await conn.execute(text("SELECT COUNT(*) as cnt FROM founders"))
-        cnt = row.scalar()
-    return {"count": cnt, "max": MAX_FOUNDER_SLOTS, "slots_remaining": max(0, MAX_FOUNDER_SLOTS - (cnt or 0))}
+        cnt = row.scalar() or 0
+    slots_remaining = max(0, MAX_FOUNDER_SLOTS - cnt)
+    return {"count": cnt, "max": MAX_FOUNDER_SLOTS, "slots_remaining": slots_remaining}
 
 
 @router.get("")
@@ -54,10 +55,20 @@ async def list_founders():
                 FROM founders f
                 LEFT JOIN users u ON u.id = f.user_id
                 WHERE f.listed = true
-                ORDER BY u.founder_slot ASC NULLS LAST, f.subscribed_since ASC
+                ORDER BY f.subscribed_since ASC
             """)
         )
-        return [dict(r) for r in rows.mappings()]
+        items = [dict(r) for r in rows.mappings()]
+
+        count_row = await conn.execute(text("SELECT COUNT(*) as cnt FROM founders"))
+        cnt = count_row.scalar() or 0
+
+    slots_remaining = max(0, MAX_FOUNDER_SLOTS - cnt)
+    return {
+        "founders": items,
+        "lifetime_slots_remaining": slots_remaining,
+        "total": cnt,
+    }
 
 
 class FounderPatch(BaseModel):

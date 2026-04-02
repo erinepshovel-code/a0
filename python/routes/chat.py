@@ -122,8 +122,15 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 tier = rec["subscription_tier"]
 
     context_name = get_tier_context_name(tier)
+    a0_identity = await get_context_value("a0_identity")
     tier_context = await get_context_value(context_name)
-    system_context = await get_context_value("system_base")
+
+    system_parts = []
+    if a0_identity:
+        system_parts.append(a0_identity)
+    if tier_context:
+        system_parts.append(tier_context)
+    system_prompt = "\n\n".join(system_parts) if system_parts else None
 
     user_msg = await storage.create_message({
         "conversation_id": conv_id,
@@ -132,8 +139,11 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
         "model": body.model or conv.get("model", "gemini"),
         "metadata": {
             "tier": tier,
-            "tier_context": tier_context,
-            "system_context": system_context,
+            "system_prompt": system_prompt,
         },
     })
-    return {"user_message": user_msg, "conversation_id": conv_id}
+    return {
+        "user_message": user_msg,
+        "conversation_id": conv_id,
+        "system_prompt": system_prompt,
+    }

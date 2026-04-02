@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 
 export interface BillingStatus {
-  tier: string;
+  plan: string;
   status: string;
+  provider_pool: string;
   byok_enabled: boolean;
   founder_slot: number | null;
   is_admin: boolean;
@@ -22,13 +23,14 @@ export function useBillingStatus() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const plan = data?.plan ?? "free";
   return {
     status: data,
     isLoading,
     error,
-    tier: data?.tier ?? "free",
-    tierLabel: TIER_LABELS[data?.tier ?? "free"] ?? "Free",
+    tier: plan,
+    tierLabel: TIER_LABELS[plan] ?? "Free",
     isAdmin: data?.is_admin ?? false,
-    isPaid: data ? data.tier !== "free" : false,
+    isPaid: plan !== "free",
   };
 }

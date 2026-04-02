@@ -8,6 +8,7 @@ STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 PRODUCTS = [
     {
         "name": "Free",
+        "product_key": "free",
         "lookup_key": "tier_free",
         "amount": 0,
         "interval": None,
@@ -16,6 +17,7 @@ PRODUCTS = [
     },
     {
         "name": "Seeker Monthly",
+        "product_key": "seeker_monthly",
         "lookup_key": "tier_seeker_monthly",
         "amount": 1200,
         "interval": "month",
@@ -24,6 +26,7 @@ PRODUCTS = [
     },
     {
         "name": "Operator Monthly",
+        "product_key": "operator_monthly",
         "lookup_key": "tier_operator_monthly",
         "amount": 3900,
         "interval": "month",
@@ -32,6 +35,7 @@ PRODUCTS = [
     },
     {
         "name": "Way Seer Patron Monthly",
+        "product_key": "patron_monthly",
         "lookup_key": "tier_patron_monthly",
         "amount": 5300,
         "interval": "month",
@@ -40,6 +44,7 @@ PRODUCTS = [
     },
     {
         "name": "Founder Lifetime",
+        "product_key": "founder_lifetime",
         "lookup_key": "tier_founder_lifetime",
         "amount": 53000,
         "interval": None,
@@ -48,6 +53,7 @@ PRODUCTS = [
     },
     {
         "name": "BYOK Add-On Monthly",
+        "product_key": "byok_addon",
         "lookup_key": "addon_byok_monthly",
         "amount": 900,
         "interval": "month",
@@ -56,6 +62,7 @@ PRODUCTS = [
     },
     {
         "name": "Credit Pack 100",
+        "product_key": "credits_100",
         "lookup_key": "credits_100",
         "amount": 800,
         "interval": None,
@@ -64,6 +71,7 @@ PRODUCTS = [
     },
     {
         "name": "Credit Pack 300",
+        "product_key": "credits_300",
         "lookup_key": "credits_300",
         "amount": 2000,
         "interval": None,
@@ -72,6 +80,7 @@ PRODUCTS = [
     },
     {
         "name": "Credit Pack 1000",
+        "product_key": "credits_1000",
         "lookup_key": "credits_1000",
         "amount": 6000,
         "interval": None,
@@ -79,6 +88,9 @@ PRODUCTS = [
         "description": "1000 AI credits — $60 one-time",
     },
 ]
+
+# Module-level price ID cache populated on startup
+PRICE_ID_CACHE: dict[str, str] = {}
 
 
 async def ensure_stripe_products() -> list[dict]:
@@ -89,10 +101,14 @@ async def ensure_stripe_products() -> list[dict]:
     stripe.api_key = STRIPE_SECRET_KEY
     results = []
     for spec in PRODUCTS:
+        if spec["amount"] == 0:
+            continue
         try:
             existing = stripe.Price.list(lookup_keys=[spec["lookup_key"]], limit=1)
             if existing.data:
-                results.append({"lookup_key": spec["lookup_key"], "status": "exists", "price_id": existing.data[0].id})
+                price_id = existing.data[0].id
+                PRICE_ID_CACHE[spec["product_key"]] = price_id
+                results.append({"lookup_key": spec["lookup_key"], "status": "exists", "price_id": price_id})
                 continue
 
             product = stripe.Product.create(
@@ -109,12 +125,13 @@ async def ensure_stripe_products() -> list[dict]:
             if spec["interval"]:
                 price_kwargs["recurring"] = {"interval": spec["interval"]}
             price = stripe.Price.create(**price_kwargs)
+            PRICE_ID_CACHE[spec["product_key"]] = price.id
             results.append({"lookup_key": spec["lookup_key"], "status": "created", "price_id": price.id})
         except Exception as exc:
             results.append({"lookup_key": spec["lookup_key"], "status": "error", "error": str(exc)})
 
     ok = sum(1 for r in results if r["status"] in ("created", "exists"))
-    print(f"[stripe] Products ensured: {ok}/{len(PRODUCTS)}")
+    print(f"[stripe] Products ensured: {ok}/{len(PRODUCTS) - 1}")
     return results
 
 

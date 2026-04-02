@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 
 interface Plan {
   name: string;
+  product_key: string;
   lookup_key: string;
   amount: number;
   amount_display: string;
@@ -18,44 +19,44 @@ interface Plan {
   description: string;
 }
 
-const TIER_LOOKUP: Record<string, string> = {
-  free: "tier_free",
-  seeker: "tier_seeker_monthly",
-  operator: "tier_operator_monthly",
-  patron: "tier_patron_monthly",
-  founder: "tier_founder_lifetime",
+const TIER_PRODUCT_KEY: Record<string, string> = {
+  free: "free",
+  seeker: "seeker_monthly",
+  operator: "operator_monthly",
+  patron: "patron_monthly",
+  founder: "founder_lifetime",
 };
 
 const TIER_FEATURES: Record<string, string[]> = {
-  tier_free: [
+  free: [
     "Full console access — every tab unlocked",
     "ZFAE agent with EDCM awareness",
     "PCNA alignment engine active",
     "Bandit model routing",
     "The Interdependent Way principles active",
   ],
-  tier_seeker_monthly: [
+  seeker_monthly: [
     "Everything in Free",
     "Extended context window",
     "Priority PCNA cycle depth",
     "Seeker-tier system prompt context",
     "Deeper memory seed weighting",
   ],
-  tier_operator_monthly: [
+  operator_monthly: [
     "Everything in Seeker",
     "Full operator context injection",
     "Advanced EDCM analytics",
     "Agent orchestration access",
     "Tool creation & management",
   ],
-  tier_patron_monthly: [
+  patron_monthly: [
     "Everything in Operator",
     "Way Seer Patron context layer",
     "Elevated ZFAE alignment scope",
     "Patron-priority energy routing",
     "Direct influence on development direction",
   ],
-  tier_founder_lifetime: [
+  founder_lifetime: [
     "Lifetime access at Patron level",
     "Numbered founder slot (1–53)",
     "Name in founders registry",
@@ -64,12 +65,7 @@ const TIER_FEATURES: Record<string, string[]> = {
   ],
 };
 
-const TIER_ORDER = [
-  "tier_free",
-  "tier_seeker_monthly",
-  "tier_operator_monthly",
-  "tier_patron_monthly",
-];
+const MAIN_PRODUCT_KEYS = ["free", "seeker_monthly", "operator_monthly", "patron_monthly"];
 
 function PlanCard({
   plan,
@@ -82,9 +78,9 @@ function PlanCard({
   onSelect: (key: string) => void;
   loading: string | null;
 }) {
-  const activeLookup = TIER_LOOKUP[currentTier] ?? "tier_free";
-  const isCurrent = plan.lookup_key === activeLookup;
-  const isLoading = loading === plan.lookup_key;
+  const activeProductKey = TIER_PRODUCT_KEY[currentTier] ?? "free";
+  const isCurrent = plan.product_key === activeProductKey;
+  const isLoading = loading === plan.product_key;
 
   return (
     <div
@@ -107,7 +103,7 @@ function PlanCard({
       </div>
 
       <ul className="space-y-1.5 flex-1">
-        {(TIER_FEATURES[plan.lookup_key] ?? []).map((feat) => (
+        {(TIER_FEATURES[plan.product_key] ?? []).map((feat) => (
           <li key={feat} className="flex items-start gap-2 text-sm text-muted-foreground">
             <Check className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary" />
             <span>{feat}</span>
@@ -116,15 +112,15 @@ function PlanCard({
       </ul>
 
       {isCurrent ? (
-        <Badge variant="outline" className="self-start border-primary text-primary" data-testid={`badge-current-${plan.lookup_key}`}>
+        <Badge variant="outline" className="self-start border-primary text-primary" data-testid={`badge-current-${plan.product_key}`}>
           Current plan
         </Badge>
       ) : plan.amount === 0 ? null : (
         <Button
           size="sm"
-          onClick={() => onSelect(plan.lookup_key)}
+          onClick={() => onSelect(plan.product_key)}
           disabled={isLoading}
-          data-testid={`btn-select-${plan.lookup_key}`}
+          data-testid={`btn-select-${plan.product_key}`}
         >
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Choose plan"}
         </Button>
@@ -149,16 +145,16 @@ export default function PricingPage() {
   });
 
   const checkoutMutation = useMutation({
-    mutationFn: async (lookup_key: string) => {
+    mutationFn: async (product_key: string) => {
       const res = await apiRequest("POST", "/api/v1/billing/checkout", {
-        lookup_key,
+        product: product_key,
         success_url: `${window.location.origin}/console?billing=success`,
         cancel_url: `${window.location.origin}/pricing`,
       });
       return res.json();
     },
     onSuccess: (data) => {
-      window.location.href = data.url;
+      window.location.href = data.checkout_url;
     },
     onError: (err: Error) => {
       setLoadingKey(null);
@@ -186,9 +182,9 @@ export default function PricingPage() {
     checkoutMutation.mutate(lookup_key);
   }
 
-  const mainTiers = plans.filter((p) => TIER_ORDER.includes(p.lookup_key));
-  const founderPlan = plans.find((p) => p.lookup_key === "tier_founder_lifetime");
-  const byokPlan = plans.find((p) => p.lookup_key === "addon_byok_monthly");
+  const mainTiers = plans.filter((p) => MAIN_PRODUCT_KEYS.includes(p.product_key));
+  const founderPlan = plans.find((p) => p.product_key === "founder_lifetime");
+  const byokPlan = plans.find((p) => p.product_key === "byok_addon");
   const slotsLeft = founderCount?.slots_remaining ?? 53;
 
   return (
@@ -230,7 +226,7 @@ export default function PricingPage() {
               </div>
               <p className="text-sm text-muted-foreground mb-3">{founderPlan.description}</p>
               <ul className="space-y-1 mb-4">
-                {(TIER_FEATURES["tier_founder_lifetime"] ?? []).map((f) => (
+                {(TIER_FEATURES["founder_lifetime"] ?? []).map((f) => (
                   <li key={f} className="text-sm text-muted-foreground flex gap-2">
                     <Check className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" />
                     {f}
@@ -245,11 +241,11 @@ export default function PricingPage() {
                   <Button
                     size="sm"
                     className="bg-amber-500 hover:bg-amber-600 text-black"
-                    onClick={() => handleSelect("tier_founder_lifetime")}
-                    disabled={loadingKey === "tier_founder_lifetime"}
+                    onClick={() => handleSelect("founder_lifetime")}
+                    disabled={loadingKey === "founder_lifetime"}
                     data-testid="btn-select-founder"
                   >
-                    {loadingKey === "tier_founder_lifetime" ? (
+                    {loadingKey === "founder_lifetime" ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       "Secure your slot"
@@ -276,11 +272,11 @@ export default function PricingPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => handleSelect("addon_byok_monthly")}
-                disabled={loadingKey === "addon_byok_monthly"}
+                onClick={() => handleSelect("byok_addon")}
+                disabled={loadingKey === "byok_addon"}
                 data-testid="btn-select-byok"
               >
-                {loadingKey === "addon_byok_monthly" ? (
+                {loadingKey === "byok_addon" ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   "Add BYOK"
