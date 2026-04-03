@@ -40,6 +40,8 @@ async def lifespan(app: FastAPI):
     from .routes.contexts import _ensure_defaults as ensure_contexts
     await ensure_contexts()
     print("[python] Default prompt contexts ensured")
+    from .routes.billing import ensure_admin_emails
+    await ensure_admin_emails()
     from .services.stripe_service import ensure_stripe_products
     await ensure_stripe_products()
     await heartbeat_service.start()
