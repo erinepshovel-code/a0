@@ -14,8 +14,9 @@ from .agents.zfae import compose_name
 from .services.energy_registry import energy_registry
 from .auth import (
     ReplitAuthMiddleware,
-    verify_replit_token,
     make_session_cookie,
+    verify_access_key,
+    get_access_key,
     SESSION_COOKIE,
 )
 
@@ -51,6 +52,11 @@ async def lifespan(app: FastAPI):
     from .services.stripe_service import ensure_stripe_products
     await ensure_stripe_products()
     await heartbeat_service.start()
+    try:
+        key = get_access_key()
+        print(f"[auth] Access key: {key}")
+    except Exception:
+        pass
     yield
     await heartbeat_service.stop()
     await engine.dispose()
@@ -100,54 +106,35 @@ async def auth_user(request: Request):
     }
 
 
-@app.get("/api/login")
-async def login(request: Request):
-    from urllib.parse import quote
-    domains = os.environ.get("REPLIT_DOMAINS", "")
-    domain = domains.split(",")[0].strip() if domains else ""
-    if not domain:
-        return RedirectResponse(url="/")
-    is_deployed = os.environ.get("REPLIT_DEPLOYMENT", "") == "1"
-    if is_deployed:
-        goto = quote(f"https://{domain}/", safe="")
-        return RedirectResponse(url=f"https://replit.com/login?goto={goto}")
-    redirect_url = f"https://{domain}/"
-    auth_url = (
-        f"https://replit.com/auth_with_repl_site"
-        f"?domain={domain}"
-        f"&redirect_url={quote(redirect_url, safe='')}"
-    )
-    return RedirectResponse(url=auth_url)
-
-
-@app.post("/__repl_auth")
-async def repl_auth_callback(request: Request):
-    redirect_to = request.query_params.get("redirect_url", "/")
-
-    content_type = request.headers.get("content-type", "")
-    if "application/json" in content_type:
-        body = await request.json()
-        token = body.get("token", "")
-    else:
-        form = await request.form()
-        token = form.get("token", "")
-
-    if not token:
-        return HTMLResponse(
-            content="<p>Auth Error: missing token</p>",
-            status_code=400,
-        )
-
+@app.post("/api/auth/login")
+async def key_login(request: Request):
+    """
+    Key-based login. Accepts JSON {"key": "XXXX-XXXX"}.
+    Returns 200 + sets session cookie on success, 401 on failure.
+    """
     try:
-        user_info = await verify_replit_token(token)
-    except ValueError as exc:
-        return HTMLResponse(
-            content=f"<p>Auth Error: {exc}</p>",
-            status_code=400,
-        )
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
+
+    provided_key = body.get("key", "").strip()
+    if not provided_key or not verify_access_key(provided_key):
+        return JSONResponse(status_code=401, content={"error": "Invalid access key"})
+
+    user_id = os.environ.get("REPLIT_USERID", "operator")
+    user_name = os.environ.get("REPLIT_USER", "Operator")
+    admin_email = os.environ.get("ADMIN_EMAIL", "")
+
+    user_info = {
+        "id": user_id,
+        "email": admin_email or None,
+        "firstName": user_name,
+        "lastName": None,
+        "profileImageUrl": None,
+    }
 
     cookie_value = make_session_cookie(user_info)
-    response = RedirectResponse(url=redirect_to, status_code=302)
+    response = JSONResponse(content={"ok": True, "user": user_info})
     response.set_cookie(
         key=SESSION_COOKIE,
         value=cookie_value,
@@ -157,8 +144,13 @@ async def repl_auth_callback(request: Request):
         max_age=60 * 60 * 24 * 7,
         path="/",
     )
-    print(f"[auth] Session set for user {user_info.get('id')} ({user_info.get('email')})")
+    print(f"[auth] Session created for {user_name} ({user_id})")
     return response
+
+
+@app.get("/api/login")
+async def login_redirect():
+    return RedirectResponse(url="/login", status_code=302)
 
 
 @app.get("/api/logout")

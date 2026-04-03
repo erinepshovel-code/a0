@@ -1,15 +1,20 @@
-import { Shield } from "lucide-react";
+import { Shield, Key, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SiGoogle, SiGithub } from "react-icons/si";
+import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { useSEO } from "@/hooks/use-seo";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useToast } from "@/hooks/use-toast";
+import { queryClient } from "@/lib/queryClient";
 
 export default function LoginPage() {
-  useSEO({ title: "Sign In — a0p", description: "Sign in to a0p with your Replit account." });
+  useSEO({ title: "Sign In — a0p", description: "Sign in to a0p." });
   const { isAuthenticated, isLoading } = useAuth();
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const [key, setKey] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -17,8 +22,29 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, setLocation]);
 
-  const handleSignIn = () => {
-    window.location.href = "/api/login";
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!key.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ key: key.trim() }),
+      });
+      if (res.ok) {
+        await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+        setLocation("/");
+      } else {
+        toast({ title: "Invalid key", description: "Check your access key and try again.", variant: "destructive" });
+        setKey("");
+      }
+    } catch {
+      toast({ title: "Error", description: "Could not connect. Try again.", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (isLoading) {
@@ -46,49 +72,45 @@ export default function LoginPage() {
             <div className="flex items-center justify-center gap-2">
               <Shield className="w-3.5 h-3.5 text-primary" />
               <span className="text-xs text-zinc-500 uppercase tracking-widest font-medium">
-                Sign in to continue
+                Access required
               </span>
             </div>
           </div>
 
-          <div className="space-y-3 w-full">
+          <form onSubmit={handleSubmit} className="space-y-3 w-full">
+            <div className="relative">
+              <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <Input
+                type="text"
+                placeholder="XXXX-XXXX access key"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                className="pl-10 bg-zinc-900 border-zinc-700 text-white placeholder:text-zinc-600 font-mono tracking-widest text-center uppercase"
+                data-testid="input-access-key"
+                autoFocus
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
             <Button
-              variant="outline"
+              type="submit"
               size="lg"
-              className="w-full bg-zinc-900 border-zinc-700 text-white gap-3 text-sm font-medium"
-              onClick={handleSignIn}
-              data-testid="button-sign-in-replit"
+              className="w-full"
+              disabled={submitting || !key.trim()}
+              data-testid="button-sign-in"
             >
-              Sign in with Replit
+              {submitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Enter"
+              )}
             </Button>
-
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full bg-zinc-900 border-zinc-700 text-white gap-3 text-sm font-medium"
-              onClick={handleSignIn}
-              data-testid="button-sign-in-google"
-            >
-              <SiGoogle className="w-4 h-4" />
-              Sign in with Google
-            </Button>
-
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full bg-zinc-900 border-zinc-700 text-white gap-3 text-sm font-medium"
-              onClick={handleSignIn}
-              data-testid="button-sign-in-github"
-            >
-              <SiGithub className="w-4 h-4" />
-              Sign in with GitHub
-            </Button>
-          </div>
+          </form>
 
           <p className="text-[11px] text-zinc-600 leading-relaxed">
-            All sign-in methods route through Replit OAuth.
+            Find your access key in the server logs.
             <br />
-            Your data stays within the a0p system.
+            Look for: <span className="font-mono text-zinc-500">[auth] Access key: XXXX-XXXX</span>
           </p>
         </div>
       </div>
