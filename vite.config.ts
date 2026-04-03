@@ -43,6 +43,10 @@ export default defineConfig({
         target: "http://localhost:8001",
         changeOrigin: true,
       },
+      "/__repl_auth": {
+        target: "http://localhost:8001",
+        changeOrigin: true,
+      },
     },
   },
 });
