@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from ..database import engine
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -23,9 +23,10 @@ async def _is_admin(uid: str, email: Optional[str]) -> bool:
         return True
     if not email:
         return False
+    normalized = email.strip().lower()
     async with engine.connect() as conn:
         row = await conn.execute(
-            text("SELECT 1 FROM admin_emails WHERE email = :email"), {"email": email}
+            text("SELECT 1 FROM admin_emails WHERE email = :email"), {"email": normalized}
         )
         return row.fetchone() is not None
 
