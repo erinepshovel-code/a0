@@ -81,14 +81,15 @@ async def _check_admin(uid: str, email: Optional[str], conn) -> bool:
         return True
     if not email:
         return False
+    normalized = email.strip().lower()
     row = await conn.execute(
-        text("SELECT 1 FROM admin_emails WHERE email = :email"), {"email": email}
+        text("SELECT 1 FROM admin_emails WHERE email = :email"), {"email": normalized}
     )
     return row.fetchone() is not None
 
 
 async def ensure_admin_emails() -> None:
-    env_emails = [e.strip() for e in os.environ.get("ADMIN_EMAIL", "").split(",") if e.strip()]
+    env_emails = [e.strip().lower() for e in os.environ.get("ADMIN_EMAIL", "").split(",") if e.strip()]
     if not env_emails:
         return
     async with engine.begin() as conn:
