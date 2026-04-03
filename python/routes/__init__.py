@@ -10,6 +10,7 @@ from .pcna_api import router as pcna_router
 from .billing import router as billing_router
 from .contexts import router as contexts_router
 from .founders import router as founders_router
+from .admin import router as admin_router
 
 ALL_ROUTERS = [
     chat_router,
@@ -24,6 +25,7 @@ ALL_ROUTERS = [
     billing_router,
     contexts_router,
     founders_router,
+    admin_router,
 ]
 
 

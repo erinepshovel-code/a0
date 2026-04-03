@@ -75,27 +75,45 @@ def _user_email(request: Request) -> Optional[str]:
     return request.headers.get("x-replit-user-email")
 
 
-def _check_admin(uid: str, email: Optional[str]) -> bool:
+async def _check_admin(uid: str, email: Optional[str], conn) -> bool:
     admin_uid = os.environ.get("ADMIN_USER_ID", "")
-    admin_email = os.environ.get("ADMIN_EMAIL", "")
     if admin_uid and uid == admin_uid:
         return True
-    if admin_email and email and email == admin_email:
-        return True
-    return False
+    if not email:
+        return False
+    row = await conn.execute(
+        text("SELECT 1 FROM admin_emails WHERE email = :email"), {"email": email}
+    )
+    return row.fetchone() is not None
+
+
+async def ensure_admin_emails() -> None:
+    env_emails = [e.strip() for e in os.environ.get("ADMIN_EMAIL", "").split(",") if e.strip()]
+    if not env_emails:
+        return
+    async with engine.begin() as conn:
+        existing = (await conn.execute(text("SELECT COUNT(*) FROM admin_emails"))).scalar()
+        if existing == 0:
+            for em in env_emails:
+                await conn.execute(
+                    text("INSERT INTO admin_emails (email) VALUES (:e) ON CONFLICT DO NOTHING"),
+                    {"e": em},
+                )
+    print(f"[admin] Seeded {len(env_emails)} admin email(s) from ADMIN_EMAIL env var")
 
 
 @router.get("/status")
 async def get_status(request: Request):
     uid = _user_id(request)
     email = _user_email(request)
-    is_admin = _check_admin(uid or "", email)
-
-    if not uid:
-        return {"plan": "free", "status": "active", "provider_pool": "standard",
-                "byok_enabled": False, "founder_slot": None, "is_admin": is_admin}
 
     async with engine.connect() as conn:
+        is_admin = await _check_admin(uid or "", email, conn)
+
+        if not uid:
+            return {"plan": "free", "status": "active", "provider_pool": "standard",
+                    "byok_enabled": False, "founder_slot": None, "is_admin": is_admin}
+
         row = await conn.execute(
             text("SELECT subscription_tier, subscription_status, byok_enabled, founder_slot FROM users WHERE id = :id"),
             {"id": uid},

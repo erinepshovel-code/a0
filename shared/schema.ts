@@ -442,3 +442,13 @@ export const byokKeys = pgTable("byok_keys", {
   keyHash: varchar("key_hash", { length: 256 }).notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (t) => [uniqueIndex("uq_byok_user_provider").on(t.userId, t.provider)]);
+
+export const adminEmails = pgTable("admin_emails", {
+  id: serial("id").primaryKey(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
+
+export const insertAdminEmailSchema = createInsertSchema(adminEmails).omit({ id: true, addedAt: true });
+export type InsertAdminEmail = z.infer<typeof insertAdminEmailSchema>;
+export type AdminEmail = typeof adminEmails.$inferSelect;

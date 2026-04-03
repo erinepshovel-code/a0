@@ -5,9 +5,11 @@ import { apiRequest } from "@/lib/queryClient";
 import { useBillingStatus } from "@/hooks/use-billing-status";
 import { useSEO } from "@/hooks/use-seo";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Save } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import { Loader2, Save, X, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 
 interface PromptContext {
@@ -15,6 +17,12 @@ interface PromptContext {
   value: string;
   updated_by: string | null;
   updated_at: string | null;
+}
+
+interface AdminEmail {
+  id: number;
+  email: string;
+  addedAt: string | null;
 }
 
 function ContextRow({ ctx, onSave }: { ctx: PromptContext; onSave: (name: string, value: string) => Promise<void> }) {
@@ -64,10 +72,120 @@ function ContextRow({ ctx, onSave }: { ctx: PromptContext; onSave: (name: string
   );
 }
 
+function AdminEmailsSection({ currentEmail }: { currentEmail?: string | null }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [newEmail, setNewEmail] = useState("");
+
+  const { data: adminEmails = [], isLoading } = useQuery<AdminEmail[]>({
+    queryKey: ["/api/v1/admin/emails"],
+    staleTime: 0,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: async (email: string) => {
+      const res = await apiRequest("POST", "/api/v1/admin/emails", { email });
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/v1/admin/emails"] });
+      setNewEmail("");
+      toast({ title: "Admin email added" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (email: string) => {
+      const res = await apiRequest("DELETE", `/api/v1/admin/emails/${encodeURIComponent(email)}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/v1/admin/emails"] });
+      toast({ title: "Admin email removed" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to remove", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <div className="mt-10">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold text-foreground">Admin Emails</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          These email addresses have full admin access. Add or remove without restarting.
+        </p>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-6">
+          <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="space-y-2" data-testid="admin-emails-list">
+          {adminEmails.map((entry) => (
+            <div
+              key={entry.id}
+              className="flex items-center justify-between gap-2 border border-border rounded-lg px-3 py-2 bg-card"
+              data-testid={`admin-email-row-${entry.id}`}
+            >
+              <div>
+                <span className="text-sm font-mono text-foreground">{entry.email}</span>
+                {entry.addedAt && (
+                  <span className="text-[10px] text-muted-foreground ml-2">
+                    added {new Date(entry.addedAt).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => removeMutation.mutate(entry.email)}
+                disabled={removeMutation.isPending || entry.email === currentEmail}
+                className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"
+                title={entry.email === currentEmail ? "Cannot remove yourself" : "Remove"}
+                data-testid={`btn-remove-admin-${entry.id}`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+
+          {adminEmails.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-4">No admin emails in registry.</p>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-3">
+        <Input
+          value={newEmail}
+          onChange={(e) => setNewEmail(e.target.value)}
+          placeholder="new@example.com"
+          className="text-sm"
+          onKeyDown={(e) => e.key === "Enter" && newEmail && addMutation.mutate(newEmail)}
+          data-testid="input-new-admin-email"
+        />
+        <Button
+          size="sm"
+          onClick={() => addMutation.mutate(newEmail)}
+          disabled={addMutation.isPending || !newEmail.includes("@")}
+          data-testid="btn-add-admin-email"
+        >
+          {addMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+          <span className="ml-1">Add</span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminContextsPage() {
   useSEO({ title: "Prompt Contexts — a0p Admin", description: "Admin-only prompt context editor for a0p system and tier contexts." });
   const [, navigate] = useLocation();
   const { isAdmin, isLoading: billingLoading } = useBillingStatus();
+  const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -128,6 +246,8 @@ export default function AdminContextsPage() {
           ))}
         </div>
       )}
+
+      <AdminEmailsSection currentEmail={user?.email} />
     </div>
   );
 }
