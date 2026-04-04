@@ -18,9 +18,13 @@ from .audit import audit_event
 from .sentinels import SentinelSuite
 from .approval_gate import require_approval, ExternalEffectBlockedError
 from .ui import Circle, Seed, SeedLayout, default_layout
+from .user_db import UserDB, UserRecord, AffiliationLevel, UserDBError, UserNotFoundError, UsernameTakenError, BadPassphraseError
 
 __all__ = [
     "emit", "audit_event", "SentinelSuite",
     "require_approval", "ExternalEffectBlockedError",
     "Circle", "Seed", "SeedLayout", "default_layout",
+    # user registry (secondary — not yet wired into routing/jury)
+    "UserDB", "UserRecord", "AffiliationLevel",
+    "UserDBError", "UserNotFoundError", "UsernameTakenError", "BadPassphraseError",
 ]
