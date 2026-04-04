@@ -2,7 +2,7 @@ import "./types.d.ts";
 import path from "path";
 import fs from "fs";
 import express from "express";
-import { createProxyMiddleware } from "http-proxy-middleware";
+import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import {
   setupAuth,
   registerAuthRoutes,
@@ -51,7 +51,9 @@ app.use(express.urlencoded({ extended: false }));
     createProxyMiddleware({
       target: PYTHON_URL,
       changeOrigin: true,
+      pathRewrite: { "^/": "/api/" },
       on: {
+        proxyReq: fixRequestBody,
         error: (_err, _req, res) => {
           (res as express.Response)
             .status(502)

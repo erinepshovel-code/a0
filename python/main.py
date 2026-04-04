@@ -96,8 +96,9 @@ async def ui_structure():
     }
 
 
+IS_PROD = os.environ.get("NODE_ENV") == "production"
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "dist", "public")
-if os.path.isdir(STATIC_DIR):
+if IS_PROD and os.path.isdir(STATIC_DIR):
     app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
