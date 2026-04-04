@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation, Link } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSEO } from "@/hooks/use-seo";
 
 const registerSchema = z.object({
@@ -35,7 +36,7 @@ type RegisterForm = z.infer<typeof registerSchema>;
 
 export default function RegisterPage() {
   useSEO({ title: "Register — a0p", description: "Create your Agent Zero Platform account." });
-  const { loginAsync } = useAuth();
+  const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const [authError, setAuthError] = useState<string | null>(null);
   const [showChallenges, setShowChallenges] = useState(false);
@@ -79,6 +80,7 @@ export default function RegisterPage() {
         setAuthError(data.message ?? "Registration failed");
         return;
       }
+      queryClient.setQueryData(["/api/auth/user"], data.user);
       setLocation("/");
     } catch {
       setAuthError("Something went wrong. Please try again.");

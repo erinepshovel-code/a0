@@ -64,12 +64,22 @@ export function registerGuestChatRoute(app: Express) {
       const data = (await pyRes.json()) as { content: string; tokens_used: number };
       const tokensToAdd = typeof data.tokens_used === "number" ? data.tokens_used : 50;
 
-      const newTotal = await incrementGuestTokensAtomic(window.id, tokensToAdd, LIMIT);
-      const remaining = Math.max(0, LIMIT - newTotal);
+      const { accepted, tokensUsed } = await incrementGuestTokensAtomic(window.id, tokensToAdd, LIMIT);
+      if (!accepted) {
+        return res.status(429).json({
+          message: "Token limit reached for this hour",
+          tokensUsed,
+          tokensLimit: LIMIT,
+          tokensRemaining: 0,
+          retryAfter: "Try again next hour",
+        });
+      }
+
+      const remaining = Math.max(0, LIMIT - tokensUsed);
 
       res.json({
         content: data.content,
-        tokensUsed: newTotal,
+        tokensUsed,
         tokensLimit: LIMIT,
         tokensRemaining: remaining,
       });

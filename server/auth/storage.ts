@@ -131,7 +131,7 @@ export async function incrementGuestTokensAtomic(
   id: number,
   tokensToAdd: number,
   limit: number
-): Promise<number> {
+): Promise<{ accepted: boolean; tokensUsed: number }> {
   const [updated] = await db
     .update(guestTokenUsage)
     .set({ tokensUsed: sql`${guestTokenUsage.tokensUsed} + ${tokensToAdd}` })
@@ -147,7 +147,7 @@ export async function incrementGuestTokensAtomic(
       .select({ tokensUsed: guestTokenUsage.tokensUsed })
       .from(guestTokenUsage)
       .where(eq(guestTokenUsage.id, id));
-    return current?.tokensUsed ?? limit;
+    return { accepted: false, tokensUsed: current?.tokensUsed ?? limit };
   }
-  return updated.tokensUsed;
+  return { accepted: true, tokensUsed: updated.tokensUsed };
 }
