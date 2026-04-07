@@ -16,15 +16,23 @@ from .agents.zfae import compose_name
 from .services.energy_registry import energy_registry
 
 _pcna: PCNAEngine | None = None
+_pcna_8: PCNAEngine | None = None
 _instances: dict[str, PCNAEngine] = {}
 
 
 def get_pcna() -> PCNAEngine:
     global _pcna
     if _pcna is None:
-        _pcna = PCNAEngine()
+        _pcna = PCNAEngine(phases=7)
         _instances[_pcna.guardian.instance_id] = _pcna
     return _pcna
+
+
+def get_pcna_8() -> PCNAEngine:
+    global _pcna_8
+    if _pcna_8 is None:
+        _pcna_8 = PCNAEngine(phases=8)
+    return _pcna_8
 
 
 @asynccontextmanager
@@ -32,7 +40,10 @@ async def lifespan(app: FastAPI):
     print("[python] FastAPI starting — DB engine initialized")
     pcna = get_pcna()
     await pcna.load_checkpoint()
-    print(f"[python] PCNA engine online — blueprint {pcna.blueprint_hash[:12]}...")
+    print(f"[python] PCNA p7 online — blueprint {pcna.blueprint_hash[:12]}...")
+    pcna_8 = get_pcna_8()
+    await pcna_8.load_checkpoint()
+    print(f"[python] PCNA p8 online — blueprint {pcna_8.blueprint_hash[:12]}...")
     await energy_registry.load_from_db()
     provider = energy_registry.get_active_provider()
     agent_name = compose_name(provider)

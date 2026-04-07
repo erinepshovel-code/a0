@@ -34,17 +34,18 @@ class PTCACore:
     Every instance self-declares its identity in state().
     """
 
-    def __init__(self, name: str, symbol: str, role: str, n: int, seed: int):
+    def __init__(self, name: str, symbol: str, role: str, n: int, seed: int, phases: int = 7):
         self.name = name
         self.symbol = symbol
         self.role = role
         self.n = n
         self.seed = seed
+        self.phases = phases
         self._adj_dists = _adj_distances(n)
 
         rng = np.random.default_rng(seed=seed)
-        self.tensor = rng.uniform(0.1, 0.9, (n, DIMS, PHASES, HEPT_SITES)).astype(np.float64)
-        self.velocities = np.zeros((n, DIMS, PHASES, HEPT_SITES), dtype=np.float64)
+        self.tensor = rng.uniform(0.1, 0.9, (n, DIMS, phases, HEPT_SITES)).astype(np.float64)
+        self.velocities = np.zeros((n, DIMS, phases, HEPT_SITES), dtype=np.float64)
         self.node_coherence = np.zeros(n, dtype=np.float64)
         self.ring_coherence = 0.0
         self.step_count = 0
@@ -96,7 +97,7 @@ class PTCACore:
                 self.tensor[i, 0, 0, :] = np.clip(
                     self.tensor[i, 0, 0, :] * 0.85 + signal[i] * 0.15, 0.0, 1.0
                 )
-        elif signal.ndim == 2 and signal.shape == (self.n, DIMS):
+        elif signal.ndim == 2 and signal.shape == (self.n, DIMS):  # noqa: E501
             for i in range(self.n):
                 self.tensor[i, :, 0, :] = np.clip(
                     self.tensor[i, :, 0, :] * 0.85 + signal[i, :, np.newaxis] * 0.15, 0.0, 1.0
@@ -133,7 +134,7 @@ class PTCACore:
             "n": self.n,
             "seed": self.seed,
             "dims": DIMS,
-            "phases": PHASES,
+            "phases": self.phases,
             "hept_sites": HEPT_SITES,
             "ring_coherence": round(self.ring_coherence, 4),
             "node_coherence_mean": round(float(self.node_coherence.mean()), 4),

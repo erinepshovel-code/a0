@@ -56,13 +56,14 @@ WINNER_RINGS = ["phi", "psi", "omega"]
 class PCNAEngine:
     """PCNA six-ring inference engine — no stubs, all rings real."""
 
-    def __init__(self):
-        self.phi = PTCACore(name="phi", symbol="Φ", role="cognitive", n=53, seed=53)
-        self.psi = PTCACore(name="psi", symbol="Ψ", role="self_model", n=53, seed=43)
-        self.omega = PTCACore(name="omega", symbol="Ω", role="autonomy", n=53, seed=47)
-        self.memory_l = MemoryCore(n=19, seed=19, role="long_term")
-        self.memory_s = MemoryCore(n=17, seed=17, role="short_term")
-        self.guardian = GuardianTensor()
+    def __init__(self, phases: int = 7):
+        self.phases = phases
+        self.phi = PTCACore(name="phi", symbol="Φ", role="cognitive", n=53, seed=53, phases=phases)
+        self.psi = PTCACore(name="psi", symbol="Ψ", role="self_model", n=53, seed=43, phases=phases)
+        self.omega = PTCACore(name="omega", symbol="Ω", role="autonomy", n=53, seed=47, phases=phases)
+        self.memory_l = MemoryCore(n=19, seed=19, role="long_term", phases=phases)
+        self.memory_s = MemoryCore(n=17, seed=17, role="short_term", phases=phases)
+        self.guardian = GuardianTensor(phases=phases)
         self.infer_count = 0
         self.reward_count = 0
         self.last_coherence = 0.0
@@ -71,6 +72,7 @@ class PCNAEngine:
         self.created_at = time.time()
         self.checkpoint_at: float | None = None
         self.checkpoint_ring_means: dict[str, float] = {}
+        self._checkpoint_key = "pcna_tensor_checkpoint" if phases == 7 else f"pcna_tensor_checkpoint_p{phases}"
 
     async def load_checkpoint(self):
         """
@@ -79,7 +81,7 @@ class PCNAEngine:
         """
         try:
             from ..storage import storage
-            toggle = await storage.get_system_toggle("pcna_tensor_checkpoint")
+            toggle = await storage.get_system_toggle(self._checkpoint_key)
             if not toggle or not toggle.get("parameters"):
                 return
             data = toggle["parameters"]
@@ -150,7 +152,7 @@ class PCNAEngine:
                 data[f"{name}_tensor"] = _tensor_to_b64(ring.tensor)
                 if hasattr(ring, "velocities"):
                     data[f"{name}_velocities"] = _tensor_to_b64(ring.velocities)
-            await storage.upsert_system_toggle("pcna_tensor_checkpoint", True, data)
+            await storage.upsert_system_toggle(self._checkpoint_key, True, data)
             self.checkpoint_at = data["saved_at"]
             self.checkpoint_ring_means = {
                 name: round(float(ring.tensor.mean()), 4)
@@ -306,7 +308,7 @@ class PCNAEngine:
         return {
             "engine": "pcna",
             "version": "2.1.0",
-            "phases": 7,
+            "phases": self.phases,
             "infer_count": self.infer_count,
             "reward_count": self.reward_count,
             "last_coherence": round(self.last_coherence, 4),

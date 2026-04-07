@@ -53,7 +53,7 @@ class ZetaEngine:
         """
         try:
             from ..services.edcm import compute_metrics
-            from ..main import get_pcna
+            from ..main import get_pcna, get_pcna_8
 
             metrics = compute_metrics(
                 responses=[{"content": assistant_text}],
@@ -63,6 +63,8 @@ class ZetaEngine:
 
             pcna = get_pcna()
             pcna.phi.nudge(coherence, lr=0.025)
+            pcna_8 = get_pcna_8()
+            pcna_8.phi.nudge(coherence, lr=0.025)
 
             self.eval_count += 1
             event = {
