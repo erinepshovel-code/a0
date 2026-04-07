@@ -28,9 +28,10 @@ BLUEPRINT_CHUNK_SIZE = 4
 class GuardianTensor:
     """Guardian microkernel ring — N=29 nodes, ragged circle counts."""
 
-    def __init__(self, instance_id: str | None = None):
+    def __init__(self, instance_id: str | None = None, phases: int = 7):
+        self.phases = phases
         rng = np.random.default_rng(seed=29)
-        self.tensor = rng.uniform(0.2, 0.8, (N, DIMS, PHASES, HEPT_SITES)).astype(np.float64)
+        self.tensor = rng.uniform(0.2, 0.8, (N, DIMS, phases, HEPT_SITES)).astype(np.float64)
         self.velocities = np.zeros_like(self.tensor)
         self.node_coherence = np.zeros(N, dtype=np.float64)
         self.circle_count = np.array([3] * N, dtype=np.int32)

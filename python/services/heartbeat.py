@@ -180,7 +180,7 @@ class HeartbeatService:
 
         if task_type == "snapshot":
             from ..storage import storage
-            from ..main import get_pcna
+            from ..main import get_pcna, get_pcna_8
             seeds = await storage.get_memory_seeds()
             proj = await storage.get_memory_projection()
             await storage.add_memory_tensor_snapshot({
@@ -191,16 +191,23 @@ class HeartbeatService:
             })
             pcna = get_pcna()
             await pcna.save_checkpoint()
-            return f"snapshot_ok: {len(seeds)} seeds + pcna checkpoint saved"
+            pcna_8 = get_pcna_8()
+            await pcna_8.save_checkpoint()
+            return f"snapshot_ok: {len(seeds)} seeds + pcna p7+p8 checkpoints saved"
 
         if task_type == "propagate":
-            from ..main import get_pcna
+            from ..main import get_pcna, get_pcna_8
             pcna = get_pcna()
             pcna.phi.propagate(steps=5)
             pcna.psi.propagate(steps=4)
             pcna.omega.propagate(steps=3)
             pcna.guardian.propagate(steps=2)
-            return f"propagate_ok: phi={pcna.phi.ring_coherence:.4f}"
+            pcna_8 = get_pcna_8()
+            pcna_8.phi.propagate(steps=5)
+            pcna_8.psi.propagate(steps=4)
+            pcna_8.omega.propagate(steps=3)
+            pcna_8.guardian.propagate(steps=2)
+            return f"propagate_ok: p7_phi={pcna.phi.ring_coherence:.4f} p8_phi={pcna_8.phi.ring_coherence:.4f}"
 
         if task_type == "conversation_review":
             return await self._run_conversation_review()

@@ -44,6 +44,24 @@ UI_META = {
                 {"key": "infer_count", "type": "text", "label": "Inferences"},
             ],
         },
+        {
+            "id": "pnct_compare",
+            "label": "PNCT Comparison (p7 vs p8)",
+            "endpoint": "/api/v1/pcna/compare",
+            "fields": [
+                {"key": "p7.phases", "type": "text", "label": "p7 Phases"},
+                {"key": "p7.phi_coherence", "type": "gauge", "label": "p7 Φ"},
+                {"key": "p7.psi_coherence", "type": "gauge", "label": "p7 Ψ"},
+                {"key": "p7.omega_coherence", "type": "gauge", "label": "p7 Ω"},
+                {"key": "p8.phases", "type": "text", "label": "p8 Phases"},
+                {"key": "p8.phi_coherence", "type": "gauge", "label": "p8 Φ"},
+                {"key": "p8.psi_coherence", "type": "gauge", "label": "p8 Ψ"},
+                {"key": "p8.omega_coherence", "type": "gauge", "label": "p8 Ω"},
+                {"key": "phi_delta", "type": "text", "label": "Φ Delta"},
+                {"key": "psi_delta", "type": "text", "label": "Ψ Delta"},
+                {"key": "omega_delta", "type": "text", "label": "Ω Delta"},
+            ],
+        },
     ],
 }
 
@@ -55,6 +73,7 @@ DATA_SCHEMA = {
         {"method": "GET", "path": "/api/v1/pcna/instances"},
         {"method": "POST", "path": "/api/v1/pcna/instances/spawn"},
         {"method": "POST", "path": "/api/v1/pcna/instances/merge"},
+        {"method": "GET", "path": "/api/v1/pcna/compare"},
     ],
 }
 
@@ -89,6 +108,11 @@ class MergeRequest(BaseModel):
 def _get_pcna():
     from ..main import get_pcna
     return get_pcna()
+
+
+def _get_pcna_8():
+    from ..main import get_pcna_8
+    return get_pcna_8()
 
 
 def _get_instances():
@@ -283,3 +307,48 @@ async def merge_instances(req: MergeRequest):
     if req.mode == "converge":
         return InstanceMerge.converge(primary, target, alpha=req.alpha)
     raise HTTPException(status_code=400, detail="mode must be absorb|fork|converge")
+
+
+@router.get("/pcna/compare")
+async def pcna_compare():
+    """PNCT experiment — p7 vs p8 side-by-side coherence comparison."""
+    p7 = _get_pcna()
+    p8 = _get_pcna_8()
+
+    p7_phi = round(p7.phi.ring_coherence, 4)
+    p7_psi = round(p7.psi.ring_coherence, 4)
+    p7_omega = round(p7.omega.ring_coherence, 4)
+    p8_phi = round(p8.phi.ring_coherence, 4)
+    p8_psi = round(p8.psi.ring_coherence, 4)
+    p8_omega = round(p8.omega.ring_coherence, 4)
+
+    return {
+        "experiment": "PNCT — prime vs composite phase geometry",
+        "hypothesis": "Prime-phase (7) develops different coherence dynamics than composite-phase (8) under identical training input",
+        "same_training_input": True,
+        "p7": {
+            "phases": 7,
+            "is_prime": True,
+            "phi_coherence": p7_phi,
+            "psi_coherence": p7_psi,
+            "omega_coherence": p7_omega,
+            "infer_count": p7.infer_count,
+            "reward_count": p7.reward_count,
+            "last_coherence": round(p7.last_coherence, 4),
+            "checkpoint_key": p7._checkpoint_key,
+        },
+        "p8": {
+            "phases": 8,
+            "is_prime": False,
+            "phi_coherence": p8_phi,
+            "psi_coherence": p8_psi,
+            "omega_coherence": p8_omega,
+            "infer_count": p8.infer_count,
+            "reward_count": p8.reward_count,
+            "last_coherence": round(p8.last_coherence, 4),
+            "checkpoint_key": p8._checkpoint_key,
+        },
+        "phi_delta": round(p7_phi - p8_phi, 4),
+        "psi_delta": round(p7_psi - p8_psi, 4),
+        "omega_delta": round(p7_omega - p8_omega, 4),
+    }

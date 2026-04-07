@@ -22,15 +22,16 @@ FLUSH_ALPHA = 0.25
 class MemoryCore:
     """Parameterized memory ring — self-declares role in state()."""
 
-    def __init__(self, n: int, seed: int, role: str):
+    def __init__(self, n: int, seed: int, role: str, phases: int = 7):
         self.n = n
         self.seed = seed
         self.role = role
+        self.phases = phases
 
         rng = np.random.default_rng(seed=seed)
         low = 0.2 if role == "long_term" else 0.1
         high = 0.8 if role == "long_term" else 0.9
-        self.tensor = rng.uniform(low, high, (n, DIMS, PHASES, HEPT_SITES)).astype(np.float64)
+        self.tensor = rng.uniform(low, high, (n, DIMS, phases, HEPT_SITES)).astype(np.float64)
         self.hub_avg = np.zeros(n, dtype=np.float64)
         self._recompute_hub_avg()
         self.write_count = 0
@@ -76,7 +77,7 @@ class MemoryCore:
 
     def _reset(self):
         rng = np.random.default_rng(seed=int(time.time()) % 10000 + self.seed)
-        self.tensor = rng.uniform(0.1, 0.5, (self.n, DIMS, PHASES, HEPT_SITES)).astype(np.float64)
+        self.tensor = rng.uniform(0.1, 0.5, (self.n, DIMS, self.phases, HEPT_SITES)).astype(np.float64)
         self._recompute_hub_avg()
 
     def state(self) -> dict:
