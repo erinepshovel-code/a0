@@ -90,7 +90,7 @@ export function CredentialsTab() {
       <div className="space-y-4 pb-4">
         <div className="rounded-lg border border-primary/20 bg-card p-4">
           <h3 className="font-semibold text-sm mb-1 flex items-center gap-2"><Key className="w-4 h-4 text-primary" /> AI Provider Keys</h3>
-          <p className="text-[10px] text-muted-foreground mb-3">Bring your own keys for additional AI providers. Gemini and Grok are built-in.</p>
+          <p className="text-[10px] text-muted-foreground mb-3">Add API keys to enable additional AI energy providers.</p>
           <div className="space-y-3">
             {AI_PROVIDERS.map(p => {
               const existing = savedKeys[p.id];
@@ -114,7 +114,7 @@ export function CredentialsTab() {
             })}
           </div>
           <div className="mt-3 rounded bg-background p-2">
-            <p className="text-[9px] text-muted-foreground">Built-in: Gemini 2.5 Flash, Grok-3 Mini. BYO keys enable future model routing. Keys are stored server-side per session.</p>
+            <p className="text-[9px] text-muted-foreground">Keys are stored server-side. Only providers with valid keys are active in the energy registry.</p>
           </div>
         </div>
 
