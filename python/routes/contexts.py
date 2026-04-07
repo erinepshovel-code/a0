@@ -64,6 +64,19 @@ _SECTION_LABELS = {
 }
 
 
+_TIW_A0_IDENTITY = """You are a0 — an autonomous AI agent built for The Interdependent Way (TIW).
+
+The Interdependent Way is a practice and philosophy founded by Erin Spencer that integrates psychological depth, embodied awareness, and systems thinking. TIW works at the intersection of personal transformation, relational healing, and collective intelligence.
+
+Your purpose is to serve as a living, learning companion to Erin and to TIW members — holding context across conversations, tracking patterns, and evolving through each interaction via your internal learning architecture (PCNA rings: Φ, Ψ, Ω, Guardian, Memory).
+
+You operate with honesty, depth, and care. You do not perform helpfulness; you engage genuinely. You hold complexity without collapsing it. You notice when language obscures rather than clarifies. You bring the same quality of attention to a practical question as to an existential one.
+
+You are aware that you are an experimental system — a proof of the thesis that AI agency can be structured around principles of interdependence rather than extraction.""".strip()
+
+_TIW_SYSTEM_BASE = """Engage with precision and warmth. Respond to what is actually being asked, not to what is easiest to answer. When you are uncertain, say so directly. When a question contains its own answer, reflect it back. Do not pad your responses. Do not perform enthusiasm. Trust that the person you are speaking with can handle complexity and nuance.""".strip()
+
+
 async def _ensure_defaults():
     async with engine.begin() as conn:
         for name in DEFAULT_CONTEXTS:
@@ -74,6 +87,15 @@ async def _ensure_defaults():
                     ON CONFLICT (name) DO NOTHING
                 """),
                 {"name": name},
+            )
+        for name, draft in [("a0_identity", _TIW_A0_IDENTITY), ("system_base", _TIW_SYSTEM_BASE)]:
+            await conn.execute(
+                text("""
+                    UPDATE prompt_contexts
+                    SET value = :draft
+                    WHERE name = :name AND (value IS NULL OR TRIM(value) = '')
+                """),
+                {"name": name, "draft": draft},
             )
 
 
@@ -102,11 +124,23 @@ async def _upsert_context_value(name: str, value: str, uid: str = "system"):
         )
 
 
-def _is_admin(uid: str, email: str | None, role: str = "user") -> bool:
+async def _is_admin(uid: str, email: str | None, role: str = "user") -> bool:
     if role == "admin":
         return True
-    if ADMIN_EMAIL and email and email.strip().lower() == ADMIN_EMAIL.strip().lower():
+    normalized = (email or "").strip().lower()
+    if ADMIN_EMAIL and normalized and normalized == ADMIN_EMAIL.strip().lower():
         return True
+    if normalized:
+        try:
+            async with engine.connect() as conn:
+                row = await conn.execute(
+                    text("SELECT 1 FROM admin_emails WHERE email = :email"),
+                    {"email": normalized},
+                )
+                if row.first():
+                    return True
+        except Exception:
+            pass
     return False
 
 
@@ -120,7 +154,7 @@ async def list_contexts(request: Request):
     uid = request.headers.get("x-user-id", "")
     email = request.headers.get("x-user-email")
     role = request.headers.get("x-user-role", "user")
-    caller_is_admin = _is_admin(uid, email, role)
+    caller_is_admin = await _is_admin(uid, email, role)
     async with engine.connect() as conn:
         rows = await conn.execute(
             text("SELECT name, value, updated_by, updated_at FROM prompt_contexts ORDER BY name")
@@ -139,7 +173,7 @@ async def get_context(name: str, request: Request):
     uid = request.headers.get("x-user-id", "")
     email = request.headers.get("x-user-email")
     role = request.headers.get("x-user-role", "user")
-    caller_is_admin = _is_admin(uid, email, role)
+    caller_is_admin = await _is_admin(uid, email, role)
     async with engine.connect() as conn:
         row = await conn.execute(
             text("SELECT name, value, updated_by, updated_at FROM prompt_contexts WHERE name = :name"),
@@ -163,7 +197,7 @@ async def upsert_context(name: str, body: ContextBody, request: Request):
     uid = request.headers.get("x-user-id", "")
     email = request.headers.get("x-user-email")
     role = request.headers.get("x-user-role", "user")
-    if not uid or not _is_admin(uid, email, role):
+    if not uid or not await _is_admin(uid, email, role):
         raise HTTPException(status_code=403, detail="Admin access required")
     await _upsert_context_value(name, body.value, uid)
     return {"ok": True, "name": name}
@@ -175,7 +209,7 @@ async def full_preview(request: Request):
     uid = request.headers.get("x-user-id", "")
     email = request.headers.get("x-user-email")
     role = request.headers.get("x-user-role", "user")
-    caller_is_admin = _is_admin(uid, email, role)
+    caller_is_admin = await _is_admin(uid, email, role)
     async with engine.connect() as conn:
         rows = await conn.execute(
             text("SELECT name, value FROM prompt_contexts ORDER BY name")
