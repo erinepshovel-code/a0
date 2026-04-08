@@ -146,7 +146,14 @@ TOOL_SCHEMAS_CHAT = [
     },
 ]
 
-TOOL_SCHEMAS_RESPONSES = [
+# OpenAI Responses API — native web_search_preview replaces the custom web_search function.
+# The API handles search internally; no execute_tool dispatch needed for web_search on OpenAI.
+OPENAI_NATIVE_TOOLS = [
+    {"type": "web_search_preview"},
+]
+
+# ZFAE internal tools for OpenAI Responses API (web_search excluded — handled natively above).
+TOOL_SCHEMAS_RESPONSES_ZFAE = [
     {
         "type": "function",
         "name": s["function"]["name"],
@@ -154,7 +161,11 @@ TOOL_SCHEMAS_RESPONSES = [
         "parameters": s["function"]["parameters"],
     }
     for s in TOOL_SCHEMAS_CHAT
+    if s["function"]["name"] != "web_search"
 ]
+
+# Full OpenAI tool list: native search + ZFAE internal functions.
+TOOL_SCHEMAS_RESPONSES = OPENAI_NATIVE_TOOLS + TOOL_SCHEMAS_RESPONSES_ZFAE
 
 
 async def execute_tool(name: str, arguments: dict) -> str:
