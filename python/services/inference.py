@@ -3,6 +3,12 @@ import json
 from typing import Optional
 import httpx
 
+from .tool_executor import (
+    TOOL_SCHEMAS_CHAT,
+    TOOL_SCHEMAS_RESPONSES,
+    execute_tool,
+)
+
 PROVIDER_ENDPOINTS = {
     "grok": {
         "url": "https://api.x.ai/v1/chat/completions",
@@ -23,19 +29,22 @@ PROVIDER_ENDPOINTS = {
 
 _OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
+_MAX_TOOL_ROUNDS = 5
+
 
 async def call_energy_provider(
     provider_id: str,
     messages: list[dict],
     system_prompt: Optional[str] = None,
     max_tokens: int = 2048,
+    use_tools: bool = True,
 ) -> tuple[str, dict]:
     """
     Forward messages to the active energy provider with the system prompt prepended.
     Returns (content, usage_dict).
     """
     if provider_id == "openai":
-        return await _call_openai_routed(messages, system_prompt)
+        return await _call_openai_routed(messages, system_prompt, use_tools=use_tools)
 
     spec = PROVIDER_ENDPOINTS.get(provider_id)
     if not spec:
@@ -51,14 +60,19 @@ async def call_energy_provider(
     payload_messages.extend(messages)
 
     if provider_id == "claude":
-        return await _call_anthropic(api_key, spec["model"], payload_messages, max_tokens)
+        return await _call_anthropic(
+            api_key, spec["model"], payload_messages, max_tokens, use_tools=use_tools
+        )
 
-    return await _call_openai_compat(api_key, spec["url"], spec["model"], payload_messages, max_tokens)
+    return await _call_openai_compat(
+        api_key, spec["url"], spec["model"], payload_messages, max_tokens, use_tools=use_tools
+    )
 
 
 async def _call_openai_routed(
     messages: list[dict],
     system_prompt: Optional[str] = None,
+    use_tools: bool = True,
 ) -> tuple[str, dict]:
     """
     Route to the appropriate role via openai_router, check approval gate,
@@ -124,6 +138,7 @@ async def _call_openai_routed(
         temperature=call_cfg["temperature"],
         reasoning_effort=call_cfg["reasoning_effort"],
         store=call_cfg["store"],
+        use_tools=use_tools,
     )
 
     input_repr = json.dumps(full_input)
@@ -147,44 +162,64 @@ async def _call_openai_responses(
     temperature: float = 1.0,
     reasoning_effort: str = "low",
     store: bool = False,
+    use_tools: bool = True,
 ) -> tuple[str, dict]:
     """
-    Call the OpenAI Responses API (/v1/responses).
-    Request/response format is different from Chat Completions.
+    Call the OpenAI Responses API (/v1/responses) with optional tool calling.
+    Runs up to _MAX_TOOL_ROUNDS tool-call/result loops before returning final text.
     """
-    openai_input: list[dict] = []
-    for m in input_messages:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        if role == "system":
-            openai_input.append({"role": "system", "content": content})
-        elif role == "assistant":
-            openai_input.append({"role": "assistant", "content": [{"type": "output_text", "text": content}]})
-        else:
-            openai_input.append({"role": "user", "content": [{"type": "input_text", "text": content}]})
 
-    payload: dict = {
-        "model": model,
-        "input": openai_input,
-        "store": store,
-        "temperature": temperature,
-        "max_output_tokens": max_output_tokens,
-        "reasoning": {"effort": reasoning_effort} if reasoning_effort and reasoning_effort != "none" else {},
-        "text": {"format": {"type": "text"}},
-    }
-    if not payload["reasoning"]:
-        del payload["reasoning"]
+    def _fmt_messages(msgs: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        for m in msgs:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role == "system":
+                out.append({"role": "system", "content": content})
+            elif role == "assistant":
+                out.append({"role": "assistant", "content": [{"type": "output_text", "text": content}]})
+            else:
+                out.append({"role": "user", "content": [{"type": "input_text", "text": content}]})
+        return out
+
+    openai_input = _fmt_messages(input_messages)
 
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(_OPENAI_RESPONSES_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            output_items = data.get("output", [])
+
+    accumulated_usage: dict = {}
+
+    for _round in range(_MAX_TOOL_ROUNDS + 1):
+        payload: dict = {
+            "model": model,
+            "input": openai_input,
+            "store": store,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "text": {"format": {"type": "text"}},
+        }
+        if reasoning_effort and reasoning_effort != "none":
+            payload["reasoning"] = {"effort": reasoning_effort}
+        if use_tools:
+            payload["tools"] = TOOL_SCHEMAS_RESPONSES
+
+        try:
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                resp = await client.post(_OPENAI_RESPONSES_URL, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            return f"[openai responses error: {exc}]", accumulated_usage
+
+        for k, v in data.get("usage", {}).items():
+            accumulated_usage[k] = accumulated_usage.get(k, 0) + (v if isinstance(v, (int, float)) else 0)
+
+        output_items = data.get("output", [])
+        tool_calls = [item for item in output_items if item.get("type") == "function_call"]
+
+        if not tool_calls or not use_tools or _round >= _MAX_TOOL_ROUNDS:
             content = ""
             for item in output_items:
                 if item.get("type") == "message":
@@ -194,10 +229,23 @@ async def _call_openai_responses(
                             break
                 if content:
                     break
-            usage = data.get("usage", {})
-            return content or "[openai: empty response]", usage
-    except Exception as exc:
-        return f"[openai responses error: {exc}]", {}
+            return content or "[openai: empty response]", accumulated_usage
+
+        for tc in tool_calls:
+            call_id = tc.get("call_id", "")
+            name = tc.get("name", "")
+            try:
+                args = json.loads(tc.get("arguments", "{}"))
+            except Exception:
+                args = {}
+            result = await execute_tool(name, args)
+            openai_input.append({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": result,
+            })
+
+    return "[openai: tool loop exhausted]", accumulated_usage
 
 
 async def _call_openai_compat(
@@ -206,26 +254,65 @@ async def _call_openai_compat(
     model: str,
     messages: list[dict],
     max_tokens: int,
+    use_tools: bool = True,
 ) -> tuple[str, dict]:
-    payload = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-    }
+    """
+    Chat Completions format (Grok, Gemini).
+    Runs tool-calling loop: execute tool_calls, inject tool results, re-call until done.
+    """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            usage = data.get("usage", {})
-            return content, usage
-    except Exception as exc:
-        return f"[energy provider error: {exc}]", {}
+    current_messages = list(messages)
+    accumulated_usage: dict = {}
+
+    for _round in range(_MAX_TOOL_ROUNDS + 1):
+        payload: dict = {
+            "model": model,
+            "messages": current_messages,
+            "max_tokens": max_tokens,
+        }
+        if use_tools:
+            payload["tools"] = TOOL_SCHEMAS_CHAT
+            payload["tool_choice"] = "auto"
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            return f"[energy provider error: {exc}]", accumulated_usage
+
+        for k, v in data.get("usage", {}).items():
+            accumulated_usage[k] = accumulated_usage.get(k, 0) + (v if isinstance(v, (int, float)) else 0)
+
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+        finish_reason = choice.get("finish_reason", "stop")
+        tool_calls = message.get("tool_calls") or []
+
+        if not tool_calls or not use_tools or _round >= _MAX_TOOL_ROUNDS:
+            return message.get("content") or "[no content]", accumulated_usage
+
+        current_messages.append(message)
+
+        for tc in tool_calls:
+            name = tc.get("function", {}).get("name", "")
+            call_id = tc.get("id", "")
+            try:
+                args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+            except Exception:
+                args = {}
+            result = await execute_tool(name, args)
+            current_messages.append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": result,
+            })
+
+    return "[tool loop exhausted]", accumulated_usage
 
 
 async def _call_anthropic(
@@ -233,7 +320,11 @@ async def _call_anthropic(
     model: str,
     messages: list[dict],
     max_tokens: int,
+    use_tools: bool = True,
 ) -> tuple[str, dict]:
+    """
+    Anthropic Messages API with Claude tool use support.
+    """
     system_content = ""
     filtered: list[dict] = []
     for m in messages:
@@ -242,33 +333,78 @@ async def _call_anthropic(
         else:
             filtered.append(m)
 
-    payload: dict = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "messages": filtered,
-    }
-    if system_content:
-        payload["system"] = system_content
-
     headers = {
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
     }
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                json=payload,
-                headers=headers,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["content"][0]["text"]
-            usage = data.get("usage", {})
-            return content, usage
-    except Exception as exc:
-        return f"[energy provider error: {exc}]", {}
+
+    claude_tools = [
+        {
+            "name": s["function"]["name"],
+            "description": s["function"]["description"],
+            "input_schema": s["function"]["parameters"],
+        }
+        for s in TOOL_SCHEMAS_CHAT
+    ]
+
+    current_messages = list(filtered)
+    accumulated_usage: dict = {}
+
+    for _round in range(_MAX_TOOL_ROUNDS + 1):
+        payload: dict = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": current_messages,
+        }
+        if system_content:
+            payload["system"] = system_content
+        if use_tools:
+            payload["tools"] = claude_tools
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    json=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            return f"[energy provider error: {exc}]", accumulated_usage
+
+        for k, v in (data.get("usage") or {}).items():
+            accumulated_usage[k] = accumulated_usage.get(k, 0) + (v if isinstance(v, (int, float)) else 0)
+
+        stop_reason = data.get("stop_reason", "end_turn")
+        content_blocks = data.get("content", [])
+
+        tool_use_blocks = [b for b in content_blocks if b.get("type") == "tool_use"]
+
+        if not tool_use_blocks or not use_tools or _round >= _MAX_TOOL_ROUNDS:
+            for block in content_blocks:
+                if block.get("type") == "text":
+                    return block["text"], accumulated_usage
+            return "[claude: no text in response]", accumulated_usage
+
+        current_messages.append({"role": "assistant", "content": content_blocks})
+
+        tool_results = []
+        for block in tool_use_blocks:
+            name = block.get("name", "")
+            tool_id = block.get("id", "")
+            args = block.get("input", {})
+            result = await execute_tool(name, args)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_id,
+                "content": result,
+            })
+
+        current_messages.append({"role": "user", "content": tool_results})
+
+    return "[claude: tool loop exhausted]", accumulated_usage
 
 
 def _fallback_response(provider_id: str) -> str:
