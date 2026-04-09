@@ -47,13 +47,15 @@ def get_hmmm_seed_items() -> list[dict]:
 
 
 def get_scope_categories() -> dict:
-    """Return scope category definitions (also accessible as pre_approved_scopes)."""
+    """Return scope category definitions from approval_gates.pre_approved_scopes.
+    Falls back to legacy 'scope_categories' key for backward compatibility.
+    """
     gates = load_policy().get("approval_gates", {})
-    return gates.get("scope_categories", gates.get("pre_approved_scopes", {}))
+    return gates.get("pre_approved_scopes", gates.get("scope_categories", {}))
 
 
 def get_pre_approved_scopes() -> dict:
-    """Alias for get_scope_categories() — both names refer to the same data."""
+    """Canonical alias — returns approval_gates.pre_approved_scopes."""
     return get_scope_categories()
 
 
