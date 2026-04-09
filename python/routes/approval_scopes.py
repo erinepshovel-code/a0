@@ -50,7 +50,14 @@ class GrantScopeBody(BaseModel):
 
 
 def _require_uid(request: Request) -> str:
-    """Extract authenticated user ID from session header only. Raises 401 if missing."""
+    """Extract authenticated user ID from session header only. Raises 401 if missing.
+
+    Tier gating: approval scope management is available to all authenticated users.
+    Scope grants persist per user_id and are enforced by the inference layer.
+    The ws-tier restriction applies to ws-edit console access (Task #49), not scope grants.
+    Safety-floor scopes (spend_money, change_permissions, change_secrets) can never be
+    pre-approved regardless of tier.
+    """
     uid = request.headers.get("x-user-id", "").strip()
     if not uid:
         raise HTTPException(status_code=401, detail="Authentication required")

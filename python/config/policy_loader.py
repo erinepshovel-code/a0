@@ -47,7 +47,14 @@ def get_hmmm_seed_items() -> list[dict]:
 
 
 def get_scope_categories() -> dict:
-    return load_policy().get("approval_gates", {}).get("scope_categories", {})
+    """Return scope category definitions (also accessible as pre_approved_scopes)."""
+    gates = load_policy().get("approval_gates", {})
+    return gates.get("scope_categories", gates.get("pre_approved_scopes", {}))
+
+
+def get_pre_approved_scopes() -> dict:
+    """Alias for get_scope_categories() — both names refer to the same data."""
+    return get_scope_categories()
 
 
 def get_safety_floor_actions() -> list[str]:
