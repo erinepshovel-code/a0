@@ -212,8 +212,10 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                     f"[SCOPE GRANTED] `{scope_to_grant}` — {meta['label']} pre-approved. "
                     f"Covers: {meta['description']}."
                 )
-                pending = _pending_gates.pop(conv_id, None)
+                raw_pending = _pending_gates.get(conv_id)
+                pending = raw_pending if (raw_pending and raw_pending.get("uid", uid) == uid) else None
                 if pending:
+                    _pending_gates.pop(conv_id, None)
                     from ..services.tool_executor import set_approval_scope_user_id
                     set_approval_scope_user_id(uid or None)
                     try:
@@ -253,7 +255,11 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 "model": model_id,
                 "metadata": {"tier": tier},
             })
-            gate_matched = pending and pending.get("gate_id") == gate_id_to_approve
+            gate_matched = (
+                pending
+                and pending.get("gate_id") == gate_id_to_approve
+                and pending.get("uid", uid) == uid
+            )
             if gate_matched:
                 _pending_gates.pop(conv_id, None)
                 replay_provider = pending["provider_id"]
