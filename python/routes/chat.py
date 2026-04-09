@@ -192,6 +192,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 "metadata": {"tier": tier},
             })
 
+            from ..storage.domain import check_scope_grant_tier
             if scope_to_grant in safety_floor:
                 reply = (
                     f"[SCOPE DENIED] `{scope_to_grant}` is on the safety floor and cannot be pre-approved. "
@@ -206,6 +207,23 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 )
                 replay_result = None
             else:
+                try:
+                    await check_scope_grant_tier(uid)
+                except ValueError as _tier_err:
+                    reply = f"[SCOPE DENIED] {_tier_err}"
+                    replay_result = None
+                    assistant_msg = await storage.create_message({
+                        "conversation_id": conv_id,
+                        "role": "assistant",
+                        "content": reply,
+                        "model": "system",
+                        "metadata": {"tier": tier, "scope_grant_denied": scope_to_grant},
+                    })
+                    return {
+                        "user_message": user_msg,
+                        "assistant_message": assistant_msg,
+                        "conversation_id": conv_id,
+                    }
                 await storage.grant_approval_scope(uid, scope_to_grant)
                 meta = valid_scopes[scope_to_grant]
                 reply = (

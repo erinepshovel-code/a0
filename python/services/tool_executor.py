@@ -507,6 +507,11 @@ async def _manage_approval_scope(action: str, scope: str | None = None) -> str:
                 "ok": False,
                 "error": f"Unknown scope '{scope}'. Valid: {list(categories.keys())}",
             })
+        from ..storage.domain import check_scope_grant_tier
+        try:
+            await check_scope_grant_tier(uid)
+        except ValueError as _tier_err:
+            return json.dumps({"ok": False, "error": str(_tier_err)})
         await storage.grant_approval_scope(uid, scope)
         meta = categories[scope]
         return json.dumps({
@@ -517,6 +522,11 @@ async def _manage_approval_scope(action: str, scope: str | None = None) -> str:
         })
 
     if action == "revoke":
+        from ..storage.domain import check_scope_grant_tier
+        try:
+            await check_scope_grant_tier(uid)
+        except ValueError as _tier_err:
+            return json.dumps({"ok": False, "error": str(_tier_err)})
         removed = await storage.revoke_approval_scope(uid, scope)
         return json.dumps({"ok": removed, "scope": scope, "revoked": removed})
 
