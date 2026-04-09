@@ -229,6 +229,14 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                         set_approval_scope_user_id(None)
                     replay_result = {"content": replay_content, "usage": replay_usage}
                     reply += f"\n\nRetrying blocked action...\n\n{replay_content}"
+                    if replay_usage.get("approval_state") == "pending":
+                        _pending_gates[conv_id] = {
+                            "gate_id": replay_usage.get("gate_id"),
+                            "history": pending["history"],
+                            "system_prompt": pending["system_prompt"],
+                            "provider_id": pending["provider_id"],
+                            "uid": uid,
+                        }
                 else:
                     replay_result = None
 

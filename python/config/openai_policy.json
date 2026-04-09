@@ -228,7 +228,7 @@
     "approval_phrase": "APPROVE <gate_id>",
     "scope_phrase": "APPROVE SCOPE <scope>",
     "safety_floor": ["spend_money", "change_permissions", "change_secrets"],
-    "scope_categories": {
+    "pre_approved_scopes": {
       "github_write": {
         "label": "GitHub writes",
         "description": "Push to git, open PRs, create/close issues, create releases, manage branches",
