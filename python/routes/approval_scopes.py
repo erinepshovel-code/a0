@@ -42,8 +42,6 @@ DATA_SCHEMA = {
     ],
 }
 
-_TIERS_THAT_CAN_GRANT_SCOPES = {"ws", "pro", "admin"}
-
 router = APIRouter(prefix="/api/v1", tags=["approval-scopes"])
 
 
@@ -63,31 +61,16 @@ async def _require_scope_grant_access(request: Request) -> str:
     """Require ws/pro/admin tier to grant or revoke pre-approved scopes.
 
     Free-tier users can view their scopes and the catalog, but cannot grant new ones.
-    Write-action gates still fire for all tiers; any user who hits a gate may respond
-    with APPROVE gate-<id>. Persistent scope grants (APPROVE SCOPE <scope>) require
-    elevated tier because they permanently bypass per-gate friction for that category.
-
-    Returns the authenticated uid on success.
+    Tier check is centralized in storage.domain.check_scope_grant_tier and applied
+    consistently across all entry points (HTTP API, chat command, tool call).
     """
-    from ..database import engine
-    from sqlalchemy import text as _text
+    from ..storage.domain import check_scope_grant_tier
 
     uid = _require_uid(request)
-    async with engine.connect() as conn:
-        row = await conn.execute(
-            _text("SELECT subscription_tier FROM users WHERE id = :id"), {"id": uid}
-        )
-        rec = row.mappings().first()
-        tier = rec["subscription_tier"] if rec else "free"
-
-    if tier not in _TIERS_THAT_CAN_GRANT_SCOPES:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Tier '{tier}' cannot grant pre-approved scopes. "
-                "Requires ws, pro, or admin tier."
-            ),
-        )
+    try:
+        await check_scope_grant_tier(uid)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     return uid
 
 

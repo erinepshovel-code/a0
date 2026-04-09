@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from sqlalchemy import select, update, delete, func, desc, asc
+from sqlalchemy import select, update, delete, func, desc, asc, text as _sa_text
 
 from ..database import get_session
 from ..models import (
@@ -10,6 +10,30 @@ from ..models import (
     Conversation, A0pEvent, Message, ApprovalScope,
 )
 from .core import _CoreStorage, _row_to_dict
+
+_SCOPE_GRANT_TIERS = {"ws", "pro", "admin"}
+
+
+async def check_scope_grant_tier(user_id: str) -> str:
+    """Return the user's subscription_tier if allowed to grant scopes, else raise ValueError.
+
+    Allowed tiers: ws, pro, admin.
+    Any authenticated user can read their scopes; only elevated tiers can grant/revoke.
+    This is enforced across all entry points: HTTP API, chat APPROVE SCOPE, and tool calls.
+    """
+    from ..database import engine as _engine
+    async with _engine.connect() as conn:
+        row = await conn.execute(
+            _sa_text("SELECT subscription_tier FROM users WHERE id = :id"), {"id": user_id}
+        )
+        rec = row.mappings().first()
+        tier = rec["subscription_tier"] if rec else "free"
+    if tier not in _SCOPE_GRANT_TIERS:
+        raise ValueError(
+            f"Tier '{tier}' cannot grant pre-approved scopes. "
+            "Requires ws, pro, or admin tier."
+        )
+    return tier
 
 
 class DatabaseStorage(_CoreStorage):
