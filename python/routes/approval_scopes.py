@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional
 
 from ..storage import storage
 from ..config.policy_loader import get_scope_categories, get_safety_floor_actions
@@ -48,13 +47,13 @@ router = APIRouter(prefix="/api/v1", tags=["approval-scopes"])
 
 class GrantScopeBody(BaseModel):
     scope: str
-    user_id: Optional[str] = None
 
 
-def _get_uid(request: Request, body_uid: Optional[str] = None) -> str:
-    uid = body_uid or request.headers.get("x-user-id", "")
+def _require_uid(request: Request) -> str:
+    """Extract authenticated user ID from session header only. Raises 401 if missing."""
+    uid = request.headers.get("x-user-id", "").strip()
     if not uid:
-        raise HTTPException(status_code=400, detail="user_id required")
+        raise HTTPException(status_code=401, detail="Authentication required")
     return uid
 
 
@@ -85,18 +84,18 @@ async def list_scope_catalog():
 
 
 @router.get("/approval-scopes")
-async def list_approval_scopes(request: Request, user_id: Optional[str] = None):
-    uid = _get_uid(request, user_id)
+async def list_approval_scopes(request: Request):
+    uid = _require_uid(request)
     return await storage.get_approval_scopes(uid)
 
 
 @router.post("/approval-scopes")
 async def grant_approval_scope(body: GrantScopeBody, request: Request):
-    uid = _get_uid(request, body.user_id)
+    uid = _require_uid(request)
     valid_scopes = get_scope_categories()
-    safety_floor = set(get_safety_floor_actions())
+    safety_floor_actions = set(get_safety_floor_actions())
 
-    if body.scope in safety_floor:
+    if body.scope in safety_floor_actions:
         raise HTTPException(
             status_code=403,
             detail=f"Scope '{body.scope}' is on the safety floor and cannot be pre-approved.",
@@ -112,8 +111,8 @@ async def grant_approval_scope(body: GrantScopeBody, request: Request):
 
 
 @router.delete("/approval-scopes/{scope}")
-async def revoke_approval_scope(scope: str, request: Request, user_id: Optional[str] = None):
-    uid = _get_uid(request, user_id)
+async def revoke_approval_scope(scope: str, request: Request):
+    uid = _require_uid(request)
     removed = await storage.revoke_approval_scope(uid, scope)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Scope '{scope}' not found for this user.")
