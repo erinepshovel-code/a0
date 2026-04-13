@@ -1,4 +1,4 @@
-# 194:47
+# 255:58
 """WS Module registry API.
 
 Provides CRUD for user-defined and system-shadow console modules.
@@ -28,6 +28,7 @@ from typing import Optional
 
 from ..storage import storage
 from ..services.module_write_token import issue_token, consume_token
+from ..engine.module_registry import get_registry
 
 # DOC module: ws_modules
 # DOC label: Modules
@@ -40,7 +41,9 @@ from ..services.module_write_token import issue_token, consume_token
 # DOC endpoint: PATCH /api/v1/ws/modules/{id} | Update a module's metadata
 # DOC endpoint: PATCH /api/v1/ws/modules/{id}/lock | Toggle a module's lock status
 # DOC endpoint: DELETE /api/v1/ws/modules/{id} | Delete a user module
-# DOC notes: Write tokens are required for all create/patch/delete operations. Lock toggle is a separate protected action that does not require a write token.
+# DOC endpoint: POST /api/v1/ws/modules/{id}/swap | Hot-swap handler code and activate module (compiles + mounts routes live)
+# DOC endpoint: POST /api/v1/ws/modules/{id}/deactivate | Unmount a module's routes without deleting it
+# DOC notes: Write tokens are required for all create/patch/delete/swap/deactivate operations. Lock toggle is a separate protected action that does not require a write token.
 
 UI_META = {
     "tab_id": "ws_modules",
@@ -113,6 +116,7 @@ class CreateModuleBody(BaseModel):
     slug: str
     name: str
     description: str = ""
+    handler_code: Optional[str] = None
     ui_meta: dict = {}
     route_config: dict = {}
     write_token: str
@@ -121,13 +125,23 @@ class CreateModuleBody(BaseModel):
 class PatchModuleBody(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    handler_code: Optional[str] = None
     ui_meta: Optional[dict] = None
     route_config: Optional[dict] = None
     write_token: str
 
 
+class SwapBody(BaseModel):
+    write_token: str
+    handler_code: Optional[str] = None
+
+
 class LockToggleBody(BaseModel):
     locked: bool
+
+
+class DeactivateBody(BaseModel):
+    write_token: str
 
 
 class DeleteBody(BaseModel):
@@ -204,6 +218,7 @@ async def create_module(body: CreateModuleBody, request: Request):
         "description": body.description,
         "owner_id": uid,
         "status": "inactive",
+        "handler_code": body.handler_code,
         "ui_meta": body.ui_meta,
         "route_config": body.route_config,
     })
@@ -232,6 +247,8 @@ async def patch_module(module_id: int, body: PatchModuleBody, request: Request):
         updates["name"] = body.name
     if body.description is not None:
         updates["description"] = body.description
+    if body.handler_code is not None:
+        updates["handler_code"] = body.handler_code
     if body.ui_meta is not None:
         updates["ui_meta"] = body.ui_meta
     if body.route_config is not None:
@@ -303,5 +320,71 @@ async def delete_module(module_id: int, body: DeleteBody, request: Request):
     ok = await storage.delete_ws_module(module_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Module not found")
+    get_registry().unmount(module_id)
     return {"ok": True, "deleted": module_id}
-# 194:47
+
+
+@router.post("/modules/{module_id}/swap")
+async def swap_module(module_id: int, body: SwapBody, request: Request):
+    """Hot-swap a module's handler code and activate it live.
+
+    Compiles the handler code, mounts its routes on the running app, and sets
+    status='active'. If compilation fails, status is set to 'error' and the
+    error_log field is populated; existing routes (if any) are left in place.
+    A write token is required, obtained from GET /modules/{id}/write-token.
+    """
+    uid, tier, is_admin = await _require_ws(request)
+    mod = await storage.get_ws_module(module_id)
+    if not mod:
+        raise HTTPException(status_code=404, detail="Module not found")
+    _can_write_module(mod, uid, is_admin)
+    if not consume_token(body.write_token, str(module_id), uid):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or expired write token. Request a new one and retry.",
+        )
+    handler_code = body.handler_code or mod.get("handler_code") or ""
+    if not handler_code.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="No handler_code provided and none stored for this module.",
+        )
+    try:
+        await get_registry().swap(module_id, mod["slug"], handler_code)
+    except Exception as exc:
+        await storage.update_ws_module(module_id, {
+            "status": "error",
+            "error_log": str(exc),
+            "handler_code": handler_code if body.handler_code else mod.get("handler_code"),
+        })
+        raise HTTPException(status_code=422, detail=f"Compilation failed: {exc}") from exc
+
+    updated = await storage.update_ws_module(module_id, {
+        "status": "active",
+        "handler_code": handler_code,
+        "error_log": None,
+        "version": (mod.get("version") or 1) + 1,
+    })
+    return updated
+
+
+@router.post("/modules/{module_id}/deactivate")
+async def deactivate_module(module_id: int, body: DeactivateBody, request: Request):
+    """Unmount a module's routes from the live app without deleting the record.
+
+    Sets status='inactive'. Requires ownership (or admin) + write token.
+    """
+    uid, tier, is_admin = await _require_ws(request)
+    mod = await storage.get_ws_module(module_id)
+    if not mod:
+        raise HTTPException(status_code=404, detail="Module not found")
+    _can_write_module(mod, uid, is_admin)
+    if not consume_token(body.write_token, str(module_id), uid):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or expired write token. Request a new one and retry.",
+        )
+    get_registry().unmount(module_id)
+    updated = await storage.update_ws_module(module_id, {"status": "inactive"})
+    return updated
+# 255:58
