@@ -1,3 +1,4 @@
+# 67:0
 import math
 from typing import Any
 
@@ -76,3 +77,4 @@ def delta_between(a: dict[str, float], b: dict[str, float]) -> dict[str, float]:
     for m in METRIC_NAMES:
         result[f"delta_{m}"] = round((b.get(m, 0) - a.get(m, 0)), 4)
     return result
+# 67:0

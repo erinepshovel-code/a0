@@ -1,3 +1,4 @@
+// 26:0
 import { useState, useCallback } from "react";
 
 const STORAGE_KEY = "a0p-slider-orientation";
@@ -29,3 +30,4 @@ export function useSliderOrientation() {
     isVertical: orientation === "vertical",
   } as const;
 }
+// 26:0

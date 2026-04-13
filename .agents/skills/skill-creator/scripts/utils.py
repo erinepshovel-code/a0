@@ -1,3 +1,4 @@
+# 35:3
 """Shared utilities for skill-creator scripts."""
 
 from pathlib import Path
@@ -45,3 +46,4 @@ def parse_skill_md(skill_path: Path) -> tuple[str, str, str]:
         i += 1
 
     return name, description, content
+# 35:3

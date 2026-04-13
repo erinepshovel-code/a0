@@ -1,3 +1,4 @@
+// 381:13
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, serial, integer, timestamp, jsonb, real, boolean, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -452,3 +453,4 @@ export const adminEmails = pgTable("admin_emails", {
 export const insertAdminEmailSchema = createInsertSchema(adminEmails).omit({ id: true, addedAt: true });
 export type InsertAdminEmail = z.infer<typeof insertAdminEmailSchema>;
 export type AdminEmail = typeof adminEmails.$inferSelect;
+// 381:13

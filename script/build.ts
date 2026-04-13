@@ -1,3 +1,4 @@
+// 38:0
 import { build as viteBuild } from "vite";
 import { build as esbuild } from "esbuild";
 import { rm } from "fs/promises";
@@ -40,3 +41,4 @@ buildAll().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+// 38:0

@@ -1,3 +1,4 @@
+# 119:9
 """
 PTCACore — parameterized prime-ring tensor with heptagram propagation.
 Each instance self-declares: name, symbol, role, n, seed.
@@ -146,3 +147,4 @@ class PTCACore:
             "last_reward": round(self.last_reward, 4),
             "node_coherence": [round(float(v), 4) for v in self.node_coherence],
         }
+# 119:9

@@ -1,3 +1,4 @@
+# 77:0
 import os
 from typing import Optional
 from fastapi import APIRouter, Request
@@ -92,3 +93,4 @@ async def remove_admin_email(request: Request, email: str):
         if result.rowcount == 0:
             return JSONResponse(status_code=404, content={"error": "Not found"})
     return {"ok": True, "email": target}
+# 77:0

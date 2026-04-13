@@ -1,3 +1,4 @@
+// 84:0
 import { useLocation, Link } from "wouter";
 import { Zap, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -87,3 +88,4 @@ export default function TopNav() {
     </nav>
   );
 }
+// 84:0

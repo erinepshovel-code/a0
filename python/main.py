@@ -1,4 +1,4 @@
-# 164:89
+# 168:89
 import os
 import time
 from contextlib import asynccontextmanager
@@ -75,6 +75,10 @@ _ZFAE_TOOL_SPECS = {
     },
     "manage_approval_scope": {
         "description": "Grant or revoke a pre-approved action scope for the current user — eliminates per-gate APPROVE prompts for that category.",
+        "handler_type": "internal",
+    },
+    "set_user_tier": {
+        "description": "Set a user's subscription tier (admin-only). Params: user_id (string), tier (string — one of: free, ws, pro, admin, seeker, operator, patron, founder). Requires the calling session to have is_admin: true. Changes take effect immediately without a subscription change.",
         "handler_type": "internal",
     },
 }
@@ -287,4 +291,4 @@ if IS_PROD and os.path.isdir(STATIC_DIR):
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-# 164:89
+# 168:89

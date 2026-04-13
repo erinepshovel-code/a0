@@ -1,3 +1,4 @@
+// 38:0
 import { useQuery } from "@tanstack/react-query";
 
 export interface BillingStatus {
@@ -11,11 +12,16 @@ export interface BillingStatus {
 
 const TIER_LABELS: Record<string, string> = {
   free: "Free",
+  ws: "WS",
+  pro: "Pro",
+  admin: "Admin",
   seeker: "Seeker",
   operator: "Operator",
   patron: "Patron",
   founder: "Founder",
 };
+
+const WS_TIERS = new Set(["ws", "pro", "admin", "seeker", "operator", "patron", "founder"]);
 
 export function useBillingStatus() {
   const { data, isLoading, error } = useQuery<BillingStatus>({
@@ -24,13 +30,16 @@ export function useBillingStatus() {
   });
 
   const plan = data?.plan ?? "free";
+  const isAdmin = data?.is_admin ?? false;
   return {
     status: data,
     isLoading,
     error,
     tier: plan,
-    tierLabel: TIER_LABELS[plan] ?? "Free",
-    isAdmin: data?.is_admin ?? false,
-    isPaid: plan !== "free",
+    tierLabel: isAdmin && plan === "free" ? "Admin" : (TIER_LABELS[plan] ?? "Free"),
+    isAdmin,
+    isWs: WS_TIERS.has(plan) || isAdmin,
+    isPaid: plan !== "free" || isAdmin,
   };
 }
+// 38:0

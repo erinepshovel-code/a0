@@ -1,3 +1,4 @@
+# 241:25
 #!/usr/bin/env python3
 """Run trigger evaluation for a skill description.
 
@@ -308,3 +309,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# 241:25

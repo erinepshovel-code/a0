@@ -1,3 +1,4 @@
+// 56:0
 import { useState } from "react";
 import { X, ChevronDown, ChevronUp, Pin } from "lucide-react";
 import { usePopout } from "@/lib/popout-context";
@@ -58,3 +59,4 @@ export default function PopoutPanel() {
     </div>
   );
 }
+// 56:0

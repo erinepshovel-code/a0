@@ -1,3 +1,4 @@
+// 105:1
 import type { Config } from "tailwindcss";
 
 export default {
@@ -105,3 +106,4 @@ export default {
   },
   plugins: [require("tailwindcss-animate"), require("@tailwindcss/typography")],
 } satisfies Config;
+// 105:1

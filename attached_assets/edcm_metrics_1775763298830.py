@@ -1,3 +1,4 @@
+# 295:101
 # edcm_metrics.py
 # Canonical-ish EDCM metrics (behavioral proxies; no intent inference)
 # Implements: DA, RPI, CE, GL, RM
@@ -477,3 +478,4 @@ class EDCMAnalyzer:
             return f"Graphs saved to:\n{png_path}"
         except Exception as e:
             return f"Graph Error: {str(e)}"
+# 295:101

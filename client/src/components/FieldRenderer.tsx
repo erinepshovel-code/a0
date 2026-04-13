@@ -1,3 +1,4 @@
+// 133:0
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import type { FieldDef } from "@/hooks/use-ui-structure";
@@ -142,3 +143,4 @@ export default function FieldRenderer({ field, data }: Props) {
   const Renderer = RENDERERS[field.type] ?? TextField;
   return <Renderer value={value} label={field.label} />;
 }
+// 133:0

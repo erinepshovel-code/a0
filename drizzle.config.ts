@@ -1,3 +1,4 @@
+// 12:0
 import { defineConfig } from "drizzle-kit";
 
 if (!process.env.DATABASE_URL) {
@@ -12,3 +13,4 @@ export default defineConfig({
     url: process.env.DATABASE_URL,
   },
 });
+// 12:0

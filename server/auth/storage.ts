@@ -1,3 +1,4 @@
+// 150:0
 import { db } from "../db";
 import { users, challengeResponses, guestTokenUsage } from "@shared/models/auth";
 import { eq, and, gte } from "drizzle-orm";
@@ -160,3 +161,4 @@ export async function incrementGuestTokensAtomic(
   }
   return { accepted: true, tokensUsed: updated.tokensUsed };
 }
+// 150:0

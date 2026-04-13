@@ -1,4 +1,4 @@
-# 309:10
+# 313:11
 """
 SigmaCore — Σ — filesystem substrate companion core.
 Variable-size prime-node ring encoding the workspace filesystem as
@@ -372,4 +372,4 @@ def get_sigma() -> SigmaCore:
     if _sigma_instance is None:
         _sigma_instance = SigmaCore(resolution=3)
     return _sigma_instance
-# 309:10
+# 313:11
