@@ -1,4 +1,4 @@
-# 168:89
+# 169:93
 import os
 import time
 from contextlib import asynccontextmanager
@@ -13,6 +13,7 @@ from .database import engine
 from .engine import PCNAEngine
 from .routes import ALL_ROUTERS, collect_ui_meta
 from .services.heartbeat import heartbeat_service
+from .engine.module_registry import initialize_registry, get_registry
 from .agents.zfae import compose_name, ZFAE_AGENT_DEF
 from .services.energy_registry import energy_registry
 
@@ -199,6 +200,9 @@ async def lifespan(app: FastAPI):
     print("[ws_modules] table ensured")
     await _seed_system_shadow_modules()
     print("[ws_modules] system shadows seeded")
+    _hot_count = await get_registry().load_all_active()
+    if _hot_count:
+        print(f"[module_registry] {_hot_count} hot-swap module(s) mounted")
     from .storage import storage as _storage
     _res_toggle = await _storage.get_system_toggle("zfae:resolution")
     if _res_toggle and _res_toggle.get("parameters"):
@@ -217,6 +221,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="A0P Python Backend", lifespan=lifespan)
+initialize_registry(app)
 
 _INTERNAL_SECRET = os.environ.get("INTERNAL_API_SECRET", "a0p-dev-internal-secret")
 
@@ -291,4 +296,4 @@ if IS_PROD and os.path.isdir(STATIC_DIR):
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-# 168:89
+# 169:93
