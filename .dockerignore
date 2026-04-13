@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+dist
+__pycache__
+**/__pycache__
+**/*.pyc
+*.log
+.env
+.local
+uploads
+attached_assets
