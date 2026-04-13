@@ -1,4 +1,4 @@
-# 312:8
+# 313:8
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, Float, DateTime, JSON,
     ARRAY, ForeignKey, UniqueConstraint, Index, text
@@ -375,6 +375,7 @@ class WsModule(Base):
     error_log = Column(Text)
     version = Column(Integer, nullable=False, server_default="1")
     content_hash = Column(String(64))
+    last_swapped_at = Column(DateTime)
     created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-# 312:8
+# 313:8
