@@ -7,7 +7,7 @@ from ..models import (
     HeartbeatTask, EdcmMetricSnapshot, MemorySeed, MemoryProjection,
     MemoryTensorSnapshot, BanditCorrelation, SystemToggle, DiscoveryDraft,
     TranscriptSource, TranscriptReport, Deal, HeartbeatLog,
-    Conversation, A0pEvent, Message, ApprovalScope,
+    Conversation, A0pEvent, Message, ApprovalScope, WsModule,
 )
 from .core import _CoreStorage, _row_to_dict
 
@@ -432,6 +432,80 @@ class DatabaseStorage(_CoreStorage):
                 .where(ApprovalScope.user_id == user_id, ApprovalScope.scope == scope)
             )
             return result.rowcount > 0
+
+    async def list_ws_modules(self) -> List[Dict[str, Any]]:
+        async with get_session() as session:
+            result = await session.execute(
+                select(WsModule).order_by(asc(WsModule.status), asc(WsModule.name))
+            )
+            return [_row_to_dict(r) for r in result.scalars().all()]
+
+    async def get_ws_module(self, module_id: int) -> Optional[Dict[str, Any]]:
+        async with get_session() as session:
+            result = await session.execute(select(WsModule).where(WsModule.id == module_id))
+            return _row_to_dict(result.scalar_one_or_none())
+
+    async def get_ws_module_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
+        async with get_session() as session:
+            result = await session.execute(select(WsModule).where(WsModule.slug == slug))
+            return _row_to_dict(result.scalar_one_or_none())
+
+    async def create_ws_module(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        async with get_session() as session:
+            mod = WsModule(**data)
+            session.add(mod)
+            await session.flush()
+            await session.refresh(mod)
+            return _row_to_dict(mod)
+
+    async def update_ws_module(self, module_id: int, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        updates["updated_at"] = datetime.utcnow()
+        async with get_session() as session:
+            await session.execute(
+                update(WsModule).where(WsModule.id == module_id).values(**updates)
+            )
+        return await self.get_ws_module(module_id)
+
+    async def delete_ws_module(self, module_id: int) -> bool:
+        async with get_session() as session:
+            result = await session.execute(delete(WsModule).where(WsModule.id == module_id))
+            return result.rowcount > 0
+
+    async def get_active_ws_module_ui_metas(self) -> List[Dict[str, Any]]:
+        """Return UI_META dicts for all user-created active ws modules."""
+        async with get_session() as session:
+            result = await session.execute(
+                select(WsModule).where(
+                    WsModule.status == "active",
+                    WsModule.owner_id != "system",
+                )
+            )
+            metas = []
+            for row in result.scalars().all():
+                d = _row_to_dict(row)
+                ui_meta = d.get("ui_meta") or {}
+                if ui_meta:
+                    metas.append(ui_meta)
+            return metas
+
+    async def upsert_system_shadow(self, slug: str, name: str, description: str, ui_meta: Dict[str, Any]) -> None:
+        """Upsert a system shadow record for a hardcoded route module."""
+        existing = await self.get_ws_module_by_slug(slug)
+        if existing:
+            await self.update_ws_module(existing["id"], {
+                "name": name,
+                "ui_meta": ui_meta,
+            })
+        else:
+            await self.create_ws_module({
+                "slug": slug,
+                "name": name,
+                "description": description,
+                "owner_id": "system",
+                "status": "system",
+                "ui_meta": ui_meta,
+                "route_config": {},
+            })
 
 
 storage = DatabaseStorage()

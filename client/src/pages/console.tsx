@@ -6,6 +6,7 @@ import { useSEO } from "@/hooks/use-seo";
 import ConsoleSidebar from "@/components/console-sidebar";
 import TabRenderer from "@/components/TabRenderer";
 import ApprovalScopesTab from "@/components/ApprovalScopesTab";
+import WsModulesTab from "@/components/WsModulesTab";
 import type { TabDef } from "@/hooks/use-ui-structure";
 
 const STORAGE_KEY = "a0p_active_tab";
@@ -30,6 +31,12 @@ function usePersistedTab(tabs: TabDef[]) {
   };
 
   return { activeTab, selectTab };
+}
+
+function renderTab(tab: TabDef) {
+  if (tab.tab_id === "approval_scopes") return <ApprovalScopesTab />;
+  if (tab.tab_id === "ws_modules") return <WsModulesTab />;
+  return <TabRenderer tab={tab} />;
 }
 
 export default function ConsolePage() {
@@ -87,19 +94,13 @@ export default function ConsolePage() {
           ))}
         </div>
         <div className="flex-1 overflow-hidden">
-          {currentTab && (
-            currentTab.tab_id === "approval_scopes"
-              ? <ApprovalScopesTab />
-              : <TabRenderer tab={currentTab} />
-          )}
+          {currentTab && renderTab(currentTab)}
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden hidden md:block">
         {currentTab ? (
-          currentTab.tab_id === "approval_scopes"
-            ? <ApprovalScopesTab />
-            : <TabRenderer tab={currentTab} />
+          renderTab(currentTab)
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground" data-testid="console-empty">
             <p className="text-sm">Select a tab</p>
