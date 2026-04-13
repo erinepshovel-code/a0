@@ -1,0 +1,399 @@
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useBillingStatus } from "@/hooks/use-billing-status";
+import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Blocks, Lock, LockOpen, ChevronRight, X, AlertTriangle, Shield, Eye,
+} from "lucide-react";
+
+interface WsModule {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  owner_id: string;
+  status: "system" | "active" | "inactive" | "locked" | "error";
+  ui_meta: Record<string, unknown>;
+  route_config: Record<string, unknown>;
+  error_log: string | null;
+  version: number;
+  content_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const STATUS_BADGE: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+  system:   { label: "system",   variant: "secondary" },
+  active:   { label: "active",   variant: "default" },
+  inactive: { label: "inactive", variant: "outline" },
+  locked:   { label: "locked",   variant: "secondary" },
+  error:    { label: "error",    variant: "destructive" },
+};
+
+const WS_TIERS = new Set(["ws", "pro", "admin"]);
+
+function canWrite(mod: WsModule, userId: string | undefined, isAdmin: boolean): boolean {
+  if (mod.status === "system") return false;
+  if (mod.status === "locked") return isAdmin || mod.owner_id === userId;
+  return isAdmin || mod.owner_id === userId;
+}
+
+function ModuleEditor({
+  mod,
+  userId,
+  isAdmin,
+  onClose,
+}: {
+  mod: WsModule;
+  userId: string | undefined;
+  isAdmin: boolean;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const isSystem = mod.status === "system";
+  const isLocked = mod.status === "locked";
+  const writeable = canWrite(mod, userId, isAdmin) && !isLocked;
+
+  const [name, setName] = useState(mod.name);
+  const [description, setDescription] = useState(mod.description);
+  const [uiMetaStr, setUiMetaStr] = useState(JSON.stringify(mod.ui_meta || {}, null, 2));
+  const [routeConfigStr, setRouteConfigStr] = useState(JSON.stringify(mod.route_config || {}, null, 2));
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  const validateJson = (str: string, field: string): Record<string, unknown> | null => {
+    try {
+      return JSON.parse(str);
+    } catch {
+      setJsonError(`${field} is not valid JSON`);
+      return null;
+    }
+  };
+
+  const lockMutation = useMutation({
+    mutationFn: async (locked: boolean) => {
+      return apiRequest("PATCH", `/api/v1/ws/modules/${mod.id}/lock`, { locked });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/ws/modules"] });
+      toast({ title: isLocked ? "Module unlocked" : "Module locked" });
+      onClose();
+    },
+    onError: (e: Error) => {
+      toast({ title: "Lock toggle failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      setJsonError(null);
+      const uiMeta = validateJson(uiMetaStr, "UI Meta");
+      if (uiMeta === null) throw new Error("JSON validation failed");
+      const routeConfig = validateJson(routeConfigStr, "Route Config");
+      if (routeConfig === null) throw new Error("JSON validation failed");
+
+      const tokenRes = await apiRequest("GET", `/api/v1/ws/modules/${mod.id}/write-token`);
+      const { token } = await tokenRes.json();
+
+      return apiRequest("PATCH", `/api/v1/ws/modules/${mod.id}`, {
+        name,
+        description,
+        ui_meta: uiMeta,
+        route_config: routeConfig,
+        write_token: token,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/ws/modules"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/ui/structure"] });
+      toast({ title: "Module saved", description: `v${(mod.version || 1) + 1}` });
+      onClose();
+    },
+    onError: (e: Error) => {
+      if (!jsonError) {
+        toast({ title: "Save failed", description: e.message, variant: "destructive" });
+      }
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const tokenRes = await apiRequest("GET", `/api/v1/ws/modules/${mod.id}/write-token`);
+      const { token } = await tokenRes.json();
+      return apiRequest("DELETE", `/api/v1/ws/modules/${mod.id}`, { write_token: token });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/ws/modules"] });
+      toast({ title: "Module deleted" });
+      onClose();
+    },
+    onError: (e: Error) => {
+      toast({ title: "Delete failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <div className="flex flex-col h-full" data-testid={`module-editor-${mod.id}`}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Badge variant={STATUS_BADGE[mod.status]?.variant ?? "outline"}>
+            {STATUS_BADGE[mod.status]?.label ?? mod.status}
+          </Badge>
+          <span className="text-xs text-muted-foreground font-mono truncate">{mod.slug}</span>
+          <span className="text-xs text-muted-foreground">v{mod.version}</span>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {!isSystem && canWrite(mod, userId, isAdmin) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => lockMutation.mutate(!isLocked)}
+              disabled={lockMutation.isPending}
+              data-testid={`btn-lock-${mod.id}`}
+              title={isLocked ? "Unlock module" : "Lock module"}
+            >
+              {isLocked ? <LockOpen className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+              <span className="ml-1 text-xs">{isLocked ? "Unlock" : "Lock"}</span>
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={onClose} data-testid="btn-close-editor">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {isSystem && (
+          <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2 border border-border">
+            <Shield className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>
+              System module — backed by hardcoded route code. Visible here as a reference.
+              The live version is always the code; this record is a mirror and cannot be edited.
+            </span>
+          </div>
+        )}
+        {isLocked && !isSystem && (
+          <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2 border border-border">
+            <Lock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>
+              Module is locked. {canWrite(mod, userId, isAdmin) ? "Unlock it above to edit." : "Only the owner or an admin can unlock it."}
+            </span>
+          </div>
+        )}
+        {mod.status === "error" && mod.error_log && (
+          <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2 border border-destructive/20">
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <pre className="whitespace-pre-wrap break-all font-mono">{mod.error_log}</pre>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <Label htmlFor={`name-${mod.id}`} className="text-xs">Name</Label>
+          <Input
+            id={`name-${mod.id}`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={!writeable}
+            className="h-8 text-sm font-mono"
+            data-testid={`input-name-${mod.id}`}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor={`desc-${mod.id}`} className="text-xs">Description</Label>
+          <Input
+            id={`desc-${mod.id}`}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            disabled={!writeable}
+            className="h-8 text-sm"
+            data-testid={`input-desc-${mod.id}`}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor={`uimeta-${mod.id}`} className="text-xs">UI Meta (JSON)</Label>
+          <Textarea
+            id={`uimeta-${mod.id}`}
+            value={uiMetaStr}
+            onChange={(e) => {
+              setUiMetaStr(e.target.value);
+              setJsonError(null);
+            }}
+            disabled={!writeable}
+            className="font-mono text-xs min-h-[160px] resize-y"
+            spellCheck={false}
+            data-testid={`textarea-uimeta-${mod.id}`}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor={`routeconfig-${mod.id}`} className="text-xs">Route Config (JSON)</Label>
+          <Textarea
+            id={`routeconfig-${mod.id}`}
+            value={routeConfigStr}
+            onChange={(e) => {
+              setRouteConfigStr(e.target.value);
+              setJsonError(null);
+            }}
+            disabled={!writeable}
+            className="font-mono text-xs min-h-[80px] resize-y"
+            spellCheck={false}
+            data-testid={`textarea-routeconfig-${mod.id}`}
+          />
+        </div>
+
+        {jsonError && (
+          <p className="text-xs text-destructive" data-testid="json-error">{jsonError}</p>
+        )}
+      </div>
+
+      {writeable && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border shrink-0">
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => {
+              if (confirm(`Delete module "${mod.name}"? This cannot be undone.`)) {
+                deleteMutation.mutate();
+              }
+            }}
+            disabled={deleteMutation.isPending}
+            data-testid={`btn-delete-${mod.id}`}
+          >
+            Delete
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending}
+            data-testid={`btn-save-${mod.id}`}
+          >
+            {saveMutation.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function WsModulesTab() {
+  const { tier, isAdmin } = useBillingStatus();
+  const { toast } = useToast();
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  const canAccess = WS_TIERS.has(tier) || isAdmin;
+
+  const { data: modules = [], isLoading } = useQuery<WsModule[]>({
+    queryKey: ["/api/v1/ws/modules"],
+    enabled: canAccess,
+  });
+
+  const userId = undefined;
+
+  const selectedModule = modules.find((m) => m.id === selectedId);
+
+  if (!canAccess) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground" data-testid="ws-modules-no-access">
+        <Blocks className="h-8 w-8 opacity-30" />
+        <p className="text-sm">Module editor requires ws, pro, or admin tier.</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground" data-testid="ws-modules-loading">
+        <span className="text-sm">Loading modules…</span>
+      </div>
+    );
+  }
+
+  const systemModules = modules.filter((m) => m.status === "system");
+  const userModules = modules.filter((m) => m.status !== "system");
+
+  return (
+    <div className="flex h-full" data-testid="ws-modules-tab">
+      <div className="w-56 shrink-0 border-r border-border flex flex-col overflow-hidden">
+        <div className="px-3 py-2 border-b border-border shrink-0">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Modules</p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {userModules.length > 0 && (
+            <div>
+              <p className="px-3 pt-2 pb-0.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">User</p>
+              {userModules.map((mod) => (
+                <button
+                  key={mod.id}
+                  onClick={() => setSelectedId(mod.id === selectedId ? null : mod.id)}
+                  className={`w-full text-left flex items-center justify-between px-3 py-2 text-sm transition-colors ${
+                    selectedId === mod.id
+                      ? "bg-primary/10 text-primary"
+                      : "hover:bg-muted text-foreground"
+                  }`}
+                  data-testid={`module-row-${mod.id}`}
+                >
+                  <span className="truncate flex-1">{mod.name}</span>
+                  <div className="flex items-center gap-1 shrink-0 ml-1">
+                    {mod.status === "locked" && <Lock className="h-3 w-3 text-muted-foreground" />}
+                    {mod.status === "error" && <AlertTriangle className="h-3 w-3 text-destructive" />}
+                    <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div>
+            <p className="px-3 pt-2 pb-0.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">System</p>
+            {systemModules.map((mod) => (
+              <button
+                key={mod.id}
+                onClick={() => setSelectedId(mod.id === selectedId ? null : mod.id)}
+                className={`w-full text-left flex items-center justify-between px-3 py-2 text-sm transition-colors opacity-70 ${
+                  selectedId === mod.id
+                    ? "bg-primary/10 text-primary opacity-100"
+                    : "hover:bg-muted text-foreground"
+                }`}
+                data-testid={`module-row-${mod.id}`}
+              >
+                <span className="truncate flex-1">{mod.name}</span>
+                <Eye className="h-3 w-3 text-muted-foreground shrink-0" />
+              </button>
+            ))}
+          </div>
+
+          {modules.length === 0 && (
+            <p className="px-3 py-4 text-xs text-muted-foreground">No modules yet.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-hidden">
+        {selectedModule ? (
+          <ModuleEditor
+            mod={selectedModule}
+            userId={userId}
+            isAdmin={isAdmin}
+            onClose={() => setSelectedId(null)}
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground" data-testid="ws-modules-empty">
+            <Blocks className="h-8 w-8 opacity-30" />
+            <p className="text-sm">Select a module to inspect or edit.</p>
+            <p className="text-xs text-center max-w-[240px]">
+              System modules are read-only mirrors of hardcoded routes. User modules can be edited if not locked.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

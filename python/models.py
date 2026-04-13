@@ -349,3 +349,30 @@ class ApprovalScope(Base):
     scope = Column(String(100), nullable=False)
     granted_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     __table_args__ = (UniqueConstraint("user_id", "scope", name="uq_approval_scope_user_scope"),)
+
+
+class WsModule(Base):
+    """A user-defined or system-shadow console module.
+
+    status values:
+      system   — shadow record for a hardcoded route module; visible, immutable via API
+      active   — user module mounted and live
+      inactive — user module persisted but not mounted
+      locked   — active/inactive module write-protected by its owner
+      error    — compilation or mount failed; error_log has details
+    """
+    __tablename__ = "ws_modules"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    slug = Column(String(120), unique=True, nullable=False)
+    name = Column(Text, nullable=False)
+    description = Column(Text, nullable=False, server_default="")
+    owner_id = Column(String, nullable=False)
+    status = Column(String(20), nullable=False, server_default="inactive")
+    handler_code = Column(Text)
+    ui_meta = Column(JSONB, nullable=False, server_default="{}")
+    route_config = Column(JSONB, nullable=False, server_default="{}")
+    error_log = Column(Text)
+    version = Column(Integer, nullable=False, server_default="1")
+    content_hash = Column(String(64))
+    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))

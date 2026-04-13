@@ -110,6 +110,27 @@ async def _ensure_default_tools() -> None:
         print(f"[tools] {len(_ZFAE_TOOL_SPECS)} ZFAE tools already present")
 
 
+async def _seed_system_shadow_modules() -> None:
+    """Upsert shadow DB records for every hardcoded route module.
+
+    These records are visible in the WS editor but completely immutable via the
+    API (status='system', owner_id='system'). The backing code is never touched;
+    this is purely informational / safe-mode reference.
+    """
+    from .storage import storage as _storage
+    metas = collect_ui_meta()
+    for meta in metas:
+        tab_id = meta.get("tab_id", "")
+        slug = f"system::{tab_id}"
+        label = meta.get("label", tab_id)
+        await _storage.upsert_system_shadow(
+            slug=slug,
+            name=label,
+            description=f"System module — hardcoded route ({tab_id})",
+            ui_meta=meta,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[python] FastAPI starting — DB engine initialized")
@@ -151,6 +172,28 @@ async def lifespan(app: FastAPI):
             )
         """))
     print("[approval_scopes] table ensured")
+    async with get_session() as _sess:
+        await _sess.execute(_sa_text("""
+            CREATE TABLE IF NOT EXISTS ws_modules (
+                id SERIAL PRIMARY KEY,
+                slug VARCHAR(120) UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                owner_id VARCHAR NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'inactive',
+                handler_code TEXT,
+                ui_meta JSONB NOT NULL DEFAULT '{}',
+                route_config JSONB NOT NULL DEFAULT '{}',
+                error_log TEXT,
+                version INTEGER NOT NULL DEFAULT 1,
+                content_hash VARCHAR(64),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+    print("[ws_modules] table ensured")
+    await _seed_system_shadow_modules()
+    print("[ws_modules] system shadows seeded")
     await heartbeat_service.start()
     yield
     await heartbeat_service.stop()
@@ -213,8 +256,13 @@ async def health():
 
 @app.get("/api/v1/ui/structure")
 async def ui_structure():
+    from .storage import storage as _storage
+    base_tabs = collect_ui_meta()
+    ws_tabs = await _storage.get_active_ws_module_ui_metas()
+    all_tabs = base_tabs + ws_tabs
+    all_tabs.sort(key=lambda t: t.get("order", 99))
     return {
-        "tabs": collect_ui_meta(),
+        "tabs": all_tabs,
         "agent": compose_name(energy_registry.get_active_provider()),
         "version": "2.0.0",
     }
