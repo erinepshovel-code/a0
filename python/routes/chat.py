@@ -138,6 +138,8 @@ async def _build_system_prompt(tier: str) -> str:
     if tier_context:
         parts.append(tier_context)
 
+    parts.append(f"## Session\nUser subscription tier: {tier}")
+
     seeds = await storage.get_memory_seeds()
     active_seeds = [
         s for s in seeds
