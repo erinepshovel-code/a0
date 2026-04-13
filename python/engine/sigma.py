@@ -230,6 +230,12 @@ class SigmaCore:
         self._content_watches.pop(abs_path, None)
         self.save_checkpoint()
 
+    def drain_content_changed_events(self) -> list[dict]:
+        """Remove and return all content_changed events from the ring buffer."""
+        drained = [e for e in self._events if e.get("type") == "content_changed"]
+        self._events = [e for e in self._events if e.get("type") != "content_changed"]
+        return drained
+
     def list_content_watches(self) -> list[dict]:
         out = []
         for p, info in self._content_watches.items():
