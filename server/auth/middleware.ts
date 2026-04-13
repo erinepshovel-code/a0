@@ -1,3 +1,4 @@
+// 7:0
 import type { Request, Response, NextFunction } from "express";
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -6,3 +7,4 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   }
   res.status(401).json({ message: "Unauthorized" });
 }
+// 7:0

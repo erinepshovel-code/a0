@@ -1,3 +1,4 @@
+# 43:6
 import json
 from pathlib import Path
 from typing import Any
@@ -78,3 +79,4 @@ def get_action_scope(action: str) -> str | None:
 
 def get_version() -> str:
     return load_policy().get("version", "unknown")
+# 43:6

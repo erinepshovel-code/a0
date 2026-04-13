@@ -1,3 +1,4 @@
+// 291:0
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -310,3 +311,4 @@ export default function ChatPage() {
     </div>
   );
 }
+// 291:0

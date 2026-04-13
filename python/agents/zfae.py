@@ -1,3 +1,4 @@
+# 33:0
 ZFAE_AGENT_DEF = {
     "name": "a0(zeta fun alpha echo)",
     "symbol": "ZFAE",
@@ -39,3 +40,4 @@ def sub_agent_name(index: int, provider: str | None = None) -> str:
 def is_deprecated(name: str) -> bool:
     lower = name.lower().strip()
     return any(d.lower() in lower for d in DEPRECATED_NAMES)
+# 33:0

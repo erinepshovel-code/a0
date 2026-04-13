@@ -1,3 +1,4 @@
+# 312:8
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, Float, DateTime, JSON,
     ARRAY, ForeignKey, UniqueConstraint, Index, text
@@ -376,3 +377,4 @@ class WsModule(Base):
     content_hash = Column(String(64))
     created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+# 312:8

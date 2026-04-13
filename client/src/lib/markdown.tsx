@@ -1,3 +1,4 @@
+// 40:0
 import { useMemo } from "react";
 
 export function renderMarkdown(text: string): string {
@@ -41,3 +42,4 @@ export function MarkdownContent({ content }: { content: string }) {
     />
   );
 }
+// 40:0

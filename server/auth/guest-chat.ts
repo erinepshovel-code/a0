@@ -1,3 +1,4 @@
+// 81:0
 import crypto from "crypto";
 import type { Express, Request, Response } from "express";
 import { getOrCreateGuestWindow, incrementGuestTokensAtomic } from "./storage";
@@ -93,3 +94,4 @@ export function registerGuestChatRoute(app: Express) {
     }
   });
 }
+// 81:0

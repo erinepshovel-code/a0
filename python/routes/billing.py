@@ -1,4 +1,4 @@
-# 217:137
+# 243:138
 # NOTE: 424 lines — over the 400-line guideline. Split on next modification.
 import os
 import hashlib
@@ -26,6 +26,7 @@ from .billing_helpers import (
 # DOC endpoint: POST /api/v1/billing/portal | Create a Stripe customer portal session
 # DOC endpoint: POST /api/v1/billing/byok | Submit a bring-your-own-key API key
 # DOC endpoint: POST /api/v1/billing/webhook | Stripe webhook receiver
+# DOC endpoint: PATCH /api/v1/admin/users/tier | (admin) Set a user's subscription tier
 
 UI_META = {
     "tab_id": "billing",
@@ -143,6 +144,8 @@ async def get_status(request: Request):
                 "byok_enabled": False, "founder_slot": None, "is_admin": is_admin}
 
     tier = rec["subscription_tier"]
+    if is_admin and tier == "free":
+        tier = "ws"
     provider_pool = "patron" if tier in ("patron", "founder") else tier if tier != "free" else "standard"
     return {
         "plan": tier, "status": rec["subscription_status"],
@@ -169,6 +172,36 @@ async def list_plans():
             "description": p["description"],
         })
     return plans
+
+
+VALID_TIERS = ("free", "ws", "pro", "admin", "seeker", "operator", "patron", "founder")
+
+
+class SetTierBody(BaseModel):
+    user_id: str
+    tier: str
+
+
+@router.patch("/admin/users/tier")
+async def set_user_tier(body: SetTierBody, request: Request):
+    email = _user_email(request)
+    role = _user_role(request)
+    uid = _user_id(request)
+    async with engine.connect() as conn:
+        caller_is_admin = await _check_admin(uid or "", email, conn, role)
+    if not caller_is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if body.tier not in VALID_TIERS:
+        raise HTTPException(status_code=400, detail=f"Invalid tier. Valid: {VALID_TIERS}")
+    async with engine.begin() as conn:
+        res = await conn.execute(
+            text("UPDATE users SET subscription_tier = :tier WHERE id = :uid RETURNING id, email, subscription_tier"),
+            {"tier": body.tier, "uid": body.user_id},
+        )
+        updated = res.mappings().first()
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True, "user_id": updated["id"], "email": updated["email"], "tier": updated["subscription_tier"]}
 
 
 class CheckoutBody(BaseModel):
@@ -434,4 +467,4 @@ async def _handle_subscription_deleted(sub: dict) -> None:
 
     if uid_rec:
         await sync_founder_registry(uid_rec["id"], "free", action="downgrade")
-# 217:137
+# 243:138

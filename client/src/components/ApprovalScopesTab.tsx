@@ -1,3 +1,4 @@
+// 217:0
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, ShieldX, Shield, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -237,3 +238,4 @@ export default function ApprovalScopesTab() {
     </TabShell>
   );
 }
+// 217:0

@@ -1,3 +1,4 @@
+// 36:0
 import { authStorage } from "./storage";
 import { hashPassphrase } from "./password";
 
@@ -41,3 +42,4 @@ export async function seedAdminUser() {
     console.error("[auth] Failed to seed admin user:", err);
   }
 }
+// 36:0

@@ -1,3 +1,4 @@
+# 47:25
 """
 Billing webhook helpers: founder slot allocation and registry sync.
 Extracted to keep billing.py under 400 lines.
@@ -80,3 +81,4 @@ def get_subscription_tier_from_items(items: list) -> Optional[str]:
 
 def is_addon_lookup_key(lk: str) -> bool:
     return lk == "addon_byok_monthly"
+# 47:25

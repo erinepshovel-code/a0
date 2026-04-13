@@ -1,3 +1,4 @@
+# 270:64
 #!/usr/bin/env python3
 """
 Aggregate individual run results into benchmark summary statistics.
@@ -399,3 +400,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# 270:64

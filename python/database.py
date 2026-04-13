@@ -1,3 +1,4 @@
+# 29:0
 import os
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -36,3 +37,4 @@ async def get_session():
         except Exception:
             await session.rollback()
             raise
+# 29:0

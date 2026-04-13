@@ -1,3 +1,4 @@
+# 51:0
 import time
 from ..engine import PCNAEngine, InstanceMerge
 from ..agents.zfae import compose_name, sub_agent_name
@@ -58,3 +59,4 @@ def list_sub_agents() -> list[dict]:
 def get_sub_agent_engine(name: str) -> PCNAEngine | None:
     entry = _sub_agents.get(name)
     return entry[0] if entry else None
+# 51:0

@@ -1,3 +1,4 @@
+// 56:0
 import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, timestamp, varchar, boolean, integer, text } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -62,3 +63,4 @@ export const guestTokenUsage = pgTable("guest_token_usage", {
 });
 
 export type GuestTokenUsage = typeof guestTokenUsage.$inferSelect;
+// 56:0

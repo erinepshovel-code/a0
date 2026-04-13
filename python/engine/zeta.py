@@ -1,4 +1,4 @@
-# 165:47
+# 198:61
 """
 ZetaEngine — Zeta Function Alpha Echo
 
@@ -112,6 +112,40 @@ class ZetaEngine:
         coherence = (cm * 0.35 + da * 0.25 + int_val * 0.25 + (1.0 - drift) * 0.15)
         return round(max(0.0, min(1.0, coherence)), 4)
 
+    def _sigma_nudge_factors(self) -> tuple[float, float]:
+        """
+        Drain Sigma content_changed buffer → change_boost (1.2 if any, else 1.0).
+        Read ring_coherence → substrate_factor (linear map 0.0→0.8, 1.0→1.2).
+        Returns (change_boost, substrate_factor).
+        """
+        change_boost = 1.0
+        substrate_factor = 1.0
+        try:
+            from .sigma import get_sigma
+            sig = get_sigma()
+            drained = sig.drain_content_changed_events()
+            if drained:
+                change_boost = 1.2
+            substrate_factor = round(0.8 + sig.ring_coherence * 0.4, 4)
+        except Exception as exc:
+            print(f"[zfae:sigma_factors] error reading Sigma factors: {exc}")
+        return change_boost, substrate_factor
+
+    def _theta_gate_factor(self) -> float:
+        """
+        Read Theta guardian's gate_open fraction → gate_factor (linear map 0.0→0.8, 1.0→1.2).
+        Returns the fraction of gates open (0.0–1.0), mapped linearly to 0.8–1.2.
+        Falls back to 1.0 with logged error if Theta is unavailable (e.g., before Task #72 wiring).
+        """
+        try:
+            from ..main import get_pcna
+            guardian = get_pcna().guardian
+            open_frac = float(guardian.gate_open.mean())
+            return round(0.8 + open_frac * 0.4, 4)
+        except Exception as exc:
+            print(f"[zfae:gate_factor] error reading Theta gate factor: {exc}")
+            return 1.0
+
     async def evaluate(
         self,
         assistant_text: str,
@@ -122,6 +156,10 @@ class ZetaEngine:
         """
         Evaluate assistant reply via EDCM, drive PCNA reward backprop.
         path: optional filesystem path used to select the resolution level.
+        Effective lr = base_lr × gate_factor × change_boost × substrate_factor.
+        gate_factor: derived from Θ guardian gate open fraction (0.8–1.2).
+        change_boost: 1.2 if Sigma content_changed events pending, else 1.0.
+        substrate_factor: linear map of Sigma ring_coherence → 0.8–1.2.
         """
         resolution = self.get_resolution(path)
         try:
@@ -134,10 +172,15 @@ class ZetaEngine:
             )
             coherence = self._coherence_from_metrics(metrics)
 
+            base_lr = 0.025
+            gate_factor = self._theta_gate_factor()
+            change_boost, substrate_factor = self._sigma_nudge_factors()
+            effective_lr = base_lr * gate_factor * change_boost * substrate_factor
+
             pcna = get_pcna()
-            pcna.phi.nudge(coherence, lr=0.025)
+            pcna.phi.nudge(coherence, lr=effective_lr)
             pcna_8 = get_pcna_8()
-            pcna_8.phi.nudge(coherence, lr=0.025)
+            pcna_8.phi.nudge(coherence, lr=effective_lr)
 
             self.eval_count += 1
             event = {
@@ -150,12 +193,19 @@ class ZetaEngine:
                 "int_val": metrics.get("int_val"),
                 "resolution": resolution,
                 "path": path or None,
+                "base_lr": base_lr,
+                "gate_factor": gate_factor,
+                "change_boost": change_boost,
+                "substrate_factor": substrate_factor,
+                "effective_lr": round(effective_lr, 6),
                 "ts": time.time(),
             }
             self.echo_buffer.append(event)
             suffix = f" path={path}" if path else ""
             print(
                 f"[zfae:echo] provider={provider} coherence={coherence}"
+                f" lr={effective_lr:.4f}"
+                f" gate={gate_factor} boost={change_boost} sub={substrate_factor}"
                 f" resolution={resolution}{suffix}"
             )
             return event
@@ -244,4 +294,4 @@ class ZetaEngine:
 
 
 _zeta_engine = ZetaEngine()
-# 165:47
+# 198:61

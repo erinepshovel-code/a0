@@ -1,3 +1,4 @@
+// 50:0
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { User } from "@shared/models/auth";
@@ -55,3 +56,4 @@ export function useAuth() {
     isLoggingOut: logoutMutation.isPending,
   };
 }
+// 50:0
