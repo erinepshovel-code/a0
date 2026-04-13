@@ -1,4 +1,4 @@
-// 353:0
+// 358:0
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -28,6 +28,7 @@ interface WsModule {
   error_log: string | null;
   version: number;
   content_hash: string | null;
+  last_swapped_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -231,7 +232,9 @@ function ModuleEditor({
         </div>
 
         {jsonError && <p className="text-xs text-destructive" data-testid="json-error">{jsonError}</p>}
-        <p className="text-[10px] text-muted-foreground">Last updated: {fmtTs(mod.updated_at)}</p>
+        <p className="text-[10px] text-muted-foreground">
+          {mod.last_swapped_at ? `Last swapped: ${fmtTs(mod.last_swapped_at)}` : `Last updated: ${fmtTs(mod.updated_at)}`}
+        </p>
       </div>
 
       {writeable && (
@@ -335,7 +338,9 @@ export default function WsModulesTab() {
                       <span className="text-[10px] text-muted-foreground">v{mod.version}</span>
                     </div>
                     <div className="text-[10px] text-muted-foreground font-mono truncate mt-0.5">{mod.slug}</div>
-                    <div className="text-[10px] text-muted-foreground truncate">{fmtTs(mod.updated_at)}</div>
+                    <div className="text-[10px] text-muted-foreground truncate">
+                      {mod.last_swapped_at ? `Swapped ${fmtTs(mod.last_swapped_at)}` : `Updated ${fmtTs(mod.updated_at)}`}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 ml-1 mt-0.5">
                     {mod.status === "locked" && <Lock className="h-3 w-3 text-muted-foreground" />}
@@ -385,4 +390,4 @@ export default function WsModulesTab() {
     </div>
   );
 }
-// 353:0
+// 358:0

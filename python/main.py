@@ -1,4 +1,4 @@
-# 169:93
+# 169:97
 import os
 import time
 from contextlib import asynccontextmanager
@@ -197,6 +197,10 @@ async def lifespan(app: FastAPI):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
+    async with get_session() as _sess:
+        await _sess.execute(_sa_text(
+            "ALTER TABLE ws_modules ADD COLUMN IF NOT EXISTS last_swapped_at TIMESTAMP"
+        ))
     print("[ws_modules] table ensured")
     await _seed_system_shadow_modules()
     print("[ws_modules] system shadows seeded")
@@ -296,4 +300,4 @@ if IS_PROD and os.path.isdir(STATIC_DIR):
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-# 169:93
+# 169:97

@@ -1,4 +1,4 @@
-# 255:58
+# 257:58
 """WS Module registry API.
 
 Provides CRUD for user-defined and system-shadow console modules.
@@ -359,11 +359,13 @@ async def swap_module(module_id: int, body: SwapBody, request: Request):
         })
         raise HTTPException(status_code=422, detail=f"Compilation failed: {exc}") from exc
 
+    from datetime import datetime as _dt
     updated = await storage.update_ws_module(module_id, {
         "status": "active",
         "handler_code": handler_code,
         "error_log": None,
         "version": (mod.get("version") or 1) + 1,
+        "last_swapped_at": _dt.utcnow(),
     })
     return updated
 
@@ -387,4 +389,4 @@ async def deactivate_module(module_id: int, body: DeactivateBody, request: Reque
     await get_registry().unmount_safe(module_id)
     updated = await storage.update_ws_module(module_id, {"status": "inactive"})
     return updated
-# 255:58
+# 257:58
