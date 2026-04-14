@@ -178,6 +178,17 @@ async def lifespan(app: FastAPI):
             )
         """))
     print("[approval_scopes] table ensured")
+    # Auto-grant github_write + publish to every admin-email user so they never need to type APPROVE SCOPE
+    async with engine.begin() as _aconn:
+        await _aconn.execute(_sa_text("""
+            INSERT INTO approval_scopes (user_id, scope)
+            SELECT u.id, s.scope
+            FROM users u
+            JOIN admin_emails ae ON ae.email = u.email
+            CROSS JOIN (VALUES ('github_write'), ('publish')) AS s(scope)
+            ON CONFLICT (user_id, scope) DO NOTHING
+        """))
+    print("[approval_scopes] github_write + publish seeded for all admin users")
     async with get_session() as _sess:
         await _sess.execute(_sa_text("""
             CREATE TABLE IF NOT EXISTS ws_modules (

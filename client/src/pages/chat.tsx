@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Send, Trash2, Bot, User, Loader2, AlertTriangle,
   ChevronDown, ChevronUp, Target, Zap, Copy, X, Archive, ArchiveRestore,
+  ShieldAlert, ShieldCheck, ShieldX, CheckCheck, Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -234,7 +235,145 @@ function MarkdownContent({ content, isUser }: { content: string; isUser: boolean
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+interface ApprovalGate {
+  gateId: string;
+  action: string;
+  impact: string;
+  rollback: string;
+  approveCmd: string;
+  scopeHints: { label: string; scope: string; cmd: string }[];
+}
+
+function parseApprovalGate(content: string): ApprovalGate | null {
+  if (!content.startsWith("[APPROVAL REQUIRED")) return null;
+  const gateMatch = content.match(/gate_id:\s*(gate-[0-9a-f]+)/i);
+  if (!gateMatch) return null;
+  const gateId = gateMatch[1];
+  const actionMatch = content.match(/^Action:\s*(.+)$/m);
+  const impactMatch = content.match(/^Impact:\s*(.+)$/m);
+  const rollbackMatch = content.match(/^Rollback:\s*(.+)$/m);
+  const scopeRegex = /Pre-approve all ([^:]+):\s*(APPROVE SCOPE (\S+))/gm;
+  const scopeHints: ApprovalGate["scopeHints"] = [];
+  let m: RegExpExecArray | null;
+  while ((m = scopeRegex.exec(content)) !== null) {
+    scopeHints.push({ label: m[1].trim(), scope: m[3], cmd: m[2] });
+  }
+  return {
+    gateId,
+    action: (actionMatch?.[1] ?? "").trim(),
+    impact: (impactMatch?.[1] ?? "").trim(),
+    rollback: (rollbackMatch?.[1] ?? "").trim(),
+    approveCmd: `APPROVE ${gateId}`,
+    scopeHints,
+  };
+}
+
+type SystemStatus = { kind: "granted" | "denied" | "approved" | "error" | "unknown" | "info"; text: string };
+
+function parseSystemStatus(content: string): SystemStatus | null {
+  if (content.startsWith("[SCOPE GRANTED]"))
+    return { kind: "granted", text: content.replace("[SCOPE GRANTED]", "").trim() };
+  if (content.startsWith("[SCOPE DENIED]"))
+    return { kind: "denied", text: content.replace("[SCOPE DENIED]", "").trim() };
+  if (content.startsWith("[SCOPE UNKNOWN]"))
+    return { kind: "unknown", text: content.replace("[SCOPE UNKNOWN]", "").trim() };
+  if (content.startsWith("[APPROVED —"))
+    return { kind: "approved", text: content.replace(/^\[APPROVED[^\]]*\]/, "").trim() };
+  if (content.startsWith("[APPROVE ERROR]"))
+    return { kind: "error", text: content.replace("[APPROVE ERROR]", "").trim() };
+  return null;
+}
+
+function ApprovalCard({ gate, onSend }: { gate: ApprovalGate; onSend: (cmd: string) => void }) {
+  const { toast } = useToast();
+  const copy = (cmd: string) => { navigator.clipboard.writeText(cmd); toast({ title: "Copied" }); };
+  return (
+    <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-2 text-xs" data-testid="approval-card">
+      <div className="flex items-center gap-1.5 font-semibold text-amber-600 dark:text-amber-400">
+        <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+        <span>Approval Required — <code className="font-mono">{gate.gateId}</code></span>
+      </div>
+      {gate.action && (
+        <div className="text-muted-foreground">
+          <span className="font-medium text-foreground">Action: </span>{gate.action}
+        </div>
+      )}
+      {gate.impact && (
+        <div className="text-muted-foreground">
+          <span className="font-medium text-foreground">Impact: </span>{gate.impact}
+        </div>
+      )}
+      {gate.rollback && (
+        <div className="text-muted-foreground">
+          <span className="font-medium text-foreground">Rollback: </span>{gate.rollback}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5 pt-1">
+        <Button
+          size="sm"
+          className="h-6 text-[11px] px-2 gap-1 bg-amber-600 hover:bg-amber-700 text-white"
+          onClick={() => onSend(gate.approveCmd)}
+          data-testid="btn-approve-gate"
+        >
+          <CheckCheck className="h-3 w-3" />
+          Approve this action
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 text-[11px] px-2 gap-1 text-muted-foreground"
+          onClick={() => copy(gate.approveCmd)}
+          data-testid="btn-copy-approve"
+        >
+          <Copy className="h-3 w-3" />
+          Copy command
+        </Button>
+      </div>
+      {gate.scopeHints.length > 0 && (
+        <div className="border-t border-amber-500/20 pt-2 space-y-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Pre-approve entire category</p>
+          <div className="flex flex-wrap gap-1">
+            {gate.scopeHints.map((h) => (
+              <Button
+                key={h.scope}
+                size="sm"
+                variant="outline"
+                className="h-6 text-[11px] px-2 gap-1"
+                onClick={() => onSend(h.cmd)}
+                data-testid={`btn-approve-scope-${h.scope}`}
+              >
+                <ShieldCheck className="h-3 w-3" />
+                {h.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SystemStatusBanner({ status }: { status: SystemStatus }) {
+  const cfg = {
+    granted: { icon: <ShieldCheck className="h-3.5 w-3.5" />, cls: "text-green-600 dark:text-green-400 border-green-500/30 bg-green-500/5", label: "Scope Granted" },
+    denied:  { icon: <ShieldX className="h-3.5 w-3.5" />,    cls: "text-destructive border-destructive/30 bg-destructive/5", label: "Scope Denied" },
+    unknown: { icon: <Info className="h-3.5 w-3.5" />,        cls: "text-muted-foreground border-border bg-muted/30", label: "Unknown Scope" },
+    approved:{ icon: <CheckCheck className="h-3.5 w-3.5" />,  cls: "text-green-600 dark:text-green-400 border-green-500/30 bg-green-500/5", label: "Approved" },
+    error:   { icon: <AlertTriangle className="h-3.5 w-3.5" />,cls: "text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5", label: "Approve Error" },
+    info:    { icon: <Info className="h-3.5 w-3.5" />,        cls: "text-muted-foreground border-border bg-muted/30", label: "Info" },
+  }[status.kind];
+  return (
+    <div className={cn("rounded-md border px-3 py-2 text-xs flex items-start gap-2", cfg.cls)} data-testid={`status-${status.kind}`}>
+      <span className="shrink-0 mt-0.5">{cfg.icon}</span>
+      <div>
+        <span className="font-semibold">{cfg.label}</span>
+        {status.text && <span className="ml-1 text-muted-foreground">{status.text}</span>}
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({ message, onSend }: { message: Message; onSend: (cmd: string) => void }) {
   const isUser = message.role === "user";
   const isError = !isUser && message.metadata?.error === true;
   const isFocusRegain = message.metadata?.focus_regain === true;
@@ -242,10 +381,31 @@ function MessageBubble({ message }: { message: Message }) {
   const { toast } = useToast();
   const tokCount = tokenCount(message.metadata?.usage);
 
+  const gate = !isUser ? parseApprovalGate(message.content) : null;
+  const sysStatus = !isUser && !gate ? parseSystemStatus(message.content) : null;
+
   const copyContent = () => {
     navigator.clipboard.writeText(isError ? (message.metadata?.error_detail ?? message.content) : message.content);
     toast({ title: "Copied" });
   };
+
+  // Approval gate — full-width card, no bubble wrapper
+  if (gate) {
+    return (
+      <div className="max-w-[92%]" data-testid={`message-${message.id}`}>
+        <ApprovalCard gate={gate} onSend={onSend} />
+      </div>
+    );
+  }
+
+  // System status banner — slim, no bubble wrapper
+  if (sysStatus) {
+    return (
+      <div className="max-w-[92%]" data-testid={`message-${message.id}`}>
+        <SystemStatusBanner status={sysStatus} />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -270,18 +430,16 @@ function MessageBubble({ message }: { message: Message }) {
         "bg-muted"
       )}>
         {!isUser && (
-          <div className="flex items-center gap-1 mb-1 opacity-0 hover:opacity-100 transition-opacity" style={{ opacity: undefined }}>
-            <div className={cn("flex items-center gap-1 mb-1", isError ? "opacity-100" : "opacity-60 hover:opacity-100")}>
-              {isError && <span className="text-[10px] font-semibold text-destructive uppercase tracking-wide">Model Error</span>}
-              <button onClick={copyContent} className="ml-auto hover:opacity-80" data-testid={`copy-msg-${message.id}`} title="Copy">
-                <Copy className="h-3 w-3" />
+          <div className={cn("flex items-center gap-1 mb-1", isError ? "opacity-100" : "opacity-60 hover:opacity-100")}>
+            {isError && <span className="text-[10px] font-semibold text-destructive uppercase tracking-wide">Model Error</span>}
+            <button onClick={copyContent} className="ml-auto hover:opacity-80" data-testid={`copy-msg-${message.id}`} title="Copy">
+              <Copy className="h-3 w-3" />
+            </button>
+            {isError && (
+              <button onClick={() => setShowDetail(!showDetail)} className="hover:opacity-80" data-testid={`toggle-error-${message.id}`}>
+                {showDetail ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </button>
-              {isError && (
-                <button onClick={() => setShowDetail(!showDetail)} className="hover:opacity-80" data-testid={`toggle-error-${message.id}`}>
-                  {showDetail ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                </button>
-              )}
-            </div>
+            )}
           </div>
         )}
 
@@ -689,7 +847,7 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
-                  {messages.map((m) => <MessageBubble key={m.id} message={m} />)}
+                  {messages.map((m) => <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate(c)} />)}
                 </div>
               )}
             </div>
