@@ -5,7 +5,7 @@ Provides CRUD for user-defined and system-shadow console modules.
 All write operations require a write token obtained from the token endpoint.
 
 Status semantics:
-  system   — shadow record for a hardcoded route; visible, immutable via API
+  system   — shadow record for a hardcoded route; visible, editable by admin only
   active   — user module live (mounted in the runtime router)
   inactive — user module stored but not mounted
   locked   — write-protected by owner; only owner or admin can unlock
@@ -14,7 +14,7 @@ Status semantics:
 Authorization layers (server-side, not just UI):
   1. Must be authenticated (x-user-id header)
   2. Must hold ws, pro, or admin subscription tier for any write
-  3. system modules are blocked at the storage call — no write at all
+  3. system modules are blocked unless the caller is admin
   4. locked modules block all edits except lock-toggle by owner/admin
   5. Every create/patch/delete/swap requires a valid, unexpired write token
      issued specifically for that (module_id, user_id) pair
@@ -94,7 +94,7 @@ async def _require_ws(request: Request) -> tuple[str, str, bool]:
 
 def _can_write_module(mod: dict, user_id: str, is_admin: bool) -> None:
     """Raise 403/404 if this user cannot mutate the given module."""
-    if mod["status"] == "system":
+    if mod["status"] == "system" and not is_admin:
         raise HTTPException(
             status_code=403,
             detail="System modules are immutable via the API. They can only be changed in code.",
@@ -179,7 +179,7 @@ async def get_write_token(module_id: str, request: Request):
         mod = await storage.get_ws_module(mid)
         if not mod:
             raise HTTPException(status_code=404, detail="Module not found")
-        if mod["status"] == "system":
+        if mod["status"] == "system" and not is_admin:
             raise HTTPException(
                 status_code=403,
                 detail="System modules cannot be mutated; no write token issued.",
@@ -274,7 +274,7 @@ async def toggle_lock(module_id: int, body: LockToggleBody, request: Request):
     if not mod:
         raise HTTPException(status_code=404, detail="Module not found")
 
-    if mod["status"] == "system":
+    if mod["status"] == "system" and not is_admin:
         raise HTTPException(status_code=403, detail="System modules cannot be locked or unlocked.")
 
     if not is_admin and mod["owner_id"] != uid:
@@ -308,6 +308,12 @@ async def delete_module(module_id: int, body: DeleteBody, request: Request):
     mod = await storage.get_ws_module(module_id)
     if not mod:
         raise HTTPException(status_code=404, detail="Module not found")
+
+    if mod["status"] == "system":
+        raise HTTPException(
+            status_code=403,
+            detail="System modules cannot be deleted — they are re-seeded at startup.",
+        )
 
     _can_write_module(mod, uid, is_admin)
 
