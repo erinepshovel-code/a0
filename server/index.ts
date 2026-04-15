@@ -87,8 +87,21 @@ async function waitForPython(maxWaitMs = 120_000): Promise<void> {
   if (IS_PROD) {
     const STATIC_DIR = path.resolve(__dirname, "..", "dist", "public");
     if (fs.existsSync(STATIC_DIR)) {
-      app.use(express.static(STATIC_DIR));
+      // Hashed assets (JS/CSS): cache forever — filename changes on each build
+      app.use("/assets", express.static(path.join(STATIC_DIR, "assets"), {
+        maxAge: "1y",
+        immutable: true,
+      }));
+      // Everything else (index.html, robots.txt, etc.): never cache
+      app.use(express.static(STATIC_DIR, {
+        setHeaders(res, filePath) {
+          if (filePath.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-store");
+          }
+        },
+      }));
       app.get("/{*path}", (_req, res) => {
+        res.setHeader("Cache-Control", "no-store");
         res.sendFile(path.join(STATIC_DIR, "index.html"));
       });
     } else {
