@@ -1,4 +1,4 @@
-# 318:8
+# 313:8
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, Float, DateTime, JSON,
     ARRAY, ForeignKey, UniqueConstraint, Index, text
@@ -47,11 +47,6 @@ class Conversation(Base):
     title = Column(Text, nullable=False, server_default="New Chat")
     model = Column(Text, nullable=False, server_default="gemini")
     user_id = Column(String)
-    context_boost = Column(Text, nullable=True)
-    parent_conv_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
-    subagent_status = Column(String(20), nullable=True)
-    subagent_error = Column(Text, nullable=True)
-    archived = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
@@ -383,4 +378,4 @@ class WsModule(Base):
     last_swapped_at = Column(DateTime)
     created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-# 318:8
+# 313:8

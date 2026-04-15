@@ -31,9 +31,9 @@ steps:
       - --port=5000
       - --min-instances=0
       - --max-instances=10
-      - --memory=1Gi
+      - --memory=512Mi
       - --cpu=1
-      - --set-secrets=DATABASE_URL=a0p-database-url:latest,SESSION_SECRET=a0p-session-secret:latest,INTERNAL_API_SECRET=a0p-internal-api-secret:latest,XAI_API_KEY=a0p-xai-api-key:latest,ANTHROPIC_API_KEY=a0p-anthropic-api-key:latest,STRIPE_SECRET_KEY=a0p-stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=a0p-stripe-webhook-secret:latest
+      - --set-secrets=DATABASE_URL=a0p-database-url:latest,SESSION_SECRET=a0p-session-secret:latest,XAI_API_KEY=a0p-xai-api-key:latest,STRIPE_SECRET_KEY=a0p-stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=a0p-stripe-webhook-secret:latest
 
 images:
   - us-central1-docker.pkg.dev/$PROJECT_ID/a0p/a0p:$COMMIT_SHA

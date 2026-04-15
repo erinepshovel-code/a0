@@ -1,4 +1,4 @@
-# 436:11
+# 437:7
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from sqlalchemy import select, update, delete, func, desc, asc, text as _sa_text
@@ -489,17 +489,13 @@ class DatabaseStorage(_CoreStorage):
                     metas.append(ui_meta)
             return metas
 
-    async def upsert_system_shadow(self, slug: str, name: str, description: str, ui_meta: Dict[str, Any], route_config: Dict[str, Any] | None = None) -> None:
-        """Upsert a system shadow record for a hardcoded route module.
-
-        On first seed the full ui_meta and route_config are written. On subsequent
-        startups only ``name`` is refreshed so that any admin customisations to
-        ui_meta and route_config survive restarts.
-        """
+    async def upsert_system_shadow(self, slug: str, name: str, description: str, ui_meta: Dict[str, Any]) -> None:
+        """Upsert a system shadow record for a hardcoded route module."""
         existing = await self.get_ws_module_by_slug(slug)
         if existing:
             await self.update_ws_module(existing["id"], {
                 "name": name,
+                "ui_meta": ui_meta,
             })
         else:
             await self.create_ws_module({
@@ -509,9 +505,9 @@ class DatabaseStorage(_CoreStorage):
                 "owner_id": "system",
                 "status": "system",
                 "ui_meta": ui_meta,
-                "route_config": route_config or {},
+                "route_config": {},
             })
 
 
 storage = DatabaseStorage()
-# 436:11
+# 437:7

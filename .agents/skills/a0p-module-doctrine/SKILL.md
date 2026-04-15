@@ -111,7 +111,22 @@ UI_META = {
 
 ---
 
-## 5. Registration Checklist for New Route Modules
+## 5. `DATA_SCHEMA` (optional, documents endpoint shapes)
+
+```python
+DATA_SCHEMA = {
+    "endpoints": [
+        {"method": "GET", "path": "/api/v1/my/path"},
+        {"method": "POST", "path": "/api/v1/my/path"},
+    ]
+}
+```
+
+Not required, but include it when the module has non-tab endpoints that should be machine-readable.
+
+---
+
+## 6. Registration Checklist for New Route Modules
 
 Every new `python/routes/{name}.py` must be added to **four places** in `python/routes/__init__.py`:
 
@@ -157,7 +172,7 @@ editable_registry.register(EditableField(
 
 ---
 
-## 6. Hot-Swap Modules (WsModulesTab)
+## 7. Hot-Swap Modules (WsModulesTab)
 
 Handler code for a user-deployed hot-swap module must:
 - Define `router: APIRouter` at module level — the registry mounts this
@@ -168,7 +183,7 @@ Handler code for a user-deployed hot-swap module must:
 
 ---
 
-## 7. 400-Line Code Budget
+## 8. 400-Line Code Budget
 
 **Hard rule project-wide:** no file may exceed 400 code lines (N in the annotation).
 
@@ -178,7 +193,7 @@ Handler code for a user-deployed hot-swap module must:
 
 ---
 
-## 8. Annotation Script Reference
+## 9. Annotation Script Reference
 
 ```bash
 # Re-stamp all Python + TypeScript/TSX files in the project
@@ -190,101 +205,3 @@ python scripts/annotate.py
 ```
 
 Run this after every editing session that touches more than one file. CI does not block on it, but DocsTab shows stale ratios if you skip it.
-
----
-
-## 9. `DATA_SCHEMA` (optional, documents endpoint shapes)
-
-```python
-DATA_SCHEMA = {
-    "endpoints": [
-        {"method": "GET", "path": "/api/v1/my/path"},
-        {"method": "POST", "path": "/api/v1/my/path"},
-    ]
-}
-```
-
-Not required, but include it when the module has non-tab endpoints that should be machine-readable.
-
----
-
-## 10. Energy Provider Seeds
-
-Every AI provider gets a `status=system` WS module in the `ws_modules` table, seeded once on boot via `_ensure_provider_seeds()` in `python/main.py`.
-
-**Slug format:** `provider::{id}` — e.g. `provider::openai`, `provider::grok`, `provider::gemini`, `provider::claude`
-
-**`route_config` shape** (all keys required on first seed):
-```python
-{
-    "model_assignments": {  # role → model ID; never hardcoded
-        "conduct": "gpt-4o",
-        "perform": "gpt-4o",
-        "practice": "gpt-4o-mini",
-        "record": "gpt-4o-mini",
-        "derive": "gpt-4o",
-    },
-    "available_models": [
-        {"id": "gpt-4o", "context_window": 128000,
-         "pricing": {"input_per_1m": 2.50, "output_per_1m": 10.00},
-         "capabilities": ["reasoning", "vision", "function_calling"]},
-    ],
-    "capabilities": {"native_search": True, "function_calling": True, ...},
-    "presets": {
-        "speed": {...role→model map...},
-        "depth": {...},
-        "price": {...},
-        "balance": {...},
-        "creativity": {...},
-    },
-    "pricing_url": "https://openai.com/pricing",
-    "context_addendum": "",
-    "enabled_tools": [],
-}
-```
-
-**Rules:**
-- Seeds are created once (idempotent — skips if slug already exists)
-- Admin edits to `route_config` (model_assignments, context_addendum, etc.) survive restarts
-- Never delete a provider seed — set `status=inactive` if you want to hide it
-- Use the energy API to mutate seeds: `PATCH /api/energy/providers/{id}/route_config`, `POST /api/energy/optimize/{id}`
-
-**Energy API routes** (registered in `python/routes/energy.py`):
-```
-GET  /api/energy/providers                       → list all seeds with PCNA stats
-GET  /api/energy/providers/{id}                  → single seed
-PATCH /api/energy/providers/{id}/route_config    → partial update (model_assignments merged, not replaced)
-POST /api/energy/optimize/{id}                   → apply named preset to model_assignments
-POST /api/energy/discover/{id}                   → return available_models + last_checked timestamp
-POST /api/energy/converge/{id}                   → blend provider PCNA core into main (80% main / 20% provider)
-```
-
----
-
-## 11. Configurable Model IDs + Task Roles
-
-**Never hardcode model ID strings.** Use the three-level resolution chain:
-1. Environment variable (highest priority): `XAI_MODEL_CONDUCT`, `GEMINI_MODEL_PRACTICE`, etc.
-2. DB seed `route_config.model_assignments[role]` (per-provider, admin-editable)
-3. Fallback default in `_PROVIDER_MODEL_DEFAULTS` (lowest priority, code-only)
-
-Call `_resolve_provider_model(provider_id, role)` from `python/services/inference.py` to get the resolved model ID.
-
-**The five task roles** (do not use the old names):
-| New name | Old name | Purpose |
-|----------|----------|---------|
-| `conduct` | root_orchestrator | Primary orchestration, top-level routing |
-| `perform` | high_risk_gate | High-risk or approval-gated tasks |
-| `practice` | worker | Standard work tasks |
-| `record` | classifier | Classification, tagging, extraction |
-| `derive` | deep_pass | Deep reasoning, multi-step analysis |
-
-**Env var naming pattern** for model IDs:
-- `{PROVIDER_PREFIX}_MODEL_{ROLE}` — e.g. `XAI_MODEL_CONDUCT`, `GEMINI_MODEL_DERIVE`, `ANTHROPIC_MODEL_RECORD`
-- OpenAI uses `OPENAI_MODEL_CONDUCT` (also used for `perform`), `OPENAI_MODEL_PRACTICE`, `OPENAI_MODEL_RECORD`, `OPENAI_MODEL_DERIVE`
-- Fallbacks to old names (`OPENAI_MODEL_ROOT`, `OPENAI_MODEL_WORKER`, etc.) are preserved for backward compat
-
-**Per-provider PCNA cores:**
-- Each provider gets its own `PCNAEngine` instance: `get_provider_pcna("grok")` in `python/main.py`
-- Checkpoint key: `pcna_tensor_checkpoint_provider_{id}`
-- Converge endpoint blends provider core into main (80% main / 20% provider tensor per ring)

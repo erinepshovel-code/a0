@@ -68,9 +68,7 @@ Also add your project ID as **`GCP_PROJECT_ID`**.
 ```bash
 echo -n "postgres://..." | gcloud secrets create a0p-database-url --data-file=-
 echo -n "your-session-secret" | gcloud secrets create a0p-session-secret --data-file=-
-echo -n "your-internal-secret" | gcloud secrets create a0p-internal-api-secret --data-file=-
 echo -n "xai-key" | gcloud secrets create a0p-xai-api-key --data-file=-
-echo -n "sk-ant-..." | gcloud secrets create a0p-anthropic-api-key --data-file=-
 echo -n "sk_live_..." | gcloud secrets create a0p-stripe-secret-key --data-file=-
 echo -n "whsec_..." | gcloud secrets create a0p-stripe-webhook-secret --data-file=-
 ```
@@ -78,7 +76,7 @@ echo -n "whsec_..." | gcloud secrets create a0p-stripe-webhook-secret --data-fil
 Grant the service account access to each secret:
 
 ```bash
-for SECRET in a0p-database-url a0p-session-secret a0p-internal-api-secret a0p-xai-api-key a0p-anthropic-api-key a0p-stripe-secret-key a0p-stripe-webhook-secret; do
+for SECRET in a0p-database-url a0p-session-secret a0p-xai-api-key a0p-stripe-secret-key a0p-stripe-webhook-secret; do
   gcloud secrets add-iam-policy-binding $SECRET \
     --member="serviceAccount:$SA" \
     --role="roles/secretmanager.secretAccessor"

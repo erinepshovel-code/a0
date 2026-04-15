@@ -49,7 +49,7 @@ function fmtTs(iso: string) {
 }
 
 function canWrite(mod: WsModule, userId: string | null, isAdmin: boolean): boolean {
-  if (mod.status === "system") return isAdmin;
+  if (mod.status === "system") return false;
   if (mod.status === "locked") return isAdmin || mod.owner_id === userId;
   return isAdmin || mod.owner_id === userId;
 }
@@ -155,7 +155,7 @@ function ModuleEditor({
           <span className="text-xs text-muted-foreground">v{mod.version}</span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {canWrite(mod, userId, isAdmin) && (
+          {!isSystem && canWrite(mod, userId, isAdmin) && (
             <Button size="sm" variant="ghost"
               onClick={() => lockMutation.mutate(!isLocked)}
               disabled={lockMutation.isPending}
@@ -176,7 +176,7 @@ function ModuleEditor({
         {isSystem && (
           <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2 border border-border">
             <Shield className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-            <span>System module — live route is hardcoded in Python. {isAdmin ? "Admin edits update the shadow record (metadata changes take effect; handler code changes are cosmetic only)." : "Read-only."}</span>
+            <span>System module — backed by hardcoded route code. Read-only reference; cannot be edited via the API.</span>
           </div>
         )}
         {isLocked && !isSystem && (
@@ -212,7 +212,7 @@ function ModuleEditor({
             disabled={!writeable || isSystem}
             className="font-mono text-xs min-h-[200px] resize-y"
             spellCheck={false}
-            placeholder={isSystem ? "System module — live handler is hardcoded in Python source." : "from fastapi import APIRouter\n\nrouter = APIRouter(prefix=\"/api/v1/custom/slug\")\n\n@router.get(\"/\")\nasync def hello():\n    return {\"ok\": True}"}
+            placeholder={isSystem ? "System module — handler code is hardcoded." : "from fastapi import APIRouter\n\nrouter = APIRouter(prefix=\"/api/v1/custom/slug\")\n\n@router.get(\"/\")\nasync def hello():\n    return {\"ok\": True}"}
             data-testid={`textarea-handler-${mod.id}`}
           />
         </div>

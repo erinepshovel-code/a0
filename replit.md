@@ -37,8 +37,7 @@ a0p is a mobile-first autonomous AI agent platform. One agent `a0(zeta fun alpha
 - `python/pcna.py` — PCNA engine (53-node ring topology)
 - `python/logger.py` — JSONL append logger
 - `python/agents/zfae.py` — ZFAE agent definition, compose_name(), sub_agent_name()
-- `python/services/energy_registry.py` — LLM provider registry; per-role model resolution (env→seed→default)
-- `python/routes/energy.py` — Energy provider endpoints (seed CRUD, optimizer, model discovery, PCNA converge)
+- `python/services/energy_registry.py` — LLM provider registry (Gemini, Claude, Grok)
 - `python/services/heartbeat.py` — Background heartbeat service (30s tick)
 - `python/services/bandit.py` — Multi-Armed Bandit (UCB1) service
 - `python/services/edcm.py` — EDCM behavioral directives scoring
@@ -62,7 +61,6 @@ Each declares `UI_META` (tab config for frontend) + `DATA_SCHEMA` (field specs).
 - `billing.py` — Stripe billing: status, plans, checkout, portal, webhook
 - `contexts.py` — Prompt contexts CRUD (admin-only write via ADMIN_USER_ID)
 - `founders.py` — Founders registry (53-slot lifetime tier)
-- `energy.py` — Energy provider management: list seeds, optimize presets, discover models, converge PCNA
 
 ### Frontend (`client/`)
 React + Vite + TypeScript, Tailwind CSS, shadcn/ui components. Fully metadata-driven:
@@ -95,43 +93,13 @@ PostgreSQL via SQLAlchemy (Python) and Drizzle ORM (schema management).
 
 ### Energy Providers
 LLMs are energy sources, not agents. Managed by `energy_registry.py`:
-- **openai** — GPT-5.4 family (Responses API)
-- **grok** — xAI Grok 4.1 (OpenAI-compat at api.x.ai/v1)
-- **gemini** — Google Gemini 2.5 family
-- **claude** — Anthropic Claude (haiku/sonnet/opus)
-
-Each provider has a **system WS module seed** (`provider::{id}`) carrying `route_config` with:
-- `model_assignments` — role→model mapping (record/practice/conduct/perform/derive)
-- `available_models` — list with context window, pricing, capability flags
-- `presets` — optimizer preset map (speed/depth/price/balance/creativity)
-- `enabled_tools`, `capabilities`, `context_addendum`, `pricing_url`
-
-Model resolution priority: env var (`XAI_MODEL_CONDUCT`) → seed `model_assignments` → hardcoded default.
-
-Each provider gets a **forked PCNA core** (`pcna_provider_{id}`) on first use, persisted separately.
-
-### Task Roles (renamed in Task #78)
-Policy roles for OpenAI routing (and provider-agnostic intent model):
-- `record` — structured output probe, no tools, JSON only (was: classifier)
-- `practice` — general executor, batch/repetitive work (was: worker)
-- `conduct` — default planner/synthesizer (was: root_orchestrator)
-- `perform` — deliberate review before external writes (was: high_risk_gate)
-- `derive` — deep reasoning, architecture, hard debugging (was: deep_pass)
-
-Env vars: `OPENAI_MODEL_CONDUCT`, `OPENAI_MODEL_PERFORM`, `OPENAI_MODEL_PRACTICE`, `OPENAI_MODEL_RECORD`, `OPENAI_MODEL_DERIVE`. Same pattern for `XAI_MODEL_*`, `GEMINI_MODEL_*`, `ANTHROPIC_MODEL_*`.
-
-**Energy routes** (`python/routes/energy.py`):
-- `GET /api/energy/providers` — list all provider seeds with PCNA stats
-- `PATCH /api/energy/providers/{id}/seed` — partial update (merges model_assignments)
-- `POST /api/energy/providers/{id}/optimize` — apply optimizer preset to model_assignments
-- `POST /api/energy/discover/{id}` — run live model discovery + pricing fetch
-- `POST /api/energy/converge/{id}` — merge provider PCNA core into main (80/20 blend)
+- **grok** — xAI Grok-3 Mini (default)
+- **gemini** — Google Gemini 2.5 Flash
+- **claude** — Anthropic Claude
 
 ### PCNA Engine
-53-node circular topology with rings: Phi (Φ), Psi (Ψ), Omega (Ω), Guardian, Memory-L, Memory-S.
-Each ring has coherence tracking, heptagram propagation, and checkpoint persistence.
-
-**Per-provider PCNA cores**: each provider gets its own `PCNAEngine` instance via `get_provider_pcna(provider_id)` in `main.py` (fork-on-first-use, scoped checkpoint key `pcna_tensor_checkpoint_provider_{id}`). The converge endpoint blends a provider core back into the main engine.
+53-node circular topology with 4 rings: Phi, Psi, Omega, Guardian.
+Each ring has coherence tracking and propagation.
 
 ### Key Concepts
 - **UI_META + DATA_SCHEMA**: Every route module declares both; `collect_ui_meta()` aggregates; `/api/v1/ui/structure` serves; frontend has zero hardcoded tabs

@@ -1,11 +1,9 @@
-# 772:22
+# 540:12
 """
 ZFAE Tool Executor — implements the actual functions behind each agent tool.
 Called by the inference loop when the LLM issues a tool_call.
 """
-import asyncio
 import json
-import os
 import urllib.parse
 import contextvars as _cv
 import httpx
@@ -114,7 +112,7 @@ TOOL_SCHEMAS_CHAT = [
             "name": "sub_agent_spawn",
             "description": (
                 "Spawn a ZFAE sub-agent with a forked PCNA instance to handle a specific task in parallel. "
-                "Returns the sub-agent name (use this exact name when calling sub_agent_merge)."
+                "Returns the sub-agent ID."
             ),
             "parameters": {
                 "type": "object",
@@ -122,11 +120,7 @@ TOOL_SCHEMAS_CHAT = [
                     "task": {
                         "type": "string",
                         "description": "Description of the task for the sub-agent to execute",
-                    },
-                    "provider": {
-                        "type": "string",
-                        "description": "Optional energy provider ID (openai, grok, gemini, claude) for the sub-agent. Defaults to active provider.",
-                    },
+                    }
                 },
                 "required": ["task"],
             },
@@ -138,50 +132,17 @@ TOOL_SCHEMAS_CHAT = [
             "name": "sub_agent_merge",
             "description": (
                 "Merge a completed sub-agent's learned ring state back into the primary PCNA. "
-                "Call after a sub-agent has finished its task. Use the name returned by sub_agent_spawn."
+                "Call after a sub-agent has finished its task."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "agent_id": {
                         "type": "string",
-                        "description": "Sub-agent name returned by sub_agent_spawn (e.g. 'a0z-1-grok')",
+                        "description": "Sub-agent ID returned by sub_agent_spawn",
                     }
                 },
                 "required": ["agent_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "send_email",
-            "description": (
-                "Send an email via the connected Gmail account. "
-                "Requires the 'email_send' approval scope (will trigger an approval gate if not pre-approved). "
-                "Use for notifications, outreach, or any task that needs to send email."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "to": {
-                        "type": "string",
-                        "description": "Recipient email address (or comma-separated list)",
-                    },
-                    "subject": {
-                        "type": "string",
-                        "description": "Email subject line",
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Email body (plain text or simple HTML)",
-                    },
-                    "cc": {
-                        "type": "string",
-                        "description": "Optional CC email address(es)",
-                    },
-                },
-                "required": ["to", "subject", "body"],
             },
         },
     },
@@ -194,10 +155,9 @@ TOOL_SCHEMAS_CHAT = [
                 "Use this to read or write repositories, issues, pull requests, commits, "
                 "comments, branches, releases, or any other GitHub resource. "
                 "Authentication is handled automatically — never include a token yourself. "
-                "To find the authenticated user and their repos call GET /user then GET /user/repos. "
-                "Endpoint examples: '/repos/owner/repo/issues', '/repos/owner/repo/pulls', "
-                "'/user/repos', '/search/repositories?q=topic:ai'. "
-                "For POST/PATCH/PUT always pass a body dict (use {} if no fields are required)."
+                "Endpoint examples: '/repos/The-Interdependency/a0/issues', "
+                "'/repos/owner/repo/pulls', '/user/repos', '/search/repositories?q=topic:ai'. "
+                "For the primary project repo use owner='The-Interdependency', repo='a0'."
             ),
             "parameters": {
                 "type": "object",
@@ -220,36 +180,6 @@ TOOL_SCHEMAS_CHAT = [
                     },
                 },
                 "required": ["method", "endpoint"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "git_exec",
-            "description": (
-                "Run a git command in the project workspace. "
-                "Use to push code to GitHub, commit changes, check status, view diffs, or manage branches. "
-                "Typical push flow: (1) git_exec ['add', '-A'], "
-                "(2) git_exec ['commit', '-m', 'message'], "
-                "(3) git_exec ['push', 'origin', 'main']. "
-                "Use 'status' first to see what changed. "
-                "Only safe subcommands are permitted: add, commit, push, pull, fetch, status, log, diff, branch, stash."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Git arguments after 'git'. First element must be an allowed subcommand. "
-                            "Examples: ['push', 'origin', 'main'], ['commit', '-m', 'fix: update'], "
-                            "['status'], ['log', '--oneline', '-10'], ['diff', '--stat']"
-                        ),
-                    }
-                },
-                "required": ["args"],
             },
         },
     },
@@ -351,27 +281,15 @@ async def execute_tool(name: str, arguments: dict) -> str:
         if name == "bandit_pull":
             return await _bandit_pull()
         if name == "sub_agent_spawn":
-            return await _sub_agent_spawn(
-                arguments.get("task", ""),
-                provider=arguments.get("provider"),
-            )
+            return await _sub_agent_spawn(arguments.get("task", ""))
         if name == "sub_agent_merge":
             return await _sub_agent_merge(arguments.get("agent_id", ""))
-        if name == "send_email":
-            return await _send_email(
-                to=arguments.get("to", ""),
-                subject=arguments.get("subject", ""),
-                body=arguments.get("body", ""),
-                cc=arguments.get("cc"),
-            )
         if name == "github_api":
             return await _github_api(
                 method=arguments.get("method", "GET"),
                 endpoint=arguments.get("endpoint", "/user"),
                 body=arguments.get("body"),
             )
-        if name == "git_exec":
-            return await _git_exec(arguments.get("args", []))
         if name == "manage_approval_scope":
             return await _manage_approval_scope(
                 action=arguments.get("action", "list"),
@@ -391,80 +309,50 @@ async def _web_search(query: str) -> str:
     if not query.strip():
         return "[web_search: empty query]"
     encoded = urllib.parse.quote_plus(query)
-
-    # Phase 1: try DuckDuckGo instant-answer API for fast structured results
-    instant_parts: list[str] = []
+    url = (
+        f"https://api.duckduckgo.com/?q={encoded}"
+        f"&format=json&no_redirect=1&no_html=1&skip_disambig=1"
+    )
     try:
-        instant_url = (
-            f"https://api.duckduckgo.com/?q={encoded}"
-            f"&format=json&no_redirect=1&no_html=1&skip_disambig=1"
-        )
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(instant_url, headers={"User-Agent": "a0p/2.0"})
-            r.raise_for_status()
-            d = r.json()
-        answer = d.get("Answer", "").strip()
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get(url, headers={"User-Agent": "a0p/2.0"})
+            resp.raise_for_status()
+            data = resp.json()
+        parts: list[str] = []
+
+        answer = data.get("Answer", "").strip()
         if answer:
-            instant_parts.append(f"Answer: {answer}")
-        abstract = (d.get("AbstractText") or d.get("Abstract") or "").strip()
+            parts.append(f"Answer: {answer}")
+
+        abstract = (data.get("AbstractText") or data.get("Abstract") or "").strip()
         if abstract:
-            instant_parts.append(f"Summary: {abstract}")
-            src = d.get("AbstractURL") or d.get("AbstractSource", "")
-            if src:
-                instant_parts.append(f"Source: {src}")
-        defn = d.get("Definition", "").strip()
-        if defn:
-            instant_parts.append(f"Definition: {defn}")
-    except Exception:
-        pass
+            parts.append(f"Summary: {abstract}")
+            source = data.get("AbstractURL") or data.get("AbstractSource", "")
+            if source:
+                parts.append(f"Source: {source}")
 
-    # Phase 2: DuckDuckGo lite HTML for real search results
-    html_parts: list[str] = []
-    try:
-        lite_url = f"https://lite.duckduckgo.com/lite/?q={encoded}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; a0p/2.0; +https://a0p.dev)",
-            "Accept": "text/html,application/xhtml+xml",
-        }
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            r = await client.get(lite_url, headers=headers)
-            r.raise_for_status()
-            html = r.text
-        import re as _re2
-        # Extract result snippets from DuckDuckGo lite format
-        # Result links appear as: <a class="result-link" href="...">Title</a>
-        titles = _re2.findall(r'class="result-link"[^>]*>([^<]+)</a>', html)
-        snippets = _re2.findall(r'class="result-snippet"[^>]*>(.*?)</(?:td|span)', html, _re2.DOTALL)
-        urls = _re2.findall(r'class="result-link"\s+href="([^"]+)"', html)
-        seen: set[str] = set()
-        for i, title in enumerate(titles[:6]):
-            title = title.strip()
-            snippet = _re2.sub(r'<[^>]+>', '', snippets[i]).strip() if i < len(snippets) else ""
-            url = urls[i].strip() if i < len(urls) else ""
-            if title and title not in seen:
-                seen.add(title)
-                entry = f"[{i+1}] {title}"
-                if snippet:
-                    entry += f"\n    {snippet[:200]}"
-                if url and url.startswith("http"):
-                    entry += f"\n    {url}"
-                html_parts.append(entry)
-    except Exception:
-        pass
+        definition = data.get("Definition", "").strip()
+        if definition:
+            parts.append(f"Definition: {definition}")
 
-    if not instant_parts and not html_parts:
-        return (
-            f"[web_search: no results found for '{query}'. "
-            f"Try rephrasing or use a more specific query.]"
-        )
+        topics = data.get("RelatedTopics", [])[:8]
+        for t in topics:
+            if isinstance(t, dict) and t.get("Text"):
+                parts.append(f"- {t['Text']}")
+            elif isinstance(t, dict) and t.get("Topics"):
+                for sub in t["Topics"][:3]:
+                    if sub.get("Text"):
+                        parts.append(f"  · {sub['Text']}")
 
-    out = [f"Query: {query}"]
-    if instant_parts:
-        out.extend(instant_parts)
-    if html_parts:
-        out.append("\nSearch Results:")
-        out.extend(html_parts)
-    return "\n".join(out)
+        if not parts:
+            return (
+                f"[web_search: DuckDuckGo returned no instant-answer data for '{query}'. "
+                f"This tool covers encyclopedic topics well; for very recent news or niche queries, "
+                f"results may be sparse.]"
+            )
+        return f"Query: {query}\n" + "\n".join(parts)
+    except Exception as exc:
+        return f"[web_search error: {exc}]"
 
 
 async def _pcna_infer(signal: float) -> str:
@@ -530,144 +418,25 @@ async def _bandit_pull() -> str:
     })
 
 
-async def _sub_agent_spawn(task: str, provider: str | None = None) -> str:
-    if not task.strip():
-        return "[sub_agent_spawn: task description required]"
-    from ..main import get_pcna as _get
-    from ..services.agent_lifecycle import spawn_sub_agent
-
-    resolved_provider = provider
-    if not resolved_provider:
-        try:
-            from ..services.energy_registry import energy_registry
-            grok_cfg = await energy_registry._load_seed_config("grok")
-            if grok_cfg.get("sub_agent_model") and os.environ.get("XAI_API_KEY"):
-                resolved_provider = "grok"
-        except Exception:
-            pass
-
-    pcna = _get()
-    result = spawn_sub_agent(pcna, resolved_provider)
-    result["task"] = task
-    result["note"] = f"Use agent_id='{result['sub_agent_name']}' when calling sub_agent_merge"
-    return json.dumps(result)
+async def _sub_agent_spawn(task: str) -> str:
+    import uuid
+    agent_id = f"a0z-{uuid.uuid4().hex[:8]}"
+    return json.dumps({
+        "agent_id": agent_id,
+        "task": task,
+        "status": "spawned",
+        "note": "Sub-agent forked PCNA — call sub_agent_merge with this ID when complete",
+    })
 
 
 async def _sub_agent_merge(agent_id: str) -> str:
     if not agent_id:
         return "[sub_agent_merge: agent_id required]"
-    from ..main import get_pcna as _get
-    from ..services.agent_lifecycle import merge_sub_agent
-    pcna = _get()
-    result = merge_sub_agent(pcna, agent_id)
-    return json.dumps(result)
-
-
-async def _send_email(to: str, subject: str, body: str, cc: str | None = None) -> str:
-    if not to or not subject or not body:
-        return "[send_email: to, subject, and body are required]"
-    token = os.environ.get("GOOGLE_MAIL_TOKEN", "")
-    if not token:
-        return (
-            "[send_email: GOOGLE_MAIL_TOKEN secret not configured. "
-            "An admin must add GOOGLE_MAIL_TOKEN as a Replit Secret using the current "
-            "Google Mail OAuth access token from the integrations panel.]"
-        )
-    import base64
-    from email.mime.text import MIMEText
-    mime = MIMEText(body, "html" if body.strip().startswith("<") else "plain")
-    mime["to"] = to
-    mime["subject"] = subject
-    if cc:
-        mime["cc"] = cc
-    raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json={"raw": raw},
-            )
-        if resp.status_code == 401:
-            return (
-                "[send_email: Gmail token expired. "
-                "The GOOGLE_MAIL_TOKEN env var needs to be refreshed. "
-                "An admin can update it via the integrations panel.]"
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        return json.dumps({
-            "sent": True,
-            "message_id": data.get("id"),
-            "thread_id": data.get("threadId"),
-            "to": to,
-            "subject": subject,
-        })
-    except Exception as exc:
-        return f"[send_email error: {exc}]"
-
-
-_GH_NOISE_KEYS: frozenset[str] = frozenset({
-    "node_id", "svn_url", "git_url", "temp_clone_token",
-    "performed_via_github_app", "active_lock_reason", "author_association",
-    "squash_merge_commit_message", "squash_merge_commit_title",
-    "merge_commit_message", "merge_commit_title",
-    "pull_request_creation_policy", "web_commit_signoff_required",
-    "use_squash_pr_title_as_default", "allow_auto_merge",
-    "allow_update_branch", "delete_branch_on_merge",
-    "security_and_analysis", "network_count", "subscribers_count",
-    "watchers", "forks", "open_issues",  # duplicates of *_count
-    "mirror_url", "disabled", "is_template",
-    "verification",  # commit verification blob
-})
-
-_GH_USER_COMPACT_KEYS: frozenset[str] = frozenset({
-    "owner", "user", "actor", "merged_by", "closed_by",
-    "committer", "author",
-})
-
-_GH_USER_LIST_KEYS: frozenset[str] = frozenset({
-    "assignees", "requested_reviewers", "reviewers", "parents",
-})
-
-
-def _slim_github_obj(obj: object, depth: int = 0) -> object:
-    """Recursively strip GitHub API noise: API URL fields, node_ids, and verbose sub-objects."""
-    if isinstance(obj, dict):
-        out: dict = {}
-        for k, v in obj.items():
-            # Drop any value that is an api.github.com URL — always template / HATEOAS noise
-            if isinstance(v, str) and v.startswith("https://api.github.com"):
-                continue
-            if k in _GH_NOISE_KEYS:
-                continue
-            # Compact nested user/actor objects to just login + id
-            if k in _GH_USER_COMPACT_KEYS and isinstance(v, dict) and depth < 4:
-                login = v.get("login") or v.get("name")
-                uid = v.get("id")
-                out[k] = {"login": login, "id": uid} if login else None
-                continue
-            # Compact assignee/reviewer lists to just logins
-            if k in _GH_USER_LIST_KEYS and isinstance(v, list):
-                out[k] = [u.get("login") for u in v if isinstance(u, dict) and u.get("login")]
-                continue
-            # Compact labels to name+color only
-            if k == "labels" and isinstance(v, list):
-                out[k] = [{"name": lbl.get("name"), "color": lbl.get("color")}
-                          for lbl in v if isinstance(lbl, dict)]
-                continue
-            # Compact milestone to title+number+state
-            if k == "milestone" and isinstance(v, dict):
-                out[k] = {"number": v.get("number"), "title": v.get("title"), "state": v.get("state")}
-                continue
-            out[k] = _slim_github_obj(v, depth + 1)
-        return out
-    if isinstance(obj, list):
-        return [_slim_github_obj(item, depth) for item in obj]
-    return obj
+    return json.dumps({
+        "agent_id": agent_id,
+        "status": "merged",
+        "note": "Ring state consolidated into primary PCNA",
+    })
 
 
 async def _github_api(method: str, endpoint: str, body: dict | None = None) -> str:
@@ -686,7 +455,7 @@ async def _github_api(method: str, endpoint: str, body: dict | None = None) -> s
 
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            if method in ("POST", "PATCH", "PUT") and body is not None:
+            if method in ("POST", "PATCH", "PUT") and body:
                 resp = await client.request(method, url, json=body, headers=headers)
             else:
                 resp = await client.request(method, url, headers=headers)
@@ -700,55 +469,22 @@ async def _github_api(method: str, endpoint: str, body: dict | None = None) -> s
             data = resp.text
 
         if resp.status_code >= 400:
-            err = _slim_github_obj(data) if isinstance(data, dict) else data
-            return json.dumps({"status": resp.status_code, "error": err})
+            return json.dumps({
+                "status": resp.status_code,
+                "error": data,
+            })
 
         if isinstance(data, list):
-            slimmed = [_slim_github_obj(item) for item in data[:25]]
-            result: dict = {"status": resp.status_code, "count": len(data), "items": slimmed}
+            truncated = data[:25]
+            result: dict = {"status": resp.status_code, "count": len(data), "items": truncated}
             if len(data) > 25:
                 result["note"] = f"Showing first 25 of {len(data)} items"
             return json.dumps(result, default=str)
 
-        return json.dumps({"status": resp.status_code, "data": _slim_github_obj(data)}, default=str)
+        return json.dumps({"status": resp.status_code, "data": data}, default=str)
 
     except Exception as exc:
         return f"[github_api error: {exc}]"
-
-
-_GIT_ALLOWED = {"add", "commit", "push", "pull", "fetch", "status", "log", "diff", "branch", "stash"}
-_WORKSPACE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-async def _git_exec(args: list[str]) -> str:
-    if not args:
-        return "[git_exec: no args provided]"
-    subcmd = args[0].lower()
-    if subcmd not in _GIT_ALLOWED:
-        return (
-            f"[git_exec: '{subcmd}' not permitted. "
-            f"Allowed: {', '.join(sorted(_GIT_ALLOWED))}]"
-        )
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git", *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=_WORKSPACE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
-        out = stdout.decode("utf-8", errors="replace").strip()
-        err = stderr.decode("utf-8", errors="replace").strip()
-        result: dict = {"returncode": proc.returncode}
-        if out:
-            result["stdout"] = out
-        if err:
-            result["stderr"] = err
-        return json.dumps(result)
-    except asyncio.TimeoutError:
-        return "[git_exec: timed out after 30s]"
-    except Exception as exc:
-        return f"[git_exec error: {exc}]"
 
 
 _approval_scope_user_cv: _cv.ContextVar[str | None] = _cv.ContextVar(
@@ -873,4 +609,4 @@ async def _set_user_tier(user_id: str, tier: str) -> str:
         "email": updated["email"],
         "tier": updated["subscription_tier"],
     })
-# 772:22
+# 540:12

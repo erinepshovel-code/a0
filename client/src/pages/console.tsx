@@ -1,4 +1,4 @@
-// 136:0
+// 132:0
 import { useState, useEffect } from "react";
 import { Loader2, Pencil, PencilOff } from "lucide-react";
 import { useUiStructure } from "@/hooks/use-ui-structure";
@@ -7,12 +7,10 @@ import { useSEO } from "@/hooks/use-seo";
 import { useWsEditModeProvider, WsEditContext } from "@/hooks/use-ws-edit-mode";
 import ConsoleSidebar from "@/components/console-sidebar";
 import TabRenderer from "@/components/TabRenderer";
-import AgentsTab from "@/components/AgentsTab";
 import ApprovalScopesTab from "@/components/ApprovalScopesTab";
 import WsModulesTab from "@/components/WsModulesTab";
 import DocsTab from "@/components/DocsTab";
 import SigmaTab from "@/components/SigmaTab";
-import CliKeysTab from "@/components/CliKeysTab";
 import type { TabDef } from "@/hooks/use-ui-structure";
 
 const STORAGE_KEY = "a0p_active_tab";
@@ -40,12 +38,10 @@ function usePersistedTab(tabs: TabDef[]) {
 }
 
 function renderTab(tab: TabDef) {
-  if (tab.tab_id === "agents") return <AgentsTab />;
   if (tab.tab_id === "approval_scopes") return <ApprovalScopesTab />;
   if (tab.tab_id === "ws_modules") return <WsModulesTab />;
   if (tab.tab_id === "docs") return <DocsTab />;
   if (tab.tab_id === "sigma") return <SigmaTab />;
-  if (tab.tab_id === "cli_keys") return <CliKeysTab />;
   return <TabRenderer tab={tab} />;
 }
 
@@ -150,4 +146,4 @@ export default function ConsolePage() {
     </WsEditContext.Provider>
   );
 }
-// 136:0
+// 132:0

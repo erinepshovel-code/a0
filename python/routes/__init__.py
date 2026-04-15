@@ -1,4 +1,4 @@
-# 148:4
+# 140:4
 from .chat import router as chat_router
 from .agents import router as agents_router
 from .memory import router as memory_router
@@ -20,9 +20,6 @@ from .ws_modules import router as ws_modules_router
 from .docs import router as docs_router
 from .sigma_api import router as sigma_router
 from .editable_schema import router as editable_schema_router
-from .cli import router as cli_router
-from .focus import router as focus_router
-from .energy import router as energy_router, pcna_router as energy_pcna_router
 
 ALL_ROUTERS = [
     chat_router,
@@ -47,10 +44,6 @@ ALL_ROUTERS = [
     docs_router,
     sigma_router,
     editable_schema_router,
-    cli_router,
-    focus_router,
-    energy_router,
-    energy_pcna_router,
 ]
 
 
@@ -76,8 +69,6 @@ def collect_ui_meta() -> list[dict]:
         "python.routes.docs",
         "python.routes.sigma_api",
         "python.routes.editable_schema",
-        "python.routes.cli",
-        "python.routes.energy",
     ]
     tabs = []
     for mod_name in modules:
@@ -150,8 +141,7 @@ def collect_doc_meta() -> list[dict]:
         "system.py", "tools.py", "heartbeat_api.py", "pcna_api.py",
         "billing.py", "contexts.py", "founders.py", "openai_api.py",
         "zfae_api.py", "approval_scopes.py", "ws_modules.py", "docs.py",
-        "sigma_api.py", "editable_schema.py", "cli.py", "focus.py",
-        "energy.py",
+        "sigma_api.py", "editable_schema.py",
     ]
     results: list[dict] = []
     for fname in route_files:
@@ -165,4 +155,4 @@ def collect_doc_meta() -> list[dict]:
             results.append(meta)
     results.sort(key=lambda d: d.get("label", ""))
     return results
-# 148:4
+# 140:4

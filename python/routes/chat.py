@@ -1,6 +1,4 @@
-# 285:205
-import asyncio as _asyncio
-import json as _json
+# 338:15
 import traceback
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -11,87 +9,10 @@ from ..services.stripe_service import get_tier_context_name
 from ..services.energy_registry import energy_registry
 from ..services.inference import call_energy_provider
 from .contexts import get_context_value
-from ..database import async_session_maker
 
 # In-memory pending gate store: conv_id → {gate_id, history, system_prompt, provider_id, uid}
-# Persisted to the pending_gates DB table so gates survive server restarts.
+# Used to replay a blocked action when the user grants a scope.
 _pending_gates: dict[int, dict] = {}
-_gates_loaded: bool = False
-
-
-async def _ensure_gates_table() -> None:
-    from sqlalchemy import text as _text
-    async with async_session_maker() as sess:
-        await sess.execute(_text("""
-            CREATE TABLE IF NOT EXISTS pending_gates (
-                conv_id    INTEGER PRIMARY KEY,
-                gate_id    VARCHAR(64),
-                uid        VARCHAR(255),
-                provider_id VARCHAR(100),
-                history    JSONB NOT NULL DEFAULT '[]',
-                system_prompt TEXT,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """))
-        await sess.commit()
-
-
-async def _load_gates_from_db() -> None:
-    global _pending_gates, _gates_loaded
-    if _gates_loaded:
-        return
-    await _ensure_gates_table()
-    from sqlalchemy import text as _text
-    async with async_session_maker() as sess:
-        rows = (await sess.execute(_text(
-            "SELECT conv_id, gate_id, uid, provider_id, history, system_prompt FROM pending_gates"
-        ))).fetchall()
-    for row in rows:
-        _pending_gates[row.conv_id] = {
-            "gate_id": row.gate_id,
-            "uid": row.uid,
-            "provider_id": row.provider_id,
-            "history": row.history if isinstance(row.history, list) else _json.loads(row.history or "[]"),
-            "system_prompt": row.system_prompt,
-        }
-    _gates_loaded = True
-
-
-async def _save_gate(conv_id: int, gate: dict) -> None:
-    _pending_gates[conv_id] = gate
-    await _ensure_gates_table()
-    from sqlalchemy import text as _text
-    async with async_session_maker() as sess:
-        await sess.execute(_text("""
-            INSERT INTO pending_gates (conv_id, gate_id, uid, provider_id, history, system_prompt)
-            VALUES (:conv_id, :gate_id, :uid, :provider_id, :history::jsonb, :system_prompt)
-            ON CONFLICT (conv_id) DO UPDATE SET
-                gate_id = EXCLUDED.gate_id,
-                uid = EXCLUDED.uid,
-                provider_id = EXCLUDED.provider_id,
-                history = EXCLUDED.history,
-                system_prompt = EXCLUDED.system_prompt,
-                created_at = CURRENT_TIMESTAMP
-        """), {
-            "conv_id": conv_id,
-            "gate_id": gate.get("gate_id"),
-            "uid": gate.get("uid"),
-            "provider_id": gate.get("provider_id"),
-            "history": _json.dumps(gate.get("history", [])),
-            "system_prompt": gate.get("system_prompt"),
-        })
-        await sess.commit()
-
-
-async def _delete_gate(conv_id: int) -> None:
-    _pending_gates.pop(conv_id, None)
-    try:
-        from sqlalchemy import text as _text
-        async with async_session_maker() as sess:
-            await sess.execute(_text("DELETE FROM pending_gates WHERE conv_id = :cid"), {"cid": conv_id})
-            await sess.commit()
-    except Exception:
-        pass
 
 # DOC module: chat
 # DOC label: Chat
@@ -102,7 +23,6 @@ async def _delete_gate(conv_id: int) -> None:
 # DOC endpoint: GET /api/v1/conversations/{id} | Get a single conversation
 # DOC endpoint: PATCH /api/v1/conversations/{id} | Update conversation metadata
 # DOC endpoint: DELETE /api/v1/conversations/{id} | Delete a conversation
-# DOC endpoint: PATCH /api/v1/conversations/{id}/archive | Archive or unarchive a conversation
 # DOC endpoint: GET /api/v1/conversations/{id}/messages | List messages in a conversation
 # DOC endpoint: POST /api/v1/conversations/{id}/messages | Send a message and receive a reply
 
@@ -143,22 +63,12 @@ DATA_SCHEMA = {
         {"method": "GET", "path": "/api/v1/conversations/{id}"},
         {"method": "PATCH", "path": "/api/v1/conversations/{id}"},
         {"method": "DELETE", "path": "/api/v1/conversations/{id}"},
-        {"method": "PATCH", "path": "/api/v1/conversations/{id}/archive"},
         {"method": "GET", "path": "/api/v1/conversations/{id}/messages"},
         {"method": "POST", "path": "/api/v1/conversations/{id}/messages"},
     ],
 }
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
-
-
-async def _ensure_chat_schema() -> None:
-    from ..database import engine
-    from sqlalchemy import text as _text
-    async with engine.begin() as conn:
-        await conn.execute(_text(
-            "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE"
-        ))
 
 
 class CreateConversation(BaseModel):
@@ -177,28 +87,8 @@ class SendMessage(BaseModel):
 
 
 @router.get("/conversations")
-async def list_conversations(archived: bool = False):
-    from ..database import engine
-    from sqlalchemy import text as _text
-    async with engine.connect() as conn:
-        rows = await conn.execute(
-            _text("""
-                SELECT c.id, c.title, c.model, c.user_id, c.context_boost,
-                       c.parent_conv_id, c.subagent_status, c.archived,
-                       c.created_at, c.updated_at,
-                       COALESCE(m.total_tokens, 0) AS total_tokens
-                FROM conversations c
-                LEFT JOIN (
-                    SELECT conversation_id,
-                           SUM(prompt_tokens + completion_tokens) AS total_tokens
-                    FROM cost_metrics GROUP BY conversation_id
-                ) m ON m.conversation_id = c.id
-                WHERE c.archived = :archived
-                ORDER BY c.updated_at DESC
-            """),
-            {"archived": archived},
-        )
-        return [dict(r) for r in rows.mappings()]
+async def list_conversations():
+    return await storage.get_conversations()
 
 
 @router.post("/conversations")
@@ -229,43 +119,6 @@ async def delete_conversation(conv_id: int):
     return {"ok": True}
 
 
-class ArchiveConversation(BaseModel):
-    archived: bool = True
-
-
-@router.patch("/conversations/{conv_id}/archive")
-async def archive_conversation(conv_id: int, body: ArchiveConversation):
-    from ..database import engine
-    from sqlalchemy import text as _text
-    async with engine.begin() as conn:
-        await conn.execute(
-            _text("UPDATE conversations SET archived = :archived WHERE id = :id"),
-            {"archived": body.archived, "id": conv_id},
-        )
-    return {"ok": True, "archived": body.archived}
-
-
-@router.get("/conversations/{conv_id}/tokens")
-async def get_conversation_tokens(conv_id: int):
-    from ..database import engine
-    from sqlalchemy import text as _text
-    async with engine.connect() as conn:
-        row = await conn.execute(
-            _text("""
-                SELECT
-                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
-                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
-                    COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS total_tokens,
-                    COALESCE(SUM(estimated_cost), 0) AS estimated_cost
-                FROM cost_metrics
-                WHERE conversation_id = :conv_id
-            """),
-            {"conv_id": conv_id},
-        )
-        rec = row.mappings().first()
-    return dict(rec) if rec else {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "estimated_cost": 0}
-
-
 @router.get("/conversations/{conv_id}/messages")
 async def list_messages(conv_id: int):
     return await storage.get_messages(conv_id)
@@ -284,8 +137,6 @@ async def _build_system_prompt(tier: str) -> str:
         parts.append(system_base)
     if tier_context:
         parts.append(tier_context)
-
-    parts.append(f"## Session\nUser subscription tier: {tier}")
 
     seeds = await storage.get_memory_seeds()
     active_seeds = [
@@ -322,7 +173,6 @@ def _parse_approve_gate(content: str) -> str | None:
 @router.post("/conversations/{conv_id}/messages")
 async def send_message(conv_id: int, body: SendMessage, request: Request):
     try:
-        await _load_gates_from_db()
         conv = await storage.get_conversation(conv_id)
         if not conv:
             raise HTTPException(status_code=404, detail="conversation not found")
@@ -396,7 +246,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 raw_pending = _pending_gates.get(conv_id)
                 pending = raw_pending if (raw_pending and raw_pending.get("uid", uid) == uid) else None
                 if pending:
-                    await _delete_gate(conv_id)
+                    _pending_gates.pop(conv_id, None)
                     from ..services.tool_executor import set_approval_scope_user_id
                     set_approval_scope_user_id(uid or None)
                     try:
@@ -411,13 +261,13 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                     replay_result = {"content": replay_content, "usage": replay_usage}
                     reply += f"\n\nRetrying blocked action...\n\n{replay_content}"
                     if replay_usage.get("approval_state") == "pending":
-                        await _save_gate(conv_id, {
+                        _pending_gates[conv_id] = {
                             "gate_id": replay_usage.get("gate_id"),
                             "history": pending["history"],
                             "system_prompt": pending["system_prompt"],
                             "provider_id": pending["provider_id"],
                             "uid": uid,
-                        })
+                        }
                 else:
                     replay_result = None
 
@@ -450,7 +300,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 and pending.get("uid", uid) == uid
             )
             if gate_matched:
-                await _delete_gate(conv_id)
+                _pending_gates.pop(conv_id, None)
                 replay_provider = pending["provider_id"]
                 from ..services.tool_executor import set_approval_scope_user_id
                 set_approval_scope_user_id(uid or None)
@@ -486,9 +336,6 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
             }
 
         system_prompt = await _build_system_prompt(tier)
-        context_boost = (conv.get("context_boost") or "").strip()
-        if context_boost:
-            system_prompt = (system_prompt or "") + "\n\n## Context Boost\n" + context_boost
 
         user_msg = await storage.create_message({
             "conversation_id": conv_id,
@@ -518,24 +365,23 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
             set_approval_scope_user_id(None)
 
         if usage.get("approval_state") == "pending":
-            await _save_gate(conv_id, {
+            _pending_gates[conv_id] = {
                 "gate_id": usage.get("gate_id"),
                 "history": history,
                 "system_prompt": system_prompt or None,
                 "provider_id": provider_id,
                 "uid": uid,
-            })
+            }
 
-        _is_error = content.startswith(("[openai", "[energy provider error", "[tool loop", "[sub-agent"))
-        _error_meta: dict = {"error": True, "error_detail": content} if _is_error else {}
         assistant_msg = await storage.create_message({
             "conversation_id": conv_id,
             "role": "assistant",
             "content": content,
             "model": provider_id,
-            "metadata": {"tier": tier, "usage": usage, **_error_meta},
+            "metadata": {"tier": tier, "usage": usage},
         })
 
+        import asyncio as _asyncio
         from ..engine.zeta import _zeta_engine
         _asyncio.create_task(
             _zeta_engine.evaluate(
@@ -556,4 +402,4 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
         tb = traceback.format_exc()
         print(f"[chat] send_message error: {exc}\n{tb}")
         raise HTTPException(status_code=500, detail=f"Chat error: {exc}")
-# 285:205
+# 338:15
