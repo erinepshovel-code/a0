@@ -4,25 +4,18 @@ import { useQuery } from "@tanstack/react-query";
 export interface BillingStatus {
   plan: string;
   status: string;
-  provider_pool: string;
-  byok_enabled: boolean;
-  founder_slot: number | null;
   is_admin: boolean;
   user_id: string | null;
 }
 
 const TIER_LABELS: Record<string, string> = {
   free: "Free",
+  supporter: "Supporter",
   ws: "WS",
-  pro: "Pro",
   admin: "Admin",
-  seeker: "Seeker",
-  operator: "Operator",
-  patron: "Patron",
-  founder: "Founder",
 };
 
-const WS_TIERS = new Set(["ws", "pro", "admin", "seeker", "operator", "patron", "founder"]);
+const WS_TIERS = new Set(["ws"]);
 
 export function useBillingStatus() {
   const { data, isLoading, error } = useQuery<BillingStatus>({
@@ -40,7 +33,7 @@ export function useBillingStatus() {
     tierLabel: isAdmin && plan === "free" ? "Admin" : (TIER_LABELS[plan] ?? "Free"),
     isAdmin,
     isWs: WS_TIERS.has(plan) || isAdmin,
-    isPaid: plan !== "free" || isAdmin,
+    isPaid: plan === "supporter",
     userId: data?.user_id ?? null,
   };
 }

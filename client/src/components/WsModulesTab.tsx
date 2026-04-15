@@ -41,7 +41,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: "default" | "second
   error:    { label: "error",    variant: "destructive" },
 };
 
-const WS_TIERS = new Set(["ws", "pro", "admin"]);
+const WS_TIERS = new Set(["ws"]);
 
 function fmtTs(iso: string) {
   try { return new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }); }
@@ -286,7 +286,7 @@ export default function WsModulesTab() {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground" data-testid="ws-modules-no-access">
         <Blocks className="h-8 w-8 opacity-30" />
-        <p className="text-sm">Module editor requires ws, pro, or admin tier.</p>
+        <p className="text-sm">Module editor requires ws or admin tier.</p>
       </div>
     );
   }

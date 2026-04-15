@@ -12,7 +12,7 @@ from ..models import (
 )
 from .core import _CoreStorage, _row_to_dict
 
-_SCOPE_GRANT_TIERS = {"ws", "pro", "admin"}
+_SCOPE_GRANT_TIERS = {"ws", "admin"}
 
 
 async def check_scope_grant_tier(user_id: str) -> str:
@@ -32,7 +32,7 @@ async def check_scope_grant_tier(user_id: str) -> str:
     if tier not in _SCOPE_GRANT_TIERS:
         raise ValueError(
             f"Tier '{tier}' cannot grant pre-approved scopes. "
-            "Requires ws, pro, or admin tier."
+            "Requires ws or admin tier."
         )
     return tier
 

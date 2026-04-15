@@ -15,10 +15,9 @@ const NAV_ITEMS = [
 
 const TIER_COLORS: Record<string, string> = {
   free: "bg-muted text-muted-foreground",
-  seeker: "bg-blue-500/20 text-blue-400",
-  operator: "bg-violet-500/20 text-violet-400",
-  patron: "bg-amber-500/20 text-amber-400",
-  founder: "bg-emerald-500/20 text-emerald-400",
+  supporter: "bg-blue-500/20 text-blue-400",
+  ws: "bg-violet-500/20 text-violet-400",
+  admin: "bg-emerald-500/20 text-emerald-400",
 };
 
 export default function TopNav() {
