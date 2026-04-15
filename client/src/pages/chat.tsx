@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Plus, Loader2, Bot, Zap, Target, AlertTriangle, ChevronDown, ChevronUp, X, Archive,
+  Plus, Loader2, Bot, Zap, Target, AlertTriangle, ChevronDown, ChevronUp, X, Archive, Menu,
 } from "lucide-react";
 import {
   type Message,
@@ -150,6 +150,7 @@ export default function ChatPage() {
     onError: (e: Error) => toast({ title: "Focus failed", description: e.message, variant: "destructive" }),
   });
 
+  const [showSidebar, setShowSidebar] = useState(false);
   const [subagentTask, setSubagentTask] = useState("");
   const [showSubagent, setShowSubagent] = useState(false);
   const [subagentConvId, setSubagentConvId] = useState<number | null>(null);
@@ -180,25 +181,47 @@ export default function ChatPage() {
     onError: (e: Error) => toast({ title: "Sub-agent failed", description: e.message, variant: "destructive" }),
   });
 
+  const activeTitle = conversations.find((c) => c.id === activeConvId)?.title ?? "a0p";
+
+  const sidebar = convsLoading ? (
+    <div className="p-3 space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+  ) : (
+    <ConversationList
+      conversations={conversations} archivedConvs={archivedConvs} activeId={activeConvId}
+      onSelect={(id) => { selectConv(id); setShowSidebar(false); }}
+      onCreate={() => { createConv.mutate(); setShowSidebar(false); }}
+      onDelete={(id) => deleteConv.mutate(id)}
+      onArchive={(id, archived) => archiveConv.mutate({ id, archived })}
+      onArchiveAll={() => archiveAll.mutate()}
+      isCreating={createConv.isPending} showArchived={showArchived}
+      onToggleArchived={() => setShowArchived(!showArchived)}
+    />
+  );
+
   return (
     <div className="flex h-full" data-testid="chat-page">
-      <div className="w-56 shrink-0 hidden md:block">
-        {convsLoading ? (
-          <div className="p-3 space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
-        ) : (
-          <ConversationList
-            conversations={conversations} archivedConvs={archivedConvs} activeId={activeConvId}
-            onSelect={selectConv} onCreate={() => createConv.mutate()}
-            onDelete={(id) => deleteConv.mutate(id)}
-            onArchive={(id, archived) => archiveConv.mutate({ id, archived })}
-            onArchiveAll={() => archiveAll.mutate()}
-            isCreating={createConv.isPending} showArchived={showArchived}
-            onToggleArchived={() => setShowArchived(!showArchived)}
-          />
-        )}
-      </div>
+      {/* mobile overlay drawer */}
+      {showSidebar && (
+        <div className="fixed inset-0 z-50 flex md:hidden" data-testid="mobile-sidebar-overlay">
+          <div className="w-72 h-full bg-background shadow-xl flex flex-col">{sidebar}</div>
+          <div className="flex-1 bg-black/40" onClick={() => setShowSidebar(false)} />
+        </div>
+      )}
+
+      {/* desktop sidebar */}
+      <div className="w-56 shrink-0 hidden md:flex md:flex-col">{sidebar}</div>
 
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* mobile top bar */}
+        <div className="flex items-center gap-2 px-2 py-1 border-b border-border bg-card md:hidden" data-testid="mobile-chat-header">
+          <Button size="icon" variant="ghost" className="h-10 w-10 shrink-0" onClick={() => setShowSidebar(true)} data-testid="btn-open-sidebar">
+            <Menu className="h-5 w-5" />
+          </Button>
+          <span className="flex-1 text-sm font-medium truncate text-foreground">{activeTitle}</span>
+          <Button size="icon" variant="ghost" className="h-10 w-10 shrink-0" onClick={() => createConv.mutate()} disabled={createConv.isPending} data-testid="btn-new-chat-mobile">
+            {createConv.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          </Button>
+        </div>
         {!activeConvId ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground" data-testid="chat-empty">
             <Bot className="h-10 w-10" />
