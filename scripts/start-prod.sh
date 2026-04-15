@@ -3,12 +3,14 @@ set -e
 
 export NODE_ENV=production
 
-uvicorn python.main:app --host 0.0.0.0 --port 8001 &
-UVICORN_PID=$!
-
+# Start Express first so port 5000 responds to health checks immediately
 node dist/index.cjs &
 EXPRESS_PID=$!
 
-trap "kill $UVICORN_PID $EXPRESS_PID 2>/dev/null" EXIT INT TERM
+# Start FastAPI (Python) in background — may take a moment to initialize DB
+uvicorn python.main:app --host 0.0.0.0 --port 8001 &
+UVICORN_PID=$!
 
-wait $UVICORN_PID $EXPRESS_PID
+trap "kill $EXPRESS_PID $UVICORN_PID 2>/dev/null" EXIT INT TERM
+
+wait $EXPRESS_PID $UVICORN_PID
