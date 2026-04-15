@@ -28,7 +28,7 @@ interface CatalogEntry {
   safety_floor: boolean;
 }
 
-const GRANT_TIERS = new Set(["ws", "pro", "admin"]);
+const GRANT_TIERS = new Set(["ws"]);
 
 export default function ApprovalScopesTab() {
   const qc = useQueryClient();
@@ -230,7 +230,7 @@ export default function ApprovalScopesTab() {
 
           {!canGrant && (
             <p className="text-xs text-muted-foreground mt-3 text-center italic" data-testid="text-grant-restriction">
-              Scope granting requires ws, pro, or admin tier.
+              Scope granting requires ws or admin tier.
             </p>
           )}
         </div>

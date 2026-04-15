@@ -219,7 +219,7 @@ TOOL_SCHEMAS_CHAT = [
             "description": (
                 "Admin-only: set a user's subscription tier immediately, bypassing Stripe. "
                 "Use to promote, demote, or correct a user's access level. "
-                "Valid tiers: free, ws, pro, admin, seeker, operator, patron, founder."
+                "Valid tiers: free, supporter, ws, admin."
             ),
             "parameters": {
                 "type": "object",
@@ -230,7 +230,7 @@ TOOL_SCHEMAS_CHAT = [
                     },
                     "tier": {
                         "type": "string",
-                        "enum": ["free", "ws", "pro", "admin", "seeker", "operator", "patron", "founder"],
+                        "enum": ["free", "supporter", "ws", "admin"],
                         "description": "The new subscription tier to assign.",
                     },
                 },
@@ -570,7 +570,7 @@ async def _set_user_tier(user_id: str, tier: str) -> str:
     from ..database import engine
     from sqlalchemy import text as sa_text
 
-    _VALID = ("free", "ws", "pro", "admin", "seeker", "operator", "patron", "founder")
+    _VALID = ("free", "supporter", "ws", "admin")
     if not user_id:
         return json.dumps({"ok": False, "error": "user_id is required"})
     if tier not in _VALID:

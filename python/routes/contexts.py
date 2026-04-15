@@ -54,10 +54,8 @@ context_tab_router = APIRouter(tags=["context_tab"])
 DEFAULT_CONTEXTS = [
     "a0_identity",
     "tier_free",
-    "tier_seeker",
-    "tier_operator",
-    "tier_patron",
-    "tier_founder",
+    "tier_supporter",
+    "tier_ws",
     "system_base",
 ]
 
@@ -65,10 +63,8 @@ _SECTION_LABELS = {
     "a0_identity": "A0 Identity",
     "system_base": "System Base",
     "tier_free": "Tier: Free",
-    "tier_seeker": "Tier: Seeker",
-    "tier_operator": "Tier: Operator",
-    "tier_patron": "Tier: Patron",
-    "tier_founder": "Tier: Founder",
+    "tier_supporter": "Tier: Supporter",
+    "tier_ws": "Tier: WS",
 }
 
 

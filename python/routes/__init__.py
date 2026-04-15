@@ -61,7 +61,6 @@ def collect_ui_meta() -> list[dict]:
         "python.routes.pcna_api",
         "python.routes.billing",
         "python.routes.contexts",
-        "python.routes.founders",
         "python.routes.openai_api",
         "python.routes.zfae_api",
         "python.routes.approval_scopes",
@@ -139,7 +138,7 @@ def collect_doc_meta() -> list[dict]:
     route_files = [
         "chat.py", "agents.py", "memory.py", "edcm.py", "bandits.py",
         "system.py", "tools.py", "heartbeat_api.py", "pcna_api.py",
-        "billing.py", "contexts.py", "founders.py", "openai_api.py",
+        "billing.py", "contexts.py", "openai_api.py",
         "zfae_api.py", "approval_scopes.py", "ws_modules.py", "docs.py",
         "sigma_api.py", "editable_schema.py",
     ]
