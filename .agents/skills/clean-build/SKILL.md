@@ -82,6 +82,25 @@ grep -r "@replit" dist/public/assets/ | wc -l
 
 ---
 
+## CI Check: Automated Regression Guard
+
+A GitHub Actions workflow (`.github/workflows/clean-build-check.yml`) runs on every push and pull request to `main` and automatically enforces the clean-build constraint:
+
+1. **Build step** — runs the full production build with `REPL_ID` fully unset:
+   ```bash
+   env -u REPL_ID NODE_ENV=production npx tsx script/build.ts
+   ```
+
+2. **Grep step** — scans `dist/public/assets/` for any `@replit` references and fails with an error annotation if any are found:
+   ```bash
+   grep -r "@replit" dist/public/assets/ | wc -l
+   # Must be 0 — any match fails the workflow
+   ```
+
+This catches regressions automatically if a static `@replit` import is accidentally added back to `vite.config.ts` or any other file included in the client bundle.
+
+---
+
 ## Checklist When Adding New Vite Plugins
 
 When adding any Vite plugin that is only needed during Replit development:
@@ -89,7 +108,7 @@ When adding any Vite plugin that is only needed during Replit development:
 - [ ] Use dynamic `await import(...)` — never a static top-level import
 - [ ] Gate the import behind `process.env.REPL_ID !== undefined`
 - [ ] Also gate behind `process.env.NODE_ENV !== "production"` if applicable
-- [ ] Run `REPL_ID="" NODE_ENV=production npx tsx script/build.ts` and confirm success
+- [ ] Run `env -u REPL_ID NODE_ENV=production npx tsx script/build.ts` and confirm success
 - [ ] Confirm zero `@replit` references in `dist/public/assets/`
 
 ---
@@ -101,3 +120,4 @@ When adding any Vite plugin that is only needed during Replit development:
 | `vite.config.ts` | Vite configuration — all Replit plugin imports live here |
 | `script/build.ts` | Full build script (client via Vite + server via esbuild) |
 | `package.json` | Dev dependencies for `@replit/*` packages |
+| `.github/workflows/clean-build-check.yml` | CI workflow that enforces the clean-build constraint |
