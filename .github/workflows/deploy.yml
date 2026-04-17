@@ -12,8 +12,83 @@ env:
   REGISTRY: us-central1-docker.pkg.dev
 
 jobs:
+  check-console-tabs:
+    name: Console tab regression guard
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: a0p_check
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/a0p_check
+      SESSION_SECRET: ci-session-secret
+      INTERNAL_API_SECRET: ci-internal-secret-for-console-tab-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: pip install -e .
+
+      - name: Apply database schema
+        run: npm run db:push
+
+      - name: Boot Python backend
+        run: |
+          uvicorn python.main:app --host 127.0.0.1 --port 8001 \
+            > /tmp/uvicorn.log 2>&1 &
+          echo $! > /tmp/uvicorn.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8001/api/health > /dev/null; then
+              echo "backend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "backend failed to start"
+          cat /tmp/uvicorn.log
+          exit 1
+
+      - name: Run console-tab regression guard
+        run: API_BASE=http://127.0.0.1:8001 node scripts/check-console-tabs.mjs
+
+      - name: Stop Python backend
+        if: always()
+        run: |
+          if [ -f /tmp/uvicorn.pid ]; then
+            kill "$(cat /tmp/uvicorn.pid)" 2>/dev/null || true
+          fi
+
   deploy:
     name: Build, push, deploy
+    needs: check-console-tabs
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -7,6 +7,12 @@
 // statically (registry vs API alignment) and at runtime (every system tab
 // must either have schema-driven sections or a custom renderer).
 //
+// Exits non-zero on either:
+//   1. A tab returned by the API has no custom renderer AND no sections
+//      (would render as MissingRendererError in the UI), OR
+//   2. A custom renderer is registered for a tab_id the API no longer
+//      returns (dead/orphan entry in CUSTOM_TAB_RENDERERS).
+//
 // Run against a live dev server:
 //   API_BASE=http://localhost:5000 node scripts/check-console-tabs.mjs
 
@@ -34,7 +40,14 @@ function parseRegistry() {
 
 async function fetchTabs() {
   const url = `${API_BASE}/api/v1/ui/structure`;
-  const res = await fetch(url);
+  // When the script runs against the Python backend directly (e.g. in CI,
+  // bypassing the Express proxy that normally injects the header), we need
+  // to attach the internal token ourselves. Falling back gracefully when
+  // unset preserves the manual "hit Express on :5000" workflow.
+  const headers = {};
+  const internal = process.env.INTERNAL_API_SECRET;
+  if (internal) headers["x-a0p-internal"] = internal;
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
   const json = await res.json();
   if (!Array.isArray(json.tabs)) throw new Error("Response missing tabs[]");
@@ -64,9 +77,10 @@ async function main() {
   }
 
   // Registry entries that no longer exist in the API are dead code (the
-  // renderer is wired but the user can never reach the tab). Flag as a
-  // warning rather than failure — this is a different class of bug than
-  // a tab silently falling through to the generic placeholder.
+  // renderer is wired but the user can never reach the tab). Treat as a
+  // hard failure so dead entries are cleaned up promptly instead of
+  // accumulating; the deploy job's `needs: check-console-tabs` gate
+  // depends on this exit code.
   const apiIds = new Set(tabs.map((t) => t.tab_id));
   const orphans = [];
   for (const id of registry) {
@@ -78,17 +92,23 @@ async function main() {
   ok.forEach((line) => console.log(line));
 
   if (orphans.length) {
-    console.warn(
-      `\nWARN — ${orphans.length} orphan renderer(s) (registered but not returned by API): ${orphans.join(", ")}`
+    console.error(
+      `\nFAIL — ${orphans.length} orphan renderer(s) registered in CUSTOM_TAB_RENDERERS but not returned by /api/v1/ui/structure: ${orphans.join(", ")}`
+    );
+    console.error(
+      "  Either remove the dead entry from console.tsx or restore the corresponding tab in the UI structure API."
     );
   }
 
   if (errors.length) {
     console.error("\nFAIL — broken console tabs detected:");
     errors.forEach((line) => console.error(line));
+  }
+
+  if (errors.length || orphans.length) {
     process.exit(1);
   }
-  console.log("\nOK — every tab returned by the API has a renderer.");
+  console.log("\nOK — every tab returned by the API has a renderer and no orphan renderers remain.");
 }
 
 main().catch((err) => {
