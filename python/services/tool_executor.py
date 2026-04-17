@@ -467,11 +467,16 @@ async def _github_api(method: str, endpoint: str, body: dict | None = None) -> s
         try:
             data = resp.json()
         except Exception:
-            data = resp.text
+            text = (resp.text or "").strip()
+            if text.lower().startswith("<!doctype") or text.startswith("<"):
+                data = f"[non-JSON HTML response, {len(text)} bytes — likely 404/auth page]"
+            else:
+                data = text[:500] + ("…" if len(text) > 500 else "")
 
         if resp.status_code >= 400:
             return json.dumps({
                 "status": resp.status_code,
+                "endpoint": endpoint,
                 "error": data,
             })
 
