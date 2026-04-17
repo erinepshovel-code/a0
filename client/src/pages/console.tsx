@@ -162,7 +162,8 @@ export default function ConsolePage() {
           </div>
 
           <div className="md:hidden w-full flex flex-col">
-            <div className="overflow-x-auto border-b border-border px-2 py-1 flex gap-1 shrink-0" data-testid="console-mobile-tabs">
+            <div className="relative border-b border-border shrink-0">
+              <div className="overflow-x-auto px-2 py-1 flex gap-1" data-testid="console-mobile-tabs">
               {tabs.map((tab) => (
                 <button
                   key={tab.tab_id}
@@ -177,6 +178,12 @@ export default function ConsolePage() {
                   {tab.label}
                 </button>
               ))}
+              </div>
+              {/* fading right gradient: signals more tabs scroll off-screen */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute top-0 right-0 h-full w-6 bg-gradient-to-l from-background to-transparent"
+              />
             </div>
             <div className="flex-1 overflow-hidden">
               {currentTab && renderTab(currentTab)}
