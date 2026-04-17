@@ -113,14 +113,16 @@ def _caller_uid(request: Request) -> Optional[str]:
 async def _require_owned_conv(conv_id: int, uid: Optional[str]) -> dict:
     """Fetch conversation; 404 if missing or not owned by caller.
 
-    Backward-compat: legacy conversations with NULL user_id remain accessible.
+    Strict: requires an authenticated uid AND exact owner match.
+    Returns 404 (not 403) on any mismatch to avoid existence disclosure.
     """
+    if not uid:
+        raise HTTPException(status_code=404, detail="conversation not found")
     conv = await storage.get_conversation(conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="conversation not found")
     owner = conv.get("user_id")
-    if owner and uid and owner != uid:
-        # 404 (not 403) to avoid existence disclosure across users.
+    if owner != uid:
         raise HTTPException(status_code=404, detail="conversation not found")
     return conv
 

@@ -38,15 +38,15 @@ def _filter_fields(data: Dict[str, Any], allowed: set) -> Dict[str, Any]:
 class _CoreStorage:
 
     async def get_conversations(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """List conversations, optionally scoped to a user.
+        """List conversations strictly scoped to a single user.
 
-        When user_id is given, also returns legacy conversations with NULL
-        user_id (backward compat). Pass None for an admin-style unscoped view.
+        Pass None only for explicit admin-style unscoped views. Legacy
+        NULL-owner rows are NOT returned to regular callers.
         """
         async with get_session() as session:
             q = select(Conversation).order_by(desc(Conversation.updated_at))
-            if user_id:
-                q = q.where(or_(Conversation.user_id == user_id, Conversation.user_id.is_(None)))
+            if user_id is not None:
+                q = q.where(Conversation.user_id == user_id)
             result = await session.execute(q)
             return [_row_to_dict(r) for r in result.scalars().all()]
 
