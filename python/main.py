@@ -224,6 +224,11 @@ async def lifespan(app: FastAPI):
     await heartbeat_service.start()
     yield
     await heartbeat_service.stop()
+    try:
+        from .services.bg_tasks import cancel_all as _bg_cancel_all
+        await _bg_cancel_all()
+    except Exception as exc:
+        print(f"[python] bg-task cancel_all failed: {exc}")
     await engine.dispose()
     print("[python] FastAPI shutdown")
 

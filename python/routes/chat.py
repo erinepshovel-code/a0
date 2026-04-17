@@ -128,6 +128,9 @@ async def _require_owned_conv(conv_id: int, uid: Optional[str]) -> dict:
 @router.get("/conversations")
 async def list_conversations(request: Request):
     uid = _caller_uid(request)
+    if not uid:
+        # Never return a global list when caller identity is missing.
+        raise HTTPException(status_code=401, detail="authentication required")
     return await storage.get_conversations(user_id=uid)
 
 
@@ -219,13 +222,11 @@ def _parse_approve_gate(content: str) -> str | None:
 @router.post("/conversations/{conv_id}/messages")
 async def send_message(conv_id: int, body: SendMessage, request: Request):
     try:
-        conv = await storage.get_conversation(conv_id)
-        if not conv:
-            raise HTTPException(status_code=404, detail="conversation not found")
+        uid = _caller_uid(request)
+        conv = await _require_owned_conv(conv_id, uid)
 
         from ..database import engine
         from sqlalchemy import text as _text
-        uid = request.headers.get("x-user-id", "")
         tier = "free"
         if uid:
             async with engine.connect() as conn:
