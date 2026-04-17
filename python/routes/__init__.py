@@ -20,6 +20,7 @@ from .ws_modules import router as ws_modules_router
 from .docs import router as docs_router
 from .sigma_api import router as sigma_router
 from .editable_schema import router as editable_schema_router
+from .cli import router as cli_router
 
 ALL_ROUTERS = [
     chat_router,
@@ -44,6 +45,7 @@ ALL_ROUTERS = [
     docs_router,
     sigma_router,
     editable_schema_router,
+    cli_router,
 ]
 
 
@@ -68,6 +70,7 @@ def collect_ui_meta() -> list[dict]:
         "python.routes.docs",
         "python.routes.sigma_api",
         "python.routes.editable_schema",
+        "python.routes.cli",
     ]
     tabs = []
     for mod_name in modules:
@@ -140,7 +143,7 @@ def collect_doc_meta() -> list[dict]:
         "system.py", "tools.py", "heartbeat_api.py", "pcna_api.py",
         "billing.py", "contexts.py", "openai_api.py",
         "zfae_api.py", "approval_scopes.py", "ws_modules.py", "docs.py",
-        "sigma_api.py", "editable_schema.py",
+        "sigma_api.py", "editable_schema.py", "cli.py",
     ]
     results: list[dict] = []
     for fname in route_files:
