@@ -380,20 +380,37 @@ async def stripe_webhook(request: Request):
 
     event_id = event.get("id") or ""
     event_type = event.get("type") or ""
+    table_ok = True
     if event_id:
         try:
             await _ensure_stripe_events_table()
-            claimed = await _claim_stripe_event(event_id, event_type)
+            async with engine.connect() as conn:
+                row = await conn.execute(
+                    text("SELECT 1 FROM processed_stripe_events WHERE event_id = :eid"),
+                    {"eid": event_id},
+                )
+                already = row.first() is not None
         except Exception as exc:
-            # If the idempotency table is unavailable, log and proceed —
-            # better to risk a duplicate than reject a valid event.
-            print(f"[billing] idempotency table unavailable: {exc}")
-            claimed = True
-        if not claimed:
+            print(f"[billing] idempotency table unavailable on read: {exc}")
+            table_ok = False
+            already = False
+        if already:
             # Already processed — reply OK so Stripe stops retrying.
             return {"received": True, "duplicate": True}
 
+    # Process the event FIRST. Only mark as processed if dispatch succeeds,
+    # so a transient failure leaves the event eligible for Stripe retries.
     await _dispatch_webhook(event)
+
+    if event_id and table_ok:
+        try:
+            await _claim_stripe_event(event_id, event_type)
+        except Exception as exc:
+            # Marking failed but dispatch already ran. Stripe may retry; the
+            # next attempt will dispatch again — webhook handlers downstream
+            # should be defensive. Log and continue.
+            print(f"[billing] failed to mark event {event_id} processed: {exc}")
+
     return {"received": True}
 
 
