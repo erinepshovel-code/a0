@@ -3,6 +3,50 @@ import crypto from "crypto";
 import type { Express, Request, Response } from "express";
 import { authStorage } from "./storage";
 import { hashPassphrase, verifyPassphrase, validatePassphrase } from "./password";
+import { regenerateSession } from "./setup";
+
+function sha256Hex(input: string): string {
+  return crypto.createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * Fire-and-forget call to the FastAPI internal endpoint that promotes
+ * recognized work-email accounts to the WS tier. Failures are logged
+ * but never block the auth flow.
+ */
+async function tryPromoteWs(userId: string, email: string | null | undefined): Promise<void> {
+  try {
+    const secret = process.env.INTERNAL_API_SECRET;
+    if (!secret) {
+      // start-dev.sh exports a per-run secret in dev; if it's missing,
+      // skip the call rather than 401-ing the user.
+      return;
+    }
+    const port = process.env.PYTHON_PORT || "8001";
+    const url = `http://127.0.0.1:${port}/api/v1/billing/internal/promote-ws`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-a0p-internal": secret,
+          "x-internal-secret": secret,
+        },
+        body: JSON.stringify({ user_id: userId, email: email ?? null }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        console.warn(`[auth] promote-ws non-OK: ${res.status} ${await res.text().catch(() => "")}`);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (err) {
+    console.warn("[auth] promote-ws call failed (non-fatal):", err);
+  }
+}
 
 export function registerAuthRoutes(app: Express) {
   app.get("/api/auth/user", async (req: Request, res: Response) => {
@@ -38,9 +82,13 @@ export function registerAuthRoutes(app: Express) {
         return res.status(401).json({ message: "Invalid username or passphrase" });
       }
       await authStorage.updateLastLogin(user.id);
+      // Regenerate session to prevent session-fixation attacks across the auth boundary.
+      await regenerateSession(req);
       req.session.userId = user.id;
       req.session.userEmail = user.email ?? undefined;
       req.session.userRole = user.role;
+      // Fire-and-forget: promote work-email accounts to WS tier on every login.
+      void tryPromoteWs(user.id, user.email);
       const { passphraseHash: _, ...safe } = user;
       res.json({ user: safe });
     } catch (err) {
@@ -86,9 +134,13 @@ export function registerAuthRoutes(app: Express) {
         }
       }
 
+      // Regenerate session before establishing the new authenticated identity.
+      await regenerateSession(req);
       req.session.userId = user.id;
       req.session.userEmail = user.email ?? undefined;
       req.session.userRole = user.role;
+      // Fire-and-forget: promote work-email accounts to WS tier on registration.
+      void tryPromoteWs(user.id, user.email);
 
       const { passphraseHash: _, ...safe } = user;
       res.status(201).json({ user: safe });
@@ -149,10 +201,13 @@ export function registerAuthRoutes(app: Express) {
       }
       const resetToken = crypto.randomBytes(32).toString("hex");
       const FIFTEEN_MIN = 15 * 60 * 1000;
-      req.session.resetToken = resetToken;
+      // Store only the hash of the reset token in the session — never plaintext.
+      // The plaintext is returned to the caller once and must be presented back.
+      req.session.resetTokenHash = sha256Hex(resetToken);
       req.session.resetTokenExpiry = Date.now() + FIFTEEN_MIN;
       req.session.resetVerifiedUserId = userId;
       delete req.session.pendingResetUserId;
+      delete req.session.resetToken;
       res.json({ resetToken });
     } catch {
       res.status(500).json({ message: "Internal server error" });
@@ -164,13 +219,23 @@ export function registerAuthRoutes(app: Express) {
     if (!resetToken || !newPassphrase) {
       return res.status(400).json({ message: "resetToken and newPassphrase are required" });
     }
-    const tokenValid =
-      req.session.resetToken &&
+    const storedHash = req.session.resetTokenHash;
+    const presentedHash = typeof resetToken === "string" ? sha256Hex(resetToken) : "";
+    let tokenValid = false;
+    if (
+      storedHash &&
       req.session.resetTokenExpiry &&
-      req.session.resetToken === resetToken &&
-      Date.now() <= req.session.resetTokenExpiry;
+      presentedHash.length === storedHash.length &&
+      Date.now() <= req.session.resetTokenExpiry
+    ) {
+      // Constant-time comparison of the two SHA-256 hashes.
+      tokenValid = crypto.timingSafeEqual(
+        Buffer.from(storedHash, "hex"),
+        Buffer.from(presentedHash, "hex"),
+      );
+    }
     if (!tokenValid || !req.session.resetVerifiedUserId) {
-      delete req.session.resetToken;
+      delete req.session.resetTokenHash;
       delete req.session.resetTokenExpiry;
       delete req.session.resetVerifiedUserId;
       return res.status(401).json({ message: "Invalid or expired reset token" });
@@ -186,9 +251,9 @@ export function registerAuthRoutes(app: Express) {
     try {
       const newHash = await hashPassphrase(newPassphrase);
       await authStorage.updatePassphrase(resetUserId, newHash);
-      delete req.session.resetToken;
-      delete req.session.resetTokenExpiry;
-      delete req.session.resetVerifiedUserId;
+      // Burn any existing session and start fresh — invalidates other tabs that
+      // may have been mid-flow with the prior credentials.
+      await regenerateSession(req);
       res.json({ ok: true });
     } catch {
       res.status(500).json({ message: "Internal server error" });

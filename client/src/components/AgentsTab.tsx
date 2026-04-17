@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bot, Zap, GitMerge, Plus, Loader2, Radio, CheckCircle2, Clock,
-  RefreshCw, ChevronDown, ChevronUp, Settings2, Cpu, X,
+  RefreshCw, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

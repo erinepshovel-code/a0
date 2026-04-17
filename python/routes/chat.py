@@ -17,6 +17,7 @@ from .contexts import get_context_value
 # Entries are evicted after _PENDING_GATE_TTL_SECS to keep the map bounded.
 _pending_gates: dict[int, dict] = {}
 _PENDING_GATE_TTL_SECS = 15 * 60  # 15 min
+_PENDING_GATE_SWEEP_INTERVAL_SECS = 60  # background loop cadence
 
 
 def _sweep_pending_gates() -> None:
@@ -27,6 +28,23 @@ def _sweep_pending_gates() -> None:
     stale = [cid for cid, e in _pending_gates.items() if now - e.get("ts", 0) > _PENDING_GATE_TTL_SECS]
     for cid in stale:
         _pending_gates.pop(cid, None)
+
+
+async def pending_gate_sweep_loop() -> None:
+    """Periodic sweep so expired gates are evicted on a quiet system, not just
+    when a new gate is stored. Runs forever until cancelled by bg_tasks.cancel_all
+    on FastAPI shutdown.
+    """
+    import asyncio
+    while True:
+        try:
+            await asyncio.sleep(_PENDING_GATE_SWEEP_INTERVAL_SECS)
+            _sweep_pending_gates()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Don't let a transient error kill the loop — just log and continue.
+            print(f"[chat] pending-gate sweep iteration failed: {exc}")
 
 
 def _store_pending_gate(conv_id: int, entry: dict) -> None:

@@ -98,6 +98,30 @@ Replit Auth (OIDC) will not work outside Replit. Before going live on Cloud Run 
 
 ---
 
+## Pre-deploy checks
+
+Every push runs the **Console tab regression guard** (`scripts/check-console-tabs.mjs`)
+as a separate CI job before the build/deploy job. The guard spins up an ephemeral
+Postgres + Python backend in the runner, fetches `/api/v1/ui/structure`, and fails
+the build if either:
+
+1. a tab returned by the API has neither a custom renderer (in
+   `client/src/pages/console.tsx`) nor any schema-driven sections, or
+2. `CUSTOM_TAB_RENDERERS` registers a `tab_id` that the API no longer returns
+   (an orphan / dead entry).
+
+The deploy job has `needs: check-console-tabs`, so a failure here blocks the
+deploy entirely.
+
+To run the same check locally against a running dev server:
+
+```bash
+node scripts/check-console-tabs.mjs                       # via Express on :5000
+API_BASE=http://localhost:8001 \
+  INTERNAL_API_SECRET="$INTERNAL_API_SECRET" \
+  node scripts/check-console-tabs.mjs                     # direct against uvicorn
+```
+
 ## Deploying
 
 Push to `main` — GitHub Actions handles the rest. Watch progress at:
