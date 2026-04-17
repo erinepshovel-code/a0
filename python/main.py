@@ -222,6 +222,11 @@ async def lifespan(app: FastAPI):
     _sigma.start_watch()
     print(f"[sigma] Σ online — n={_sigma.n}, resolution={_sigma.resolution}")
     await heartbeat_service.start()
+    # Periodic sweep so expired chat-approval gates don't accumulate on a quiet system.
+    from .routes.chat import pending_gate_sweep_loop
+    from .services.bg_tasks import spawn as _spawn_bg
+    _spawn_bg(pending_gate_sweep_loop(), name="pending_gate_sweep")
+    print("[chat] pending-gate sweep loop started")
     yield
     await heartbeat_service.stop()
     try:

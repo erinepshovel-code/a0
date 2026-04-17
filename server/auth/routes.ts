@@ -9,6 +9,45 @@ function sha256Hex(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
+/**
+ * Fire-and-forget call to the FastAPI internal endpoint that promotes
+ * recognized work-email accounts to the WS tier. Failures are logged
+ * but never block the auth flow.
+ */
+async function tryPromoteWs(userId: string, email: string | null | undefined): Promise<void> {
+  try {
+    const secret = process.env.INTERNAL_API_SECRET;
+    if (!secret) {
+      // start-dev.sh exports a per-run secret in dev; if it's missing,
+      // skip the call rather than 401-ing the user.
+      return;
+    }
+    const port = process.env.PYTHON_PORT || "8001";
+    const url = `http://127.0.0.1:${port}/api/v1/billing/internal/promote-ws`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-a0p-internal": secret,
+          "x-internal-secret": secret,
+        },
+        body: JSON.stringify({ user_id: userId, email: email ?? null }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        console.warn(`[auth] promote-ws non-OK: ${res.status} ${await res.text().catch(() => "")}`);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (err) {
+    console.warn("[auth] promote-ws call failed (non-fatal):", err);
+  }
+}
+
 export function registerAuthRoutes(app: Express) {
   app.get("/api/auth/user", async (req: Request, res: Response) => {
     const userId = req.session?.userId;
@@ -48,6 +87,8 @@ export function registerAuthRoutes(app: Express) {
       req.session.userId = user.id;
       req.session.userEmail = user.email ?? undefined;
       req.session.userRole = user.role;
+      // Fire-and-forget: promote work-email accounts to WS tier on every login.
+      void tryPromoteWs(user.id, user.email);
       const { passphraseHash: _, ...safe } = user;
       res.json({ user: safe });
     } catch (err) {
@@ -98,6 +139,8 @@ export function registerAuthRoutes(app: Express) {
       req.session.userId = user.id;
       req.session.userEmail = user.email ?? undefined;
       req.session.userRole = user.role;
+      // Fire-and-forget: promote work-email accounts to WS tier on registration.
+      void tryPromoteWs(user.id, user.email);
 
       const { passphraseHash: _, ...safe } = user;
       res.status(201).json({ user: safe });
