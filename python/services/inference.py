@@ -203,6 +203,15 @@ async def call_energy_provider(
             enable_caching=spec.get("supports_prompt_caching", False),
         )
 
+    if provider_id in ("gemini", "gemini3"):
+        from .gemini_native import call_gemini_native
+        return await call_gemini_native(
+            api_key, spec["model"], payload_messages, max_tokens,
+            use_tools=use_tools,
+            reasoning_effort=reasoning_effort,
+            supports_thinking=provider_id == "gemini3",
+        )
+
     return await _call_openai_compat(
         api_key, spec["url"], spec["model"], payload_messages, max_tokens,
         use_tools=use_tools,
