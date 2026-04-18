@@ -35,7 +35,7 @@ PORT = "5000"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["npm", "start"]
+run = ["bash", "scripts/start-prod.sh"]
 build = ["bash", "scripts/build-prod.sh"]
 publicDir = "dist/public"
 
