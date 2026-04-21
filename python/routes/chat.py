@@ -571,9 +571,16 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
             "role": "assistant",
             "content": content,
             "model": provider_id,
-            "metadata": {"tier": tier, "usage": usage, "cache": energy_registry.cache_breakdown(usage)},
-            "orchestration_mode": eff_mode,
-            "cut_mode": eff_cut,
+            # The Message model has no orchestration_mode / cut_mode columns;
+            # those live on agent_runs. Fold them into metadata so the UI can
+            # still surface them per-message via msg.metadata.orchestration_mode.
+            "metadata": {
+                "tier": tier,
+                "usage": usage,
+                "cache": energy_registry.cache_breakdown(usage),
+                "orchestration_mode": eff_mode,
+                "cut_mode": eff_cut,
+            },
         })
 
         from ..engine.zeta import _zeta_engine

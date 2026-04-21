@@ -21,7 +21,10 @@ _CONV_ALLOWED_FIELDS = {
 }
 _MSG_ALLOWED_FIELDS = {
     "conversation_id", "role", "content", "model", "metadata",
-    "orchestration_mode", "cut_mode", "parent_run_id",
+    # NOTE: orchestration_mode / cut_mode / parent_run_id were once on this
+    # whitelist but the Message model has no such columns — they belong on
+    # agent_runs (a different table) or inside the metadata JSONB.
+    # See routes/chat.py for the metadata-fold pattern.
 }
 
 
