@@ -78,12 +78,27 @@ _ANTHROPIC_CACHE_MIN_CHARS = 4096
 
 
 def _resolve_attachment_path(storage_url: str) -> Optional[str]:
-    """Map a storage_url like '/uploads/foo.png' to an absolute local path."""
+    """Map a storage_url like '/uploads/foo.png' to an absolute local path.
+
+    Rejects any storage_url that resolves outside the project's uploads/
+    directory. lstrip('/') alone does NOT stop '..' segments — os.path.join
+    with an absolute base happily walks up via '..', and the realpath that
+    follows would then succeed against /etc/passwd or similar. The realpath
+    + commonpath check below is what actually contains the lookup.
+    """
     if not storage_url:
         return None
     base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    uploads_root = os.path.realpath(os.path.join(base, "uploads"))
     rel = storage_url.lstrip("/")
-    abs_path = os.path.join(base, rel)
+    abs_path = os.path.realpath(os.path.join(base, rel))
+    try:
+        if os.path.commonpath([uploads_root, abs_path]) != uploads_root:
+            _log.warning("attachment path traversal blocked: %s", storage_url)
+            return None
+    except ValueError:
+        # commonpath raises on different drives (Windows) or empty paths.
+        return None
     return abs_path if os.path.isfile(abs_path) else None
 
 
@@ -272,7 +287,17 @@ def _build_provider_messages(messages: list[dict], provider_id: str) -> list[dic
             out.append({**base, "content": composed_text, "attachments": inline})
             continue
 
-        # Unknown provider: at least pass the composed text so docs aren't lost.
+        # Unknown provider: pass the composed text so docs aren't lost, and
+        # surface the dropped images explicitly rather than silently eliding
+        # them. Better that the model sees "[3 images dropped: ...]" than
+        # nothing at all.
+        if images:
+            _log.warning(
+                "provider %r has no multimodal adapter; %d image attachment(s) dropped",
+                provider_id, len(images),
+            )
+            marker = f"\n\n[{len(images)} image attachment(s) dropped: provider {provider_id!r} has no vision adapter]"
+            composed_text = (composed_text or "") + marker
         out.append({**base, "content": composed_text})
     return out
 
