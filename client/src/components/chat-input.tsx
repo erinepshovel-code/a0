@@ -46,7 +46,7 @@ const MODES = [
   { id: "daisy_chain", label: "daisy chain", multi: true },
 ] as const;
 
-interface AvailEntry { id: string; label: string; available: boolean; active: boolean }
+interface AvailEntry { id: string; label: string; available: boolean; active: boolean; enabled?: boolean; disabled_models?: string[] }
 interface PrefsRes { orchestration_mode?: string; cut_mode?: string; providers?: string[] }
 
 export function ChatInput({
@@ -99,7 +99,23 @@ export function ChatInput({
   });
 
   const currentMode = MODES.find((m) => m.id === mode) ?? MODES[0];
-  const availableProviders = availability.filter((a) => a.available);
+  // Hide providers that the user has switched OFF in the energy settings —
+  // the server will 400 them anyway, so don't dangle them in the chip row.
+  const availableProviders = availability.filter(
+    (a) => a.available && a.enabled !== false,
+  );
+
+  // Reconcile selectedProviders when availability changes. If a provider is
+  // disabled in Energy settings, drop it from the selection so we don't ship
+  // it in the request body and earn a 400.
+  useEffect(() => {
+    if (!availability.length) return;
+    const allowed = new Set(availableProviders.map((a) => a.id));
+    setSelectedProviders((prev) => {
+      const next = prev.filter((id) => allowed.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [availability, availableProviders]);
 
   const toggleProvider = (pid: string) => {
     setSelectedProviders((prev) =>

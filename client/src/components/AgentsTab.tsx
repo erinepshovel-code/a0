@@ -3,17 +3,19 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bot, Zap, GitMerge, Plus, Loader2, Radio, CheckCircle2, Clock,
-  RefreshCw, ChevronDown, ChevronUp,
+  RefreshCw, ChevronDown, ChevronUp, Ban, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import TabShell from "@/components/TabShell";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useBillingStatus } from "@/hooks/use-billing-status";
 
 interface AgentInstance {
   name: string;
@@ -55,6 +57,8 @@ interface ProviderSeed {
     presets?: Record<string, Record<string, string>>;
     active_preset?: string;
     prices_updated_at?: number | null;
+    enabled?: boolean;
+    disabled_models?: string[];
   };
   seed_updated_at?: string | null;
 }
@@ -127,27 +131,59 @@ interface ModelCircleProps {
   model: ModelInfo;
   roles: Role[];
   allModels: ModelInfo[];
+  disabled: boolean;
+  canEdit: boolean;
   onRoleClick: (role: Role) => void;
   onRoleReassign: (role: Role, newModel: string) => void;
+  onToggleDisabled: () => void;
+  isTogglingDisabled: boolean;
 }
 
-function ModelCircle({ model, roles, allModels, onRoleClick, onRoleReassign }: ModelCircleProps) {
+function ModelCircle({
+  model, roles, allModels, disabled, canEdit,
+  onRoleClick, onRoleReassign, onToggleDisabled, isTogglingDisabled,
+}: ModelCircleProps) {
   const [openRole, setOpenRole] = useState<Role | null>(null);
 
   return (
     <div
       className={`relative rounded-xl border p-3 flex flex-col gap-1.5 transition-all ${
-        roles.length > 0
+        disabled
+          ? "border-destructive/30 bg-destructive/5 opacity-60"
+          : roles.length > 0
           ? "border-primary/30 bg-primary/5"
           : "border-border bg-card/40"
       } ${model.stale ? "opacity-60" : ""}`}
       data-testid={`card-model-${model.id}`}
     >
-      {model.stale && (
-        <span className="absolute top-1.5 right-1.5 text-[9px] px-1 py-0 rounded bg-destructive/20 text-destructive border border-destructive/30">stale</span>
-      )}
+      <div className="absolute top-1 right-1 flex items-center gap-1">
+        {model.stale && (
+          <span className="text-[9px] px-1 py-0 rounded bg-destructive/20 text-destructive border border-destructive/30">stale</span>
+        )}
+        {canEdit && (
+        <button
+          type="button"
+          onClick={onToggleDisabled}
+          disabled={isTogglingDisabled}
+          aria-pressed={disabled}
+          title={disabled ? "Re-allow this model" : "Block this model"}
+          className={`h-5 w-5 inline-flex items-center justify-center rounded hover-elevate ${
+            disabled
+              ? "text-destructive border border-destructive/40 bg-destructive/10"
+              : "text-muted-foreground border border-transparent hover:border-border"
+          }`}
+          data-testid={`btn-toggle-model-${model.id}`}
+        >
+          {isTogglingDisabled
+            ? <Loader2 className="h-3 w-3 animate-spin" />
+            : disabled
+              ? <Ban className="h-3 w-3" />
+              : <Check className="h-3 w-3 opacity-50" />}
+        </button>
+        )}
+      </div>
 
-      <div className="font-mono text-[11px] font-medium text-foreground truncate pr-6" title={model.id}>
+      <div className={`font-mono text-[11px] font-medium truncate pr-12 ${disabled ? "line-through text-muted-foreground" : "text-foreground"}`} title={model.id}>
         {model.id}
       </div>
 
@@ -222,12 +258,16 @@ interface ProviderPanelProps {
 function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanelProps) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { isAdmin } = useBillingStatus();
   const [collapsed, setCollapsed] = useState(false);
 
   const rc = provider.route_config || {};
   const assignments: Record<string, string> = rc.model_assignments || {};
   const availableModels: ModelInfo[] = rc.available_models || [];
   const activePreset: string = rc.active_preset || "balance";
+  const isEnabled: boolean = rc.enabled !== false;
+  const disabledModels: string[] = Array.isArray(rc.disabled_models) ? rc.disabled_models : [];
+  const disabledSet = new Set(disabledModels);
 
   // Compute which roles map to each model
   const modelRoles: Record<string, Role[]> = {};
@@ -282,6 +322,7 @@ function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanel
   };
 
   const isUnavailable = !provider.available;
+  const isDisabledByUser = !isEnabled;
 
   const reassignMutation = useMutation({
     mutationFn: async ({ newAssignments }: { newAssignments: Record<string, string> }) => {
@@ -301,13 +342,40 @@ function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanel
     reassignMutation.mutate({ newAssignments });
   };
 
+  const seedPatch = useMutation({
+    mutationFn: async (body: Record<string, unknown>) => {
+      const res = await apiRequest("PATCH", `/api/energy/providers/${provider.id}/seed`, body);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/energy/providers"] });
+      qc.invalidateQueries({ queryKey: ["/api/v1/agents/energy-providers"] });
+    },
+    onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
+  });
+
+  const toggleEnabled = (next: boolean) => {
+    seedPatch.mutate({ enabled: next });
+  };
+
+  const toggleModelDisabled = (modelId: string) => {
+    const next = disabledSet.has(modelId)
+      ? disabledModels.filter((m) => m !== modelId)
+      : [...disabledModels, modelId];
+    seedPatch.mutate({ disabled_models: next });
+  };
+
   const pricesTs = rc.prices_updated_at;
   const pricesAge = pricesTs ? Math.round((Date.now() / 1000 - pricesTs) / 3600) : null;
 
   return (
     <Card
       className={`overflow-hidden transition-all ${
-        provider.active ? "border-primary/40 shadow-sm shadow-primary/10" : "border-border"
+        isDisabledByUser
+          ? "border-border opacity-50"
+          : provider.active
+            ? "border-primary/40 shadow-sm shadow-primary/10"
+            : "border-border"
       }`}
       data-testid={`card-provider-${provider.id}`}
     >
@@ -330,6 +398,23 @@ function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanel
         </div>
 
         <div className="flex items-center gap-1.5">
+          {isAdmin && (
+            <div
+              className="flex items-center gap-1.5 mr-1"
+              title={isEnabled ? "Click to disable this provider" : "Click to enable this provider"}
+            >
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {isEnabled ? "on" : "off"}
+              </span>
+              <Switch
+                checked={isEnabled}
+                onCheckedChange={toggleEnabled}
+                disabled={seedPatch.isPending}
+                aria-label={`Enable provider ${provider.id}`}
+                data-testid={`switch-enable-${provider.id}`}
+              />
+            </div>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -429,9 +514,13 @@ function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanel
                     key={model.id}
                     model={model}
                     roles={modelRoles[model.id] || []}
-                    allModels={availableModels}
+                    allModels={availableModels.filter((m) => !disabledSet.has(m.id))}
+                    disabled={disabledSet.has(model.id)}
+                    canEdit={isAdmin}
                     onRoleClick={() => {}}
                     onRoleReassign={handleRoleReassign}
+                    onToggleDisabled={() => toggleModelDisabled(model.id)}
+                    isTogglingDisabled={seedPatch.isPending}
                   />
                 ))}
               </div>

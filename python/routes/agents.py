@@ -149,7 +149,24 @@ async def list_agents():
 
 @router.get("/agents/energy-providers")
 async def list_energy_providers():
-    return energy_registry.list_providers()
+    """List providers + per-provider enable/disable state from the seed.
+
+    `enabled` defaults to True when the field is absent in route_config so
+    existing seed rows behave as before. `disabled_models` is the per-model
+    deny list (empty when unset). Both are surfaced here so the chat input
+    can hide killed providers without a separate fetch.
+    """
+    base = energy_registry.list_providers()
+    # Read each provider's seed once. _get_seed_module is cheap and we only
+    # have a handful of providers, so the N round-trips are fine.
+    from .energy import _get_seed_module
+    for entry in base:
+        seed = await _get_seed_module(entry["id"])
+        rc = (seed or {}).get("route_config") or {}
+        entry["enabled"] = bool(rc.get("enabled", True))
+        dm = rc.get("disabled_models") or []
+        entry["disabled_models"] = list(dm) if isinstance(dm, list) else []
+    return base
 
 
 @router.post("/agents/energy-providers/active")

@@ -137,6 +137,25 @@ class PatchSeedBody(BaseModel):
     context_addendum: Optional[str] = Field(default=None, max_length=50_000)
     capabilities: Optional[dict] = None
     presets: Optional[dict] = None
+    # Provider-level kill switch — when False the provider is hidden from
+    # chat-input chips and rejected at the chat send tier-gate. Defaults to
+    # True (enabled) when the field is absent in route_config.
+    enabled: Optional[bool] = None
+    # Per-model deny list — model ids in here are excluded from role
+    # reassignment popovers and from any future model-picker UI.
+    disabled_models: Optional[list[str]] = Field(default=None, max_length=200)
+
+    @field_validator("disabled_models")
+    @classmethod
+    def _check_disabled_models(cls, v):
+        if v is None:
+            return v
+        for i, m in enumerate(v):
+            if not isinstance(m, str) or not _MODEL_ID_RE.match(m):
+                raise ValueError(f"disabled_models[{i}]='{m}' not a valid model id")
+        if len(set(v)) != len(v):
+            raise ValueError("disabled_models contains duplicates")
+        return v
 
     @field_validator("model_assignments")
     @classmethod
@@ -323,6 +342,10 @@ async def patch_provider_seed(provider_id: str, body: PatchSeedBody, request: Re
         updates["capabilities"] = body.capabilities
     if body.presets is not None:
         updates["presets"] = body.presets
+    if body.enabled is not None:
+        updates["enabled"] = bool(body.enabled)
+    if body.disabled_models is not None:
+        updates["disabled_models"] = list(body.disabled_models)
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")

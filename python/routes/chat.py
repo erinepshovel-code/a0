@@ -341,6 +341,8 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
             providers_to_gate = _resolve(body.providers) or [provider_id]
         else:
             providers_to_gate = [provider_id]
+        # Read seed flags once for the providers we're about to call.
+        from .energy import _get_seed_module as _gsm
         for _pid in providers_to_gate:
             _meta = energy_registry.get_provider(_pid) or {}
             _mt = _meta.get("min_tier")
@@ -348,6 +350,15 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 raise HTTPException(
                     status_code=403,
                     detail=f"Model '{_pid}' requires tier '{_mt}' or higher (current: {tier})",
+                )
+            # Per-provider kill switch from seed route_config.enabled.
+            # Default True when missing so existing seeds keep working.
+            _seed = await _gsm(_pid)
+            _rc = (_seed or {}).get("route_config") or {}
+            if _rc.get("enabled") is False:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Provider '{_pid}' is disabled in energy settings",
                 )
 
         scope_to_grant = _parse_approve_scope(body.content)
