@@ -37,6 +37,51 @@ Two rules:
    often cheaper *and* better than 100 T2 calls. Use the tier ladder as
    a filter, not as a commitment.
 
+### 1.1 Cost is one of four axes
+
+The table above is $/MTok. That's the *first* filter, not the only one.
+Three more axes can flip a tier choice:
+
+- **Latency.** For interactive chat, p99 time-to-first-token usually
+  matters more than per-token price. A "cheap" T0 that's overloaded at
+  8s p99 is worse UX than a T1 at 1.5s. Measure under real load, not
+  the provider's marketing chart.
+- **Context window.** Gemini Flash's 1M window changes batching math —
+  you can stuff 100× more items per call than gpt-5-nano's 8k. The
+  effective per-item cost shifts accordingly. Always compute cost per
+  *item* at the batch size your context window actually allows.
+- **Modality.** Vision, audio, and embeddings are *separate* ladders.
+  gpt-5-mini can't see; gemini-2.5-flash can. If your task has any
+  multimodal input, the tier choice is pre-decided by capability before
+  cost enters the picture.
+
+### 1.2 The tier you should consider before T0: **embeddings**
+
+For classification, dedup, clustering, retrieval, and "is X similar to
+Y" — start with embeddings, not chat. Embedding APIs run ~$0.02/MTok
+(another order of magnitude below T0) and replace the LLM entirely for
+a huge fraction of "sort this stuff" work.
+
+Pattern: embed all items once → cluster / nearest-neighbor in code →
+swarm-label only the ambiguous boundary cases (low-margin nearest
+neighbors, multi-cluster items). On the 1M-tweets example in §6, this
+pre-pass would cut the swarm cost by another 5–10× because most items
+land confidently in one cluster and never see an LLM.
+
+If you find yourself reaching for T0 to ask "are these the same?" or
+"which bucket does this go in?", reach for embeddings first.
+
+### 1.3 Reasoning-model economics are inverted
+
+T3 with extended thinking (Claude `thinking`, gpt-5 high
+`reasoning_effort`, o-series) bills for hidden reasoning tokens that
+don't show up where you expect. Sticker price per output token looks
+similar to T2; *effective* price per call can be 5–20× higher because
+the model burns thousands of internal tokens before emitting one
+visible token. Set explicit `max_thinking_tokens` budgets and monitor
+the reasoning-token usage field separately. Never put a reasoning model
+inside a tight loop without a per-step token cap.
+
 ---
 
 ## 2. Decision matrix — task class → starting tier
@@ -122,6 +167,19 @@ Mandatory constraints — break any of these and the swarm degrades to
 7. **Cap parallelism at the provider's rate limit, not your CPU.** T0
    models will happily 429 you. Use a semaphore sized to ~80% of the
    tier's TPM ceiling and a token bucket for retries.
+
+---
+
+### 3.1 Where the swarm pattern actively *hurts*
+
+For **creative / divergent** tasks — naming, copy, ad headlines, brand
+ideation, brainstorming — invert everything. You want N high-temperature
+samples from *one* model (not schema-locked, not deterministic), then a
+T2 critic ranks them. Schema constraints + temperature 0 + parallel
+voting collapses the diversity that's the whole point of the task.
+
+Heuristic: if the success criterion is "interesting", swarm-pattern is
+wrong. If it's "correct", swarm-pattern is right.
 
 ---
 
@@ -243,6 +301,26 @@ already long, or the schema is a paragraph), the swarm advantage shrinks
   Use a semaphore.
 - **Ignoring prompt caching.** A 10k-token system prompt sent fresh to
   10k T0 calls is wasted money. Cache it once.
+- **Cache-busting in the prefix.** `datetime.now()`, a per-user nonce, a
+  freshly-generated UUID, or any other varying byte in the *cached
+  prefix* silently destroys the cache and doubles your bill. Caches are
+  byte-identical-prefix; put variability in the *suffix*.
+- **Unpinned model versions.** "gemini-2.5-flash" today and in six
+  months are different models with different accuracy on your task.
+  Pin to dated versions in production seeds (`gemini-2.5-flash-2025-xx`)
+  and re-run the §8 eval on every bump.
+- **Estimating tokens by character count.** "It's about 80 tokens" is
+  how a 1.5M call quietly becomes a 4M call. Use tiktoken (OpenAI),
+  the Anthropic counter, or `count_tokens` (Gemini) before sizing any
+  swarm budget.
+- **Embedding when you should LLM, or LLM when you should embed.** If
+  the question is "are these the same?" / "which bucket?", try
+  embeddings first (§1.2). If the question requires reasoning about
+  *why*, embeddings won't get you there.
+- **Letting one Forge agent drain the budget.** Tier overrides on a
+  character sheet need a *per-agent* budget cap, not just a per-call
+  tier. One chatty research persona pinned to T3 can burn a user's
+  whole month in an afternoon.
 
 ---
 
