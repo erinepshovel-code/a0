@@ -1,3 +1,4 @@
+# 123:3
 # N:M
 """sub_agent_merge — merge a sub-agent's ring state, archive its log stream."""
 import json
@@ -136,3 +137,4 @@ async def handle(agent_id: str = "", run_id: str = "", result_summary: str = "",
         "note": "Ring state consolidated; run log stream archived to artifacts.",
     })
 # N:M
+# 123:3

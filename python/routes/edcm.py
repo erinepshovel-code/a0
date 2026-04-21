@@ -1,4 +1,4 @@
-# 81:8
+# 86:8
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional, Any
@@ -110,4 +110,4 @@ async def list_snapshots(limit: int = 50):
 async def add_snapshot(body: EdcmSnapshotInput):
     row = await storage.add_edcm_snapshot(body.model_dump(exclude_none=True))
     return {"edcmbone_version": EDCMBONE_VERSION, "item": row}
-# 81:8
+# 86:8

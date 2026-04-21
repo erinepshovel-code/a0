@@ -1,4 +1,4 @@
-# 211:16
+# 251:35
 import os
 from sqlalchemy import text as sa_text
 
@@ -312,4 +312,4 @@ def resolve_providers(providers: list[str] | None) -> list[str]:
         elif p in BUILTIN_PROVIDERS and p not in out:
             out.append(p)
     return out
-# 211:16
+# 251:35

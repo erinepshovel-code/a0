@@ -1,3 +1,4 @@
+# 32:6
 # N:M
 # DOC module: tests.test_cut_modes
 # DOC label: Cut-mode filter
@@ -50,3 +51,4 @@ def test_invalid_mode_raises():
     with pytest.raises(ValueError):
         tools_for_cut_mode("nuclear", ALL, side_effects_index=SIDE_EFFECTS)
 # N:M
+# 32:6

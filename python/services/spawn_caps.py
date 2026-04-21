@@ -1,3 +1,4 @@
+# 86:16
 # N:M
 """Recursion-cap enforcement for sub_agent_spawn.
 
@@ -120,3 +121,4 @@ def caps_description_tail() -> str:
         f"A0P_MAX_SPAWN_DEPTH / A0P_MAX_SPAWN_FANOUT)."
     )
 # N:M
+# 86:16

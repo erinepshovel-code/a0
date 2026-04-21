@@ -1,3 +1,4 @@
+# 63:18
 # N:M
 """Cut-mode tool filter — gates which tools the model sees per turn.
 
@@ -94,3 +95,4 @@ async def get_user_default_cut_mode(user_id: str | None) -> str:
 def names_in(tools: Iterable[dict]) -> list[str]:
     return [_tool_name(t) for t in tools]
 # N:M
+# 63:18

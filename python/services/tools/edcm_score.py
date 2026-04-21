@@ -1,3 +1,4 @@
+# 37:3
 # N:M
 """edcm_score — return current EDCM ring coherence (edcmbone-backed)."""
 import json
@@ -41,3 +42,4 @@ async def handle(**_) -> str:
         "edcmbone_version": EDCMBONE_VERSION,
     })
 # N:M
+# 37:3

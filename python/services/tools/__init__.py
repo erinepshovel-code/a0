@@ -1,4 +1,4 @@
-# 103:31
+# 139:26
 """Tool registry — self-declaring per-tool modules.
 
 Discovery is filesystem-based: every `*.py` sibling that exports both a
@@ -180,4 +180,4 @@ async def dispatch(name: str, **kwargs) -> Any:
     from . import _archive_wrap
     return await _archive_wrap.wrap(result, tool_name=name, produces=produces,
                                     agent_run_id=kwargs.get("_agent_run_id"))
-# 103:31
+# 139:26

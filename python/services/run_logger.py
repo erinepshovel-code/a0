@@ -1,3 +1,4 @@
+# 117:17
 # N:M
 """Per-run buffered structured logger backed by the agent_logs table.
 
@@ -155,3 +156,4 @@ async def dump_run_jsonl(run_id: str) -> bytes:
 def queued_count() -> int:
     return len(_QUEUE)
 # N:M
+# 117:17
