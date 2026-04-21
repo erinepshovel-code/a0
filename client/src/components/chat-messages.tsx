@@ -14,12 +14,23 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+export interface OrchestrationResponse {
+  provider?: string;
+  model?: string;
+  content?: string;
+  error?: string;
+  usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+  [key: string]: unknown;
+}
+
 export interface UsageData {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
+  orchestration_mode?: string;
+  responses?: OrchestrationResponse[];
   [key: string]: unknown;
 }
 
@@ -221,6 +232,61 @@ export function SystemStatusBanner({ status }: { status: SystemStatus }) {
   );
 }
 
+export function OrchestrationResponses({ usage }: { usage?: UsageData | null }) {
+  const responses = usage?.responses;
+  if (!Array.isArray(responses) || responses.length === 0) return null;
+  const mode = String(usage?.orchestration_mode ?? "").toLowerCase();
+  const isLadder = mode === "daisy_chain" || mode === "daisy-chain";
+  return (
+    <div className="mt-2 border-t border-border/40 pt-2" data-testid="orchestration-panel">
+      <div className="flex items-center gap-1.5 mb-1.5 text-[9px] uppercase tracking-wider text-muted-foreground">
+        <span>{mode || "fan-out"}</span>
+        <span className="opacity-60">·</span>
+        <span>{responses.length} responses</span>
+      </div>
+      {isLadder ? (
+        <div className="flex flex-col gap-1.5">
+          {responses.map((r, i) => (
+            <div
+              key={i}
+              className="rounded-md border border-border bg-background/40 p-2 text-[11px]"
+              style={{ marginLeft: `${i * 8}px` }}
+              data-testid={`orchestration-step-${i}`}
+            >
+              <div className="flex items-center gap-1 mb-1 text-[9px] text-muted-foreground">
+                <span>step {i + 1}</span>
+                {r.provider && <Badge variant="outline" className="text-[9px] h-3.5 px-1">{r.provider}</Badge>}
+                {r.model && <span className="opacity-60">{r.model}</span>}
+              </div>
+              {r.error
+                ? <p className="text-destructive text-[10px]">{r.error}</p>
+                : <p className="whitespace-pre-wrap break-words opacity-90">{r.content}</p>}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+          {responses.map((r, i) => (
+            <div
+              key={i}
+              className="rounded-md border border-border bg-background/40 p-2 text-[11px] min-w-0"
+              data-testid={`orchestration-card-${i}`}
+            >
+              <div className="flex items-center gap-1 mb-1 text-[9px] text-muted-foreground">
+                {r.provider && <Badge variant="outline" className="text-[9px] h-3.5 px-1">{r.provider}</Badge>}
+                {r.model && <span className="truncate opacity-60">{r.model}</span>}
+              </div>
+              {r.error
+                ? <p className="text-destructive text-[10px]">{r.error}</p>
+                : <p className="whitespace-pre-wrap break-words opacity-90 max-h-48 overflow-auto">{r.content}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MessageBubble({ message, onSend }: { message: Message; onSend: (cmd: string) => void }) {
   const isUser = message.role === "user";
   const isError = !isUser && message.metadata?.error === true;
@@ -284,6 +350,7 @@ export function MessageBubble({ message, onSend }: { message: Message; onSend: (
         <div className={cn("prose prose-sm max-w-none dark:prose-invert", isUser && "text-primary-foreground")}>
           <MarkdownContent content={message.content} isUser={isUser} />
         </div>
+        {!isUser && <OrchestrationResponses usage={message.metadata?.usage} />}
         {isError && showDetail && message.metadata?.error_detail && (
           <pre className="mt-2 text-[10px] bg-black/10 rounded p-2 overflow-x-auto whitespace-pre-wrap opacity-80" data-testid={`error-detail-${message.id}`}>{message.metadata.error_detail}</pre>
         )}

@@ -151,13 +151,23 @@ export default function ChatPage() {
   });
 
   const sendMessage = useMutation({
-    mutationFn: async (payload: { content: string; attachment_ids?: number[] }) => {
+    mutationFn: async (payload: {
+      content: string;
+      attachment_ids?: number[];
+      orchestration_mode?: string;
+      providers?: string[];
+      cut_mode?: string;
+    }) => {
       if (!activeConvId) throw new Error("No conversation selected");
-      const res = await apiRequest("POST", `/api/v1/conversations/${activeConvId}/messages`, {
+      const body: Record<string, unknown> = {
         role: "user",
         content: payload.content,
         attachment_ids: payload.attachment_ids ?? [],
-      });
+      };
+      if (payload.orchestration_mode) body.orchestration_mode = payload.orchestration_mode;
+      if (payload.providers && payload.providers.length) body.providers = payload.providers;
+      if (payload.cut_mode) body.cut_mode = payload.cut_mode;
+      const res = await apiRequest("POST", `/api/v1/conversations/${activeConvId}/messages`, body);
       return res.json();
     },
     onSuccess: () => {
@@ -333,7 +343,12 @@ export default function ChatPage() {
                 </Button>
               )}
             </div>
-            <ChatInput onSend={(c) => sendMessage.mutate(c)} isSending={sendMessage.isPending} />
+            <ChatInput
+              onSend={(content, attachment_ids, opts) =>
+                sendMessage.mutate({ content, attachment_ids, ...(opts ?? {}) })
+              }
+              isSending={sendMessage.isPending}
+            />
           </>
         )}
       </div>
