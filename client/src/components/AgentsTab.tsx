@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Bot, Zap, GitMerge, Plus, Loader2, Radio, CheckCircle2, Clock,
+  Bot, Zap, GitMerge, Loader2, Radio, CheckCircle2, Clock,
   RefreshCw, ChevronDown, ChevronUp, Ban, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -258,8 +258,7 @@ interface ProviderPanelProps {
 function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanelProps) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { isAdmin } = useBillingStatus();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   const rc = provider.route_config || {};
   const assignments: Record<string, string> = rc.model_assignments || {};
@@ -398,23 +397,21 @@ function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanel
         </div>
 
         <div className="flex items-center gap-1.5">
-          {isAdmin && (
-            <div
-              className="flex items-center gap-1.5 mr-1"
-              title={isEnabled ? "Click to disable this provider" : "Click to enable this provider"}
-            >
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                {isEnabled ? "on" : "off"}
-              </span>
-              <Switch
-                checked={isEnabled}
-                onCheckedChange={toggleEnabled}
-                disabled={seedPatch.isPending}
-                aria-label={`Enable provider ${provider.id}`}
-                data-testid={`switch-enable-${provider.id}`}
-              />
-            </div>
-          )}
+          <div
+            className="flex items-center gap-1.5 mr-1"
+            title={isEnabled ? "Click to disable this provider" : "Click to enable this provider"}
+          >
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {isEnabled ? "on" : "off"}
+            </span>
+            <Switch
+              checked={isEnabled}
+              onCheckedChange={toggleEnabled}
+              disabled={seedPatch.isPending}
+              aria-label={`Enable provider ${provider.id}`}
+              data-testid={`switch-enable-${provider.id}`}
+            />
+          </div>
           <Button
             size="sm"
             variant="ghost"
@@ -516,7 +513,7 @@ function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanel
                     roles={modelRoles[model.id] || []}
                     allModels={availableModels.filter((m) => !disabledSet.has(m.id))}
                     disabled={disabledSet.has(model.id)}
-                    canEdit={isAdmin}
+                    canEdit={true}
                     onRoleClick={() => {}}
                     onRoleReassign={handleRoleReassign}
                     onToggleDisabled={() => toggleModelDisabled(model.id)}
@@ -534,7 +531,6 @@ function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanel
 export default function AgentsTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [spawnProvider, setSpawnProvider] = useState<string>("");
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set(["openai"]));
 
   const { data: agents = [], isLoading: agentsLoading, refetch: refetchAgents } = useQuery<AgentInstance[]>({
@@ -550,23 +546,6 @@ export default function AgentsTab() {
   const { data: providerSeeds = [], isLoading: seedsLoading } = useQuery<ProviderSeed[]>({
     queryKey: ["/api/energy/providers"],
     refetchInterval: 30000,
-  });
-
-  const activeProvider = providerSeeds.find((p) => p.active)?.id ?? "";
-
-  const spawnMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/v1/agents/spawn", {
-        provider: spawnProvider || undefined,
-      });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["/api/v1/agents"] });
-      toast({ title: "Sub-agent spawned", description: data.sub_agent_name });
-      setSpawnProvider("");
-    },
-    onError: (e: Error) => toast({ title: "Spawn failed", description: e.message, variant: "destructive" }),
   });
 
   const mergeMutation = useMutation({
@@ -608,8 +587,8 @@ export default function AgentsTab() {
     });
   };
 
-  const availabilityMap = Object.fromEntries(availabilityList.map((a) => [a.id, a]));
   const isLoadingProviders = availLoading || seedsLoading;
+  void availabilityList;
 
   return (
     <TabShell
@@ -686,37 +665,11 @@ export default function AgentsTab() {
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider" data-testid="section-header-subagents">
               PCNA Sub-agents ({subAgents.length})
             </h3>
-            <div className="flex items-center gap-2">
-              <Select value={spawnProvider} onValueChange={setSpawnProvider}>
-                <SelectTrigger className="h-7 text-xs w-28" data-testid="select-spawn-provider">
-                  <SelectValue placeholder={activeProvider || "provider"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {availabilityList.filter((p) => p.available).map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.id}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                size="sm"
-                className="h-7 text-xs gap-1"
-                onClick={() => spawnMutation.mutate()}
-                disabled={spawnMutation.isPending}
-                data-testid="btn-spawn-subagent"
-              >
-                {spawnMutation.isPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Plus className="h-3 w-3" />
-                )}
-                Spawn
-              </Button>
-            </div>
           </div>
 
           {subAgents.length === 0 ? (
             <div className="text-xs text-muted-foreground py-4 text-center border border-dashed border-border rounded-md" data-testid="subagents-empty">
-              No active sub-agents. Spawn one above.
+              No active sub-agents. Forge a new agent on the Forge tab and it will appear here.
             </div>
           ) : (
             <div className="flex flex-col gap-2">

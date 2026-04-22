@@ -322,8 +322,23 @@ async def get_provider_seed(provider_id: str):
 
 @router.patch("/providers/{provider_id}/seed")
 async def patch_provider_seed(provider_id: str, body: PatchSeedBody, request: Request):
-    """Update model_assignments and other seed fields. Admin only."""
-    await _require_admin(request)
+    """Update provider seed (assignments, capabilities, kill-switches).
+
+    The kill-switch fields (`enabled`, `disabled_models`) are user-level
+    settings — every signed-in user is allowed to toggle them. The deeper
+    seed-config fields (model_assignments, available_models, presets, etc.)
+    remain admin-only because they reshape global routing for everyone.
+    """
+    user_only = (
+        body.model_assignments is None
+        and body.available_models is None
+        and body.enabled_tools is None
+        and body.context_addendum is None
+        and body.capabilities is None
+        and body.presets is None
+    )
+    if not user_only:
+        await _require_admin(request)
     updates: dict = {}
     if body.model_assignments is not None:
         # Validate roles
