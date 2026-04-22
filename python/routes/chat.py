@@ -574,6 +574,11 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 usage.setdefault("orchestration_mode", "single")
                 usage.setdefault("providers", [provider_id])
             else:
+                # Multi-model orchestration is a model-voice comparator, not an
+                # agentic surface. Do NOT carry the forge agent persona into
+                # fan_out/council/daisy_chain — those compare raw provider
+                # outputs without an attached agent identity. Tools are also
+                # disabled by the multi-model hub (single-branch only).
                 from ..services.inference_modes import run_inference_with_mode
                 content, usage = await run_inference_with_mode(
                     messages=history,
@@ -581,7 +586,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                     providers=eff_providers,
                     cut_mode=eff_cut,
                     user_id=uid or None,
-                    system_prompt=system_prompt or None,
+                    system_prompt=None,
                 )
         finally:
             set_approval_scope_user_id(None)

@@ -208,11 +208,27 @@ def _validate_orch(mode: str) -> None:
         raise HTTPException(status_code=400, detail=f"orchestration_mode must be one of {sorted(VALID_ORCH)}")
 
 
+def _validate_agent_orch_combo(agent_id: Optional[int], mode: str) -> None:
+    """Multi-model orchestration is a model-voice comparator, not an agentic
+    surface. A contestant pairing a forge agent with fan_out/council/daisy_chain
+    is a category error — refuse it at the boundary."""
+    if agent_id and mode != "single":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "agent_id can only be combined with orchestration_mode='single'. "
+                "Multi-model modes (fan_out, council, daisy_chain) compare raw "
+                "provider voices and do not carry an agent persona."
+            ),
+        )
+
+
 @router.post("/benchmarks/{bid}/contestants")
 async def add_contestant(bid: int, body: CreateContestant, request: Request):
     uid = _uid(request)
     await _get_owned_benchmark(bid, uid)
     _validate_orch(body.orchestration_mode)
+    _validate_agent_orch_combo(body.agent_id, body.orchestration_mode)
     async with get_session() as sess:
         cnt = (await sess.execute(_sa_text(
             "SELECT COUNT(*) AS n, COALESCE(MAX(slot), 0) AS max_slot "
@@ -245,6 +261,11 @@ async def update_contestant(cid: int, body: UpdateContestant, request: Request):
         raise HTTPException(status_code=400, detail="no fields to update")
     if "orchestration_mode" in fields:
         _validate_orch(fields["orchestration_mode"])
+    # Recheck the (agent_id, orchestration_mode) combo against the merged state.
+    existing = await _get_owned_contestant(cid, uid)
+    eff_agent = fields["agent_id"] if "agent_id" in fields else existing.get("agent_id")
+    eff_mode = fields["orchestration_mode"] if "orchestration_mode" in fields else existing.get("orchestration_mode")
+    _validate_agent_orch_combo(eff_agent, eff_mode or "single")
     import json as _json
     if "providers" in fields:
         fields["providers"] = _json.dumps(fields["providers"])
