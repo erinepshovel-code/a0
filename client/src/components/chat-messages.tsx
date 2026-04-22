@@ -347,10 +347,20 @@ export function MessageBubble({ message, onSend }: { message: Message; onSend: (
             ))}
           </div>
         )}
-        <div className={cn("prose prose-sm max-w-none dark:prose-invert", isUser && "text-primary-foreground")}>
-          <MarkdownContent content={message.content} isUser={isUser} />
-        </div>
-        {!isUser && <OrchestrationResponses usage={message.metadata?.usage} />}
+        {(() => {
+          const responses = !isUser ? message.metadata?.usage?.responses : undefined;
+          const hasCards = Array.isArray(responses) && responses.length > 0;
+          return (
+            <>
+              {!hasCards && (
+                <div className={cn("prose prose-sm max-w-none dark:prose-invert", isUser && "text-primary-foreground")}>
+                  <MarkdownContent content={message.content} isUser={isUser} />
+                </div>
+              )}
+              {!isUser && <OrchestrationResponses usage={message.metadata?.usage} />}
+            </>
+          );
+        })()}
         {isError && showDetail && message.metadata?.error_detail && (
           <pre className="mt-2 text-[10px] bg-black/10 rounded p-2 overflow-x-auto whitespace-pre-wrap opacity-80" data-testid={`error-detail-${message.id}`}>{message.metadata.error_detail}</pre>
         )}
