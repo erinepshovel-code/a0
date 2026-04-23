@@ -279,8 +279,8 @@ function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanel
   }
 
   const optimizeMutation = useMutation({
-    mutationFn: async (mode: string) => {
-      const res = await apiRequest("POST", `/api/energy/providers/${provider.id}/optimize`, { mode });
+    mutationFn: async (preset: string) => {
+      const res = await apiRequest("POST", `/api/energy/providers/${provider.id}/optimize`, { preset });
       return res.json();
     },
     onSuccess: () => {
