@@ -111,7 +111,16 @@ async def regain_focus(conv_id: int, request: Request):
     system_prompt = await _build_system_prompt(tier)
     focus_system = (system_prompt or "") + "\n\n" + _FOCUS_DIRECTIVE
 
-    provider_id = energy_registry.get_active_provider() or conv.get("model", "grok")
+    # Resolve via the catalog so persisted message.model provenance always
+    # matches the provider call_model will actually dispatch to (catches
+    # the case where conv.get("model") is a real model name like
+    # "gpt-5-mini" rather than a provider id).
+    _candidate = energy_registry.get_active_provider() or conv.get("model", "grok")
+    from ..services.model_catalog import resolve_model_id as _rmi
+    try:
+        provider_id, _ = await _rmi(_candidate)
+    except ValueError:
+        provider_id = _candidate
 
     user_msg = await storage.create_message({
         "conversation_id": conv_id,
@@ -121,11 +130,16 @@ async def regain_focus(conv_id: int, request: Request):
         "metadata": {"focus_regain": True, "tier": tier},
     })
 
-    content, usage = await call_energy_provider(
-        provider_id=provider_id,
-        messages=history,
-        system_prompt=focus_system,
+    # Route through the canonical adapter. The chat-level tier gate doesn't
+    # cover focus, so let call_fn enforce it (provider_id here is always a
+    # builtin id since we derived from active_provider, so resolution is
+    # cheap). use_tools=False — focus is a one-shot, not an agentic turn.
+    from ..services.call_fn import call_model
+    content, usage = await call_model(
+        provider_id,
+        history,
         user_id=uid,
+        system_prompt=focus_system,
         use_tools=False,
     )
 

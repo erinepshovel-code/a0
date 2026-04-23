@@ -192,8 +192,17 @@ async def cli_chat(body: CliChatBody, request: Request):
     ]
     history.append({"role": "user", "content": body.message})
 
+    # Explicit body.model wins over the active provider — codifying the
+    # contract that "I asked for X, give me X" beats the global default.
     model_id = body.model or conv.get("model", "grok")
-    provider_id = energy_registry.get_active_provider() or model_id
+    # Resolve to the actual provider id so persisted message.model is
+    # provider-consistent regardless of whether the caller sent a model
+    # name or a provider id.
+    from ..services.model_catalog import resolve_model_id as _rmi
+    try:
+        provider_id, _ = await _rmi(model_id)
+    except ValueError:
+        provider_id = energy_registry.get_active_provider() or model_id
     system_prompt = await _build_system_prompt(tier)
 
     await storage.create_message({
@@ -204,11 +213,13 @@ async def cli_chat(body: CliChatBody, request: Request):
         "metadata": {"tier": tier, "via": "cli"},
     })
 
-    content, usage = await call_energy_provider(
-        provider_id=provider_id,
-        messages=history,
-        system_prompt=system_prompt or None,
+    # Route through the canonical adapter so CLI shares the chat seam.
+    from ..services.call_fn import call_model
+    content, usage = await call_model(
+        provider_id,
+        history,
         user_id=uid,
+        system_prompt=system_prompt or None,
     )
 
     await storage.create_message({

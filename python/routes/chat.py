@@ -327,7 +327,15 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 agent_model_id = arow["model_id"]
 
         model_id = body.model or agent_model_id or conv.get("model", "grok")
-        provider_id = energy_registry.get_active_provider() or model_id
+        # Resolve model_id → provider_id via the catalog so forge agents
+        # whose model_id is a real model name (e.g. "gpt-5-mini") route
+        # correctly downstream. Falls back to the legacy alias when
+        # resolution misses (then the chat-level gate catches it).
+        from ..services.model_catalog import resolve_model_id as _resolve_model
+        try:
+            provider_id, _ = await _resolve_model(model_id)
+        except ValueError:
+            provider_id = energy_registry.get_active_provider() or model_id
 
         # Tier-gate restricted models (e.g. gemini3 = ws/admin only).
         # Gate the *resolved* provider list — never raw body.providers — so
@@ -564,12 +572,23 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
         _t_ut = current_user_tier.set(tier)
         try:
             if eff_mode == "single":
-                content, usage = await call_energy_provider(
-                    provider_id=provider_id,
-                    messages=history,
+                # Route through the canonical AgentInstance so forge-bound
+                # and ad-hoc chats share one seam. enforce_tier/enabled are
+                # off because the chat route already gated above (it covers
+                # the multi-model case too); call_fn would otherwise re-hit
+                # the DB to recompute the same answer.
+                from ..services.agent_instance import AgentInstance
+                inst = AgentInstance.from_model(
+                    model_id=model_id,
                     system_prompt=system_prompt or None,
                     user_id=uid or None,
+                    enforce_tier=False,
+                    enforce_enabled=False,
                 )
+                content, usage = await inst.run(history)
+                # Use the resolved provider_id from the instance — for forge
+                # agents whose model_id is "gpt-5-mini" this is "openai".
+                provider_id = inst.provider_id or provider_id
                 usage = dict(usage or {})
                 usage.setdefault("orchestration_mode", "single")
                 usage.setdefault("providers", [provider_id])
