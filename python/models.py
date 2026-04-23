@@ -318,7 +318,42 @@ class TranscriptReport(Base):
     directives_fired = Column(JSONB)
     top_snippets = Column(JSONB)
     file_breakdown = Column(JSONB)
+    risk_loop = Column(Float, server_default="0")
+    risk_fixation = Column(Float, server_default="0")
+    correction_fidelity = Column(Float, server_default="0")
+    edcmbone_version = Column(String(40))
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class TranscriptUpload(Base):
+    __tablename__ = "transcript_uploads"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(120))
+    filename = Column(Text, nullable=False)
+    mime = Column(String(120))
+    byte_size = Column(Integer, nullable=False, server_default="0")
+    status = Column(String(24), nullable=False, server_default="'queued'")
+    error = Column(Text)
+    source_slug = Column(String(100))
+    report_id = Column(Integer)
+    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    finished_at = Column(DateTime)
+
+
+class TranscriptMessage(Base):
+    __tablename__ = "transcript_messages"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(Integer, nullable=False)
+    idx = Column(Integer, nullable=False, server_default="0")
+    speaker = Column(String(120))
+    content = Column(Text)
+    cm = Column(Float, server_default="0")
+    da = Column(Float, server_default="0")
+    drift = Column(Float, server_default="0")
+    dvg = Column(Float, server_default="0")
+    int_val = Column(Float, server_default="0")
+    tbf = Column(Float, server_default="0")
+    directives_fired = Column(JSONB)
 
 
 class Founder(Base):

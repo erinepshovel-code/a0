@@ -348,6 +348,66 @@ async def lifespan(app: FastAPI):
         ):
             await _sess.execute(_sa_text(_ddl))
     print("[messages] orchestration columns ensured")
+    async with get_session() as _sess:
+        await _sess.execute(_sa_text("""
+            CREATE TABLE IF NOT EXISTS transcript_uploads (
+                id SERIAL PRIMARY KEY,
+                user_id VARCHAR(120),
+                filename TEXT NOT NULL,
+                mime VARCHAR(120),
+                byte_size INTEGER NOT NULL DEFAULT 0,
+                status VARCHAR(24) NOT NULL DEFAULT 'queued',
+                error TEXT,
+                source_slug VARCHAR(100),
+                report_id INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at TIMESTAMP
+            )
+        """))
+        await _sess.execute(_sa_text("""
+            CREATE TABLE IF NOT EXISTS transcript_messages (
+                id SERIAL PRIMARY KEY,
+                report_id INTEGER NOT NULL,
+                idx INTEGER NOT NULL DEFAULT 0,
+                speaker VARCHAR(120),
+                content TEXT,
+                cm REAL DEFAULT 0,
+                da REAL DEFAULT 0,
+                drift REAL DEFAULT 0,
+                dvg REAL DEFAULT 0,
+                int_val REAL DEFAULT 0,
+                tbf REAL DEFAULT 0,
+                directives_fired JSONB
+            )
+        """))
+        for _ddl in (
+            "ALTER TABLE transcript_reports ADD COLUMN IF NOT EXISTS risk_loop REAL DEFAULT 0",
+            "ALTER TABLE transcript_reports ADD COLUMN IF NOT EXISTS risk_fixation REAL DEFAULT 0",
+            "ALTER TABLE transcript_reports ADD COLUMN IF NOT EXISTS correction_fidelity REAL DEFAULT 0",
+            "ALTER TABLE transcript_reports ADD COLUMN IF NOT EXISTS edcmbone_version VARCHAR(40)",
+            "CREATE INDEX IF NOT EXISTS idx_transcript_uploads_user ON transcript_uploads(user_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_transcript_uploads_report ON transcript_uploads(report_id)",
+            "CREATE INDEX IF NOT EXISTS idx_transcript_messages_report ON transcript_messages(report_id, idx)",
+        ):
+            await _sess.execute(_sa_text(_ddl))
+        # FK hardening — wrapped per-statement so an existing constraint name doesn't abort the lot.
+        for _fk in (
+            ("fk_transcript_uploads_report",
+             "ALTER TABLE transcript_uploads ADD CONSTRAINT fk_transcript_uploads_report "
+             "FOREIGN KEY (report_id) REFERENCES transcript_reports(id) ON DELETE SET NULL"),
+            ("fk_transcript_messages_report",
+             "ALTER TABLE transcript_messages ADD CONSTRAINT fk_transcript_messages_report "
+             "FOREIGN KEY (report_id) REFERENCES transcript_reports(id) ON DELETE CASCADE"),
+        ):
+            try:
+                exists = await _sess.execute(_sa_text(
+                    "SELECT 1 FROM pg_constraint WHERE conname = :n"
+                ), {"n": _fk[0]})
+                if exists.scalar_one_or_none() is None:
+                    await _sess.execute(_sa_text(_fk[1]))
+            except Exception as _e:
+                print(f"[transcript_*] FK skipped ({_fk[0]}): {_e}")
+    print("[transcript_*] tables/columns ensured")
     print("[agent_runs/agent_logs/settings] tables ensured")
     await _seed_system_shadow_modules()
     print("[ws_modules] system shadows seeded")

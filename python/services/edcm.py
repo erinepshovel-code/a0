@@ -19,10 +19,12 @@ from importlib.metadata import version as _pkg_version
 
 import edcmbone
 from edcmbone.parser import parse_transcript
-from edcmbone.metrics.compute import compute_round
+from edcmbone.metrics.compute import compute_round, tokenize
 from edcmbone.metrics.stats import (
     rep_ngram_density, repetition_ratio, novelty, ttr,
+    correction_fidelity,
 )
+from edcmbone.metrics import risk as _risk_mod
 
 EDCMBONE_VERSION = _pkg_version("edcmbone")
 
@@ -126,6 +128,101 @@ def edcmbone_round(transcript_text: str) -> dict[str, Any]:
         "edcmbone_version": EDCMBONE_VERSION,
         "round_index": len(parsed.rounds) - 1,
         "metrics": getattr(rm, "__dict__", {}),
+    }
+
+
+def _round_text(rnd: Any) -> str:
+    """Best-effort joined text for a parsed Round, agnostic to turn shape."""
+    turns = getattr(rnd, "turns", None) or []
+    parts: list[str] = []
+    for t in turns:
+        txt = getattr(t, "text", None) or getattr(t, "content", None)
+        if txt:
+            parts.append(str(txt))
+    if parts:
+        return " ".join(parts)
+    # Fallback: reconstruct from tokens. Coerce to str — Round.all_tokens may be
+    # BoneToken objects (which don't join cleanly).
+    toks = getattr(rnd, "all_tokens", None) or []
+    return " ".join(str(t) for t in toks)
+
+
+def compute_transcript_full(text: str) -> dict[str, Any]:
+    """Whole-transcript rollup using edcmbone.
+
+    Returns averages + peak + risk + correction_fidelity + per-round detail.
+    Raises ValueError on empty/unparseable input — no silent fallback.
+    """
+    if not text or not text.strip():
+        raise ValueError("compute_transcript_full: empty text")
+    parsed = parse_transcript(text)
+    if not parsed.rounds:
+        raise ValueError("compute_transcript_full: parser produced 0 rounds")
+
+    per_round: list[dict[str, Any]] = []
+    round_tokens: list[list[str]] = []
+    for idx, rnd in enumerate(parsed.rounds):
+        rtext = _round_text(rnd)
+        # NOTE: Round.all_tokens returns BoneToken objects which break risk.cosine_sim
+        # (BoneTokens are not orderable). Always re-tokenize to get plain strings.
+        toks = list(tokenize(rtext))
+        round_tokens.append(toks)
+        responses = [{"provider": "round", "content": rtext}]
+        m = compute_metrics(responses, "")
+        m["round_index"] = idx
+        m["directives_fired"] = check_directives(m)
+        m["snippet"] = (rtext[:237] + "...") if len(rtext) > 240 else rtext
+        m["token_count"] = len(toks)
+        per_round.append(m)
+
+    n = len(per_round)
+    avgs = {f"avg_{name}": round(sum(r[name] for r in per_round) / n, 4) for name in METRIC_NAMES}
+    avg_int = avgs.pop("avg_int_val")
+    avgs["avg_int"] = avg_int  # storage column is named avg_int
+
+    peak_name, peak_val = "", 0.0
+    for r in per_round:
+        for name in METRIC_NAMES:
+            if r[name] > peak_val:
+                peak_val, peak_name = r[name], name
+
+    loop_risks: list[float] = []
+    fixation_risks: list[float] = []
+    correction_fids: list[float] = []
+    for i in range(1, n):
+        a, b = round_tokens[i - 1], round_tokens[i]
+        if a and b:
+            loop_risks.append(float(_risk_mod.loop_risk(a, b)))
+            fixation_risks.append(float(_risk_mod.fixation_risk(b, a)))
+    for i in range(2, n):
+        a, b, c = round_tokens[i - 2], round_tokens[i - 1], round_tokens[i]
+        if a and b and c:
+            correction_fids.append(float(correction_fidelity(a, b, c)))
+
+    def _avg(xs: list[float]) -> float:
+        return round(sum(xs) / len(xs), 4) if xs else 0.0
+
+    all_directives = sorted({d for r in per_round for d in r["directives_fired"]})
+    # Top snippets: highest peak metric value across the round
+    ranked = sorted(per_round, key=lambda r: max(r[m] for m in METRIC_NAMES), reverse=True)
+    top_snippets = [
+        {"round": r["round_index"], "snippet": r["snippet"],
+         "peak": round(max(r[m] for m in METRIC_NAMES), 4)}
+        for r in ranked[:5]
+    ]
+
+    return {
+        "edcmbone_version": EDCMBONE_VERSION,
+        "message_count": n,
+        **avgs,
+        "peak_metric": round(peak_val, 4),
+        "peak_metric_name": peak_name,
+        "risk_loop": _avg(loop_risks),
+        "risk_fixation": _avg(fixation_risks),
+        "correction_fidelity": _avg(correction_fids),
+        "directives_fired": all_directives,
+        "top_snippets": top_snippets,
+        "per_round": per_round,
     }
 # N:M
 # 85:24

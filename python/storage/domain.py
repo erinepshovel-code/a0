@@ -7,7 +7,8 @@ from ..database import get_session
 from ..models import (
     HeartbeatTask, EdcmMetricSnapshot, MemorySeed, MemoryProjection,
     MemoryTensorSnapshot, BanditCorrelation, SystemToggle, DiscoveryDraft,
-    TranscriptSource, TranscriptReport, Deal, HeartbeatLog,
+    TranscriptSource, TranscriptReport, TranscriptUpload, TranscriptMessage,
+    Deal, HeartbeatLog,
     Conversation, A0pEvent, Message, ApprovalScope, WsModule,
 )
 from .core import _CoreStorage, _row_to_dict
@@ -91,6 +92,139 @@ class DatabaseStorage(_CoreStorage):
         async with get_session() as session:
             result = await session.execute(
                 select(EdcmMetricSnapshot).order_by(desc(EdcmMetricSnapshot.created_at)).limit(limit)
+            )
+            return [_row_to_dict(r) for r in result.scalars().all()]
+
+    # ---------- transcript analysis (donation-research instrument) ----------
+
+    async def create_transcript_upload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        async with get_session() as session:
+            u = TranscriptUpload(**data)
+            session.add(u)
+            await session.flush()
+            await session.refresh(u)
+            return _row_to_dict(u)
+
+    async def update_transcript_upload(self, upload_id: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        async with get_session() as session:
+            await session.execute(
+                update(TranscriptUpload).where(TranscriptUpload.id == upload_id).values(**fields)
+            )
+            result = await session.execute(select(TranscriptUpload).where(TranscriptUpload.id == upload_id))
+            return _row_to_dict(result.scalar_one_or_none())
+
+    async def get_transcript_upload(self, upload_id: int, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        async with get_session() as session:
+            q = select(TranscriptUpload).where(TranscriptUpload.id == upload_id)
+            if user_id is not None:
+                q = q.where(TranscriptUpload.user_id == user_id)
+            result = await session.execute(q)
+            return _row_to_dict(result.scalar_one_or_none())
+
+    async def list_transcript_uploads(self, user_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        async with get_session() as session:
+            q = select(TranscriptUpload).order_by(desc(TranscriptUpload.created_at)).limit(limit)
+            if user_id is not None:
+                q = q.where(TranscriptUpload.user_id == user_id)
+            result = await session.execute(q)
+            return [_row_to_dict(r) for r in result.scalars().all()]
+
+    async def count_user_uploads_since(self, user_id: str, since: datetime) -> int:
+        """Count successful uploads by a user since a given datetime (for free quota gating)."""
+        async with get_session() as session:
+            result = await session.execute(
+                select(func.count(TranscriptUpload.id)).where(
+                    TranscriptUpload.user_id == user_id,
+                    TranscriptUpload.status == "done",
+                    TranscriptUpload.created_at >= since,
+                )
+            )
+            return int(result.scalar_one() or 0)
+
+    async def upsert_transcript_source(self, slug: str, display_name: str, file_count: int = 1) -> Dict[str, Any]:
+        async with get_session() as session:
+            existing = await session.execute(select(TranscriptSource).where(TranscriptSource.slug == slug))
+            row = existing.scalar_one_or_none()
+            now = datetime.utcnow()
+            if row:
+                await session.execute(
+                    update(TranscriptSource).where(TranscriptSource.id == row.id).values(
+                        display_name=display_name, file_count=file_count, last_scanned_at=now,
+                    )
+                )
+                refreshed = await session.execute(select(TranscriptSource).where(TranscriptSource.id == row.id))
+                return _row_to_dict(refreshed.scalar_one())
+            s = TranscriptSource(slug=slug, display_name=display_name, file_count=file_count, last_scanned_at=now)
+            session.add(s)
+            await session.flush()
+            await session.refresh(s)
+            return _row_to_dict(s)
+
+    async def create_transcript_report(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        async with get_session() as session:
+            r = TranscriptReport(**data)
+            session.add(r)
+            await session.flush()
+            await session.refresh(r)
+            return _row_to_dict(r)
+
+    async def add_transcript_messages_bulk(self, report_id: int, messages: List[Dict[str, Any]]) -> int:
+        if not messages:
+            return 0
+        async with get_session() as session:
+            for m in messages:
+                session.add(TranscriptMessage(report_id=report_id, **m))
+            await session.flush()
+            return len(messages)
+
+    async def list_transcript_reports(self, user_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """List reports, optionally scoped to a user via the uploads join."""
+        async with get_session() as session:
+            if user_id is None:
+                result = await session.execute(
+                    select(TranscriptReport).order_by(desc(TranscriptReport.created_at)).limit(limit)
+                )
+                return [_row_to_dict(r) for r in result.scalars().all()]
+            # User-scoped: join through uploads
+            result = await session.execute(
+                select(TranscriptReport).join(
+                    TranscriptUpload, TranscriptUpload.report_id == TranscriptReport.id
+                ).where(TranscriptUpload.user_id == user_id)
+                .order_by(desc(TranscriptReport.created_at)).limit(limit)
+            )
+            return [_row_to_dict(r) for r in result.scalars().all()]
+
+    async def get_transcript_report(self, report_id: int, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        async with get_session() as session:
+            if user_id is None:
+                result = await session.execute(select(TranscriptReport).where(TranscriptReport.id == report_id))
+                return _row_to_dict(result.scalar_one_or_none())
+            result = await session.execute(
+                select(TranscriptReport).join(
+                    TranscriptUpload, TranscriptUpload.report_id == TranscriptReport.id
+                ).where(TranscriptReport.id == report_id, TranscriptUpload.user_id == user_id)
+            )
+            return _row_to_dict(result.scalar_one_or_none())
+
+    async def get_transcript_messages(self, report_id: int, user_id: Optional[str] = None,
+                                       limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
+        """User-scoped when user_id is passed (joined via transcript_uploads.user_id) to prevent IDOR.
+        Returns empty list if the report exists but doesn't belong to the user.
+        """
+        async with get_session() as session:
+            if user_id is not None:
+                # Verify ownership via join first; bail with [] if not owner.
+                owns = await session.execute(
+                    select(func.count(TranscriptUpload.id)).where(
+                        TranscriptUpload.report_id == report_id,
+                        TranscriptUpload.user_id == user_id,
+                    )
+                )
+                if int(owns.scalar_one() or 0) == 0:
+                    return []
+            result = await session.execute(
+                select(TranscriptMessage).where(TranscriptMessage.report_id == report_id)
+                .order_by(asc(TranscriptMessage.idx)).limit(limit).offset(offset)
             )
             return [_row_to_dict(r) for r in result.scalars().all()]
 
