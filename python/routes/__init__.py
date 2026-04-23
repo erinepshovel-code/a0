@@ -30,6 +30,7 @@ from .runs import router as runs_router
 from .preferences import router as preferences_router
 from .fleet import router as fleet_router
 from .transcripts import router as transcripts_router
+from .models import router as models_router
 
 ALL_ROUTERS = [
     chat_router,
@@ -65,6 +66,7 @@ ALL_ROUTERS = [
     preferences_router,
     fleet_router,
     transcripts_router,
+    models_router,
 ]
 
 

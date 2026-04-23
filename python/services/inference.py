@@ -443,7 +443,7 @@ async def call_energy_provider(
     provider_id: str,
     messages: list[dict],
     system_prompt: Optional[str] = None,
-    max_tokens: int = 2048,
+    max_tokens: int = 8000,
     use_tools: bool = True,
     user_id: Optional[str] = None,
     skip_approval: bool = False,
