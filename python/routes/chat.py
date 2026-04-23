@@ -310,21 +310,35 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 if rec:
                     tier = rec["subscription_tier"]
 
-        # Forge agent binding: per-message agent_id wins, else fall back to the
-        # conversation's pinned agent. Agent loaded once per send.
+        # Forge agent binding: per-message agent_id wins, else fall back to
+        # the conversation's pinned agent. Loaded once via the canonical
+        # constructor so other surfaces (council, spawn, replay) can share
+        # the same loader. enforce_tier/enabled are off because the chat
+        # route runs its own gates below.
+        from ..services.agent_instance import AgentInstance
+        agent_inst: Optional[AgentInstance] = None
         agent_persona: Optional[str] = None
         agent_model_id: Optional[str] = None
         effective_agent_id = body.agent_id or conv.get("agent_id")
         if effective_agent_id and uid:
-            from sqlalchemy import text as _text2
-            async with engine.connect() as conn:
-                arow = (await conn.execute(_text2(
-                    "SELECT model_id, system_prompt FROM agent_instances "
-                    "WHERE id = :id AND owner_id = :uid AND is_template = false"
-                ), {"id": effective_agent_id, "uid": uid})).mappings().first()
-            if arow:
-                agent_persona = arow["system_prompt"]
-                agent_model_id = arow["model_id"]
+            try:
+                agent_inst = await AgentInstance.from_agent_id(
+                    effective_agent_id, uid,
+                    enforce_tier=False, enforce_enabled=False,
+                )
+            except PermissionError:
+                # Agent missing or not owned — fall through to default model
+                # behavior, mirrors the previous silent "if arow:" semantics
+                # so an unpinned/deleted agent doesn't 403 a working chat.
+                agent_inst = None
+            if agent_inst is not None:
+                agent_persona = agent_inst.system_prompt
+                agent_model_id = agent_inst.model_id
+                # Preserve today's behavior: chat single-mode always allows
+                # tools regardless of the per-agent enabled_tools list.
+                # Per-agent tool gating is a follow-up; honoring it here
+                # would silently regress existing forge agents.
+                agent_inst.use_tools = True
 
         model_id = body.model or agent_model_id or conv.get("model", "grok")
         # Resolve model_id → provider_id via the catalog so forge agents
@@ -572,20 +586,24 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
         _t_ut = current_user_tier.set(tier)
         try:
             if eff_mode == "single":
-                # Route through the canonical AgentInstance so forge-bound
-                # and ad-hoc chats share one seam. enforce_tier/enabled are
-                # off because the chat route already gated above (it covers
-                # the multi-model case too); call_fn would otherwise re-hit
-                # the DB to recompute the same answer.
-                from ..services.agent_instance import AgentInstance
+                # ALWAYS build the executor from the gated model_id, never
+                # from agent_inst. Reusing agent_inst here would bypass the
+                # tier/kill-switch gates above when a caller pins a
+                # restricted forge agent and overrides body.model with a
+                # permitted one — gates would check body.model but
+                # execution would use agent_inst.model_id. agent_inst's
+                # role is purely persona/metadata loading (already folded
+                # into system_prompt via _build_system_prompt above).
                 inst = AgentInstance.from_model(
                     model_id=model_id,
-                    system_prompt=system_prompt or None,
                     user_id=uid or None,
                     enforce_tier=False,
                     enforce_enabled=False,
                 )
-                content, usage = await inst.run(history)
+                content, usage = await inst.run(
+                    history,
+                    system_prompt_override=system_prompt or None,
+                )
                 # Use the resolved provider_id from the instance — for forge
                 # agents whose model_id is "gpt-5-mini" this is "openai".
                 provider_id = inst.provider_id or provider_id
