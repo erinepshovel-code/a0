@@ -26,7 +26,7 @@ def get_pcna() -> PCNAEngine:
     global _pcna
     if _pcna is None:
         _pcna = PCNAEngine(phases=7)
-        _instances[_pcna.guardian.instance_id] = _pcna
+        _instances[_pcna.theta.instance_id] = _pcna
     return _pcna
 
 
@@ -512,7 +512,7 @@ async def health():
         "status": "ok",
         "service": "python-backend",
         "pcna": "online",
-        "instance_id": pcna.guardian.instance_id,
+        "instance_id": pcna.theta.instance_id,
         "agent": compose_name(provider),
         "energy_provider": provider,
         "uptime_s": round(time.time() - pcna.created_at, 1),

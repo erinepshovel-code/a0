@@ -18,11 +18,11 @@ def spawn_sub_agent(parent: PCNAEngine, provider: str | None = None) -> dict:
         "name": name,
         "provider": p,
         "spawned_at": time.time(),
-        "parent_id": parent.guardian.instance_id,
+        "parent_id": parent.theta.instance_id,
     })
     return {
         "sub_agent_name": name,
-        "instance_id": child.guardian.instance_id,
+        "instance_id": child.theta.instance_id,
         "phi_coherence": round(child.phi.ring_coherence, 4),
         "psi_coherence": round(child.psi.ring_coherence, 4),
         "omega_coherence": round(child.omega.ring_coherence, 4),
@@ -45,7 +45,7 @@ def list_sub_agents() -> list[dict]:
     for name, (engine, meta) in _sub_agents.items():
         result.append({
             "name": name,
-            "instance_id": engine.guardian.instance_id,
+            "instance_id": engine.theta.instance_id,
             "provider": meta.get("provider"),
             "uptime_s": round(time.time() - meta["spawned_at"], 1),
             "phi_coherence": round(engine.phi.ring_coherence, 4),

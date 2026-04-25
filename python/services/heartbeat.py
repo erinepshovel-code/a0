@@ -202,12 +202,12 @@ class HeartbeatService:
             pcna.phi.propagate(steps=5)
             pcna.psi.propagate(steps=4)
             pcna.omega.propagate(steps=3)
-            pcna.guardian.propagate(steps=2)
+            pcna.theta.propagate(steps=2)
             pcna_8 = get_pcna_8()
             pcna_8.phi.propagate(steps=5)
             pcna_8.psi.propagate(steps=4)
             pcna_8.omega.propagate(steps=3)
-            pcna_8.guardian.propagate(steps=2)
+            pcna_8.theta.propagate(steps=2)
             return f"propagate_ok: p7_phi={pcna.phi.ring_coherence:.4f} p8_phi={pcna_8.phi.ring_coherence:.4f}"
 
         if task_type == "conversation_review":

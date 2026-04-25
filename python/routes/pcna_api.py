@@ -109,7 +109,7 @@ class NudgeRequest(BaseModel):
 
 class PropagateRequest(BaseModel):
     steps: int = 10
-    guardian_steps: int = 5
+    theta_steps: int = 5
 
 
 class MergeRequest(BaseModel):
@@ -218,36 +218,36 @@ async def omega_nudge(req: NudgeRequest):
     return _get_pcna().omega.state()
 
 
-@router.get("/pcna/guardian/state")
-async def guardian_state():
-    return _get_pcna().guardian.state()
+@router.get("/pcna/theta/state")
+async def theta_state():
+    return _get_pcna().theta.state()
 
 
-@router.get("/pcna/guardian/gates")
-async def guardian_gates():
-    return _get_pcna().guardian.gate_status()
+@router.get("/pcna/theta/gates")
+async def theta_gates():
+    return _get_pcna().theta.gate_status()
 
 
-@router.get("/pcna/guardian/audit")
-async def guardian_audit():
-    return _get_pcna().guardian.pcta_circle_audit()
+@router.get("/pcna/theta/audit")
+async def theta_audit():
+    return _get_pcna().theta.pcta_circle_audit()
 
 
-@router.get("/pcna/guardian/crypto")
-async def guardian_crypto():
-    return _get_pcna().guardian.crypto_meta()
+@router.get("/pcna/theta/crypto")
+async def theta_crypto():
+    return _get_pcna().theta.crypto_meta()
 
 
-@router.post("/pcna/guardian/propagate")
-async def guardian_propagate(req: PropagateRequest):
-    _get_pcna().guardian.propagate(steps=req.guardian_steps)
-    return _get_pcna().guardian.state()
+@router.post("/pcna/theta/propagate")
+async def theta_propagate(req: PropagateRequest):
+    _get_pcna().theta.propagate(steps=req.theta_steps)
+    return _get_pcna().theta.state()
 
 
-@router.post("/pcna/guardian/reward")
-async def guardian_reward(req: NudgeRequest):
-    _get_pcna().guardian.apply_reward(req.reward)
-    return _get_pcna().guardian.state()
+@router.post("/pcna/theta/reward")
+async def theta_reward(req: NudgeRequest):
+    _get_pcna().theta.apply_reward(req.reward)
+    return _get_pcna().theta.state()
 
 
 @router.get("/pcna/memory/l/state")
@@ -281,7 +281,7 @@ async def list_instances():
                 "phi_coherence": round(eng.phi.ring_coherence, 4),
                 "psi_coherence": round(eng.psi.ring_coherence, 4),
                 "omega_coherence": round(eng.omega.ring_coherence, 4),
-                "guardian_coherence": round(float(eng.guardian.node_coherence.mean()), 4),
+                "theta_coherence": round(float(eng.theta.node_coherence.mean()), 4),
                 "infer_count": eng.infer_count,
                 "uptime_s": round(time.time() - eng.created_at, 1),
             }
@@ -295,7 +295,7 @@ async def list_instances():
 async def spawn_instance():
     from ..engine import InstanceMerge
     child, result = InstanceMerge.fork(_get_pcna())
-    _get_instances()[child.guardian.instance_id] = child
+    _get_instances()[child.theta.instance_id] = child
     return result
 
 
@@ -306,7 +306,7 @@ async def merge_instances(req: MergeRequest):
     instances = _get_instances()
     if req.mode == "fork":
         child, result = InstanceMerge.fork(primary)
-        instances[child.guardian.instance_id] = child
+        instances[child.theta.instance_id] = child
         return result
     target_id = req.target_instance_id
     if not target_id or target_id not in instances:
@@ -314,7 +314,7 @@ async def merge_instances(req: MergeRequest):
     target = instances[target_id]
     if req.mode == "absorb":
         result = InstanceMerge.absorb(primary, target)
-        if target_id != primary.guardian.instance_id:
+        if target_id != primary.theta.instance_id:
             del instances[target_id]
         return result
     if req.mode == "converge":

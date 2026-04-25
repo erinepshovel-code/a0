@@ -1,7 +1,7 @@
 # a0p — Autonomous AI Agent Platform
 
 ## Overview
-a0p is a mobile-first autonomous AI agent platform. One agent `a0(zeta fun alpha echo)` (ZFAE) owns one PCNA instance; LLMs (Gemini, Claude, Grok) are "energy providers" not agents; sub-agents `a0(zeta{n})` fork PCNA and merge back. The Python/FastAPI backend declares `UI_META` + `DATA_SCHEMA` per route module; Guardian assembles them into `GET /api/v1/ui/structure`; the frontend is a generic renderer.
+a0p is a mobile-first autonomous AI agent platform. One agent `a0(zeta fun alpha echo)` (ZFAE) owns one PCNA instance; LLMs (Gemini, Claude, Grok) are "energy providers" not agents; sub-agents `a0(zeta{n})` fork PCNA and merge back. The Python/FastAPI backend declares `UI_META` + `DATA_SCHEMA` per route module; the frontend is a generic renderer reading `GET /api/v1/ui/structure`.
 
 ## User Preferences
 - Clear and concise explanations.
@@ -102,7 +102,7 @@ LLMs are energy sources, not agents. Managed by `energy_registry.py`:
 - **claude** — Anthropic Claude
 
 ### PCNA Engine
-53-node circular topology with 4 rings: Phi, Psi, Omega, Guardian.
+53-node circular topology with rings: Phi, Psi, Omega, Theta (formerly "Guardian"; runs PCEA encryption over its tensor state via the `pcea-lib` package).
 Each ring has coherence tracking and propagation.
 
 ### Key Concepts
