@@ -1,5 +1,5 @@
 // 282:0
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -27,6 +27,7 @@ export interface OrchestrationResponse {
     total_tokens?: number;
   } | null;
   cost_usd?: number | null;
+  elapsed_ms?: number | null;
   [key: string]: unknown;
 }
 
@@ -340,6 +341,16 @@ function OrchestrationCard({
                 {fmtCostUSD(r.cost_usd)}
               </Badge>
             )}
+            {typeof r.elapsed_ms === "number" && r.elapsed_ms > 0 && (
+              <Badge
+                variant="outline"
+                className="text-[9px] h-3.5 px-1 font-mono"
+                title="Wall-clock time for this voice"
+                data-testid={`elapsed-${testIdPrefix}-${idx}`}
+              >
+                {r.elapsed_ms < 1000 ? `${r.elapsed_ms}ms` : `${(r.elapsed_ms / 1000).toFixed(1)}s`}
+              </Badge>
+            )}
           </>
         )}
         <button
@@ -377,38 +388,136 @@ function OrchestrationCard({
   );
 }
 
+type SortKey = "default" | "cost" | "latency" | "output";
+
+const SORT_STORAGE_KEY = "orchestration-sort";
+const SORT_OPTIONS: { key: SortKey; label: string; title: string }[] = [
+  { key: "default", label: "default", title: "Original hub-return order" },
+  { key: "cost", label: "cost", title: "Cheapest first (missing cost go to bottom)" },
+  { key: "latency", label: "latency", title: "Fastest first (missing latency go to bottom)" },
+  { key: "output", label: "output", title: "Most output tokens first" },
+];
+
+function readStoredSort(): SortKey {
+  if (typeof window === "undefined") return "default";
+  try {
+    const v = window.localStorage.getItem(SORT_STORAGE_KEY);
+    if (v === "cost" || v === "latency" || v === "output" || v === "default") return v;
+  } catch {
+    /* ignore */
+  }
+  return "default";
+}
+
+function sortResponseIndices(responses: OrchestrationResponse[], key: SortKey): number[] {
+  const idx = responses.map((_, i) => i);
+  if (key === "default") return idx;
+  const score = (r: OrchestrationResponse): number => {
+    if (r.error) return Number.POSITIVE_INFINITY;
+    if (key === "cost") {
+      const c = typeof r.cost_usd === "number" && Number.isFinite(r.cost_usd) ? r.cost_usd : null;
+      return c ?? Number.POSITIVE_INFINITY;
+    }
+    if (key === "latency") {
+      const e = typeof r.elapsed_ms === "number" && Number.isFinite(r.elapsed_ms) ? r.elapsed_ms : null;
+      return e ?? Number.POSITIVE_INFINITY;
+    }
+    // output: descending — most tokens first
+    const o = Number(r.usage?.output_tokens ?? 0);
+    return Number.isFinite(o) ? -o : Number.POSITIVE_INFINITY;
+  };
+  return idx.sort((a, b) => {
+    const sa = score(responses[a]);
+    const sb = score(responses[b]);
+    if (sa !== sb) return sa - sb;
+    return a - b; // stable secondary by original index
+  });
+}
+
 export function OrchestrationResponses({ usage }: { usage?: UsageData | null }) {
   const responses = usage?.responses;
-  if (!Array.isArray(responses) || responses.length === 0) return null;
   const mode = String(usage?.orchestration_mode ?? "").toLowerCase();
   const isLadder = mode === "daisy_chain" || mode === "daisy-chain";
+  const [sortKey, setSortKey] = useState<SortKey>(() => readStoredSort());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SORT_STORAGE_KEY, sortKey);
+    } catch {
+      /* ignore */
+    }
+  }, [sortKey]);
+
+  const orderedIndices = useMemo(() => {
+    if (!Array.isArray(responses) || responses.length === 0) return [];
+    if (isLadder) return responses.map((_, i) => i);
+    return sortResponseIndices(responses, sortKey);
+  }, [responses, sortKey, isLadder]);
+
+  if (!Array.isArray(responses) || responses.length === 0) return null;
+
+  const sortDisabledTitle = isLadder
+    ? "Daisy-chain order is meaningful — each step builds on the previous one"
+    : undefined;
+
   return (
     <div className="mt-2 border-t border-border/40 pt-2" data-testid="orchestration-panel">
-      <div className="flex items-center gap-1.5 mb-1.5 text-[9px] uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-1.5 mb-1.5 text-[9px] uppercase tracking-wider text-muted-foreground flex-wrap">
         <span>{mode || "fan-out"}</span>
         <span className="opacity-60">·</span>
         <span>{responses.length} responses</span>
         <span className="opacity-60 normal-case ml-1">— each card has its own copy button</span>
+        <div
+          className="ml-auto flex items-center gap-1 normal-case tracking-normal"
+          data-testid="orchestration-sort-toolbar"
+          title={sortDisabledTitle}
+        >
+          <span className="opacity-70">sort:</span>
+          {SORT_OPTIONS.map((opt) => {
+            const active = !isLadder && sortKey === opt.key;
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                disabled={isLadder}
+                onClick={() => setSortKey(opt.key)}
+                title={isLadder ? sortDisabledTitle : opt.title}
+                aria-pressed={active}
+                data-testid={`sort-orchestration-${opt.key}`}
+                className={cn(
+                  "px-1.5 py-0.5 rounded border text-[9px] transition-colors",
+                  active
+                    ? "border-primary/60 bg-primary/15 text-foreground"
+                    : "border-border/60 bg-background/40 text-muted-foreground hover:text-foreground hover:bg-background/70",
+                  isLadder && "opacity-50 cursor-not-allowed hover:bg-background/40 hover:text-muted-foreground",
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
       {isLadder ? (
         <div className="flex flex-col gap-1.5">
-          {responses.map((r, i) => (
+          {orderedIndices.map((i, pos) => (
             <OrchestrationCard
               key={i}
-              r={r}
+              r={responses[i]}
               idx={i}
               mode={mode}
               testIdPrefix="orchestration-step"
-              indentPx={i * 8}
+              indentPx={pos * 8}
             />
           ))}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-          {responses.map((r, i) => (
+          {orderedIndices.map((i) => (
             <OrchestrationCard
               key={i}
-              r={r}
+              r={responses[i]}
               idx={i}
               mode={mode}
               testIdPrefix="orchestration-card"
