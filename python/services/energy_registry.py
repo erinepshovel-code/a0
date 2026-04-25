@@ -101,6 +101,11 @@ def _preset(record, practice, conduct, perform, derive):
 
 
 _PROVIDER_PRESETS: dict[str, dict] = {
+    # OpenAI slugs intentionally left unversioned (gpt-5, gpt-5-mini, gpt-5-nano)
+    # so OpenAI's latest-alias rolls us forward through the 5.x series (5.5 today,
+    # 5.6+ later) without a config edit. The policy file (openai_policy.json)
+    # pins explicit gpt-5.5* slugs for the routed-call path where we want
+    # deterministic version control.
     "openai": {
         "speed":      _preset("gpt-5-nano", "gpt-5-nano", "gpt-5-mini", "gpt-5-mini", "gpt-5-nano"),
         "price":      _preset("gpt-5-nano", "gpt-5-nano", "gpt-5-nano", "gpt-5-mini", "gpt-5-nano"),

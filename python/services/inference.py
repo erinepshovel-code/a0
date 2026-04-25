@@ -631,7 +631,7 @@ async def _call_openai_responses(
     input_messages: list[dict],
     max_output_tokens: int = 4000,
     temperature: float = 1.0,
-    reasoning_effort: str = "low",
+    reasoning_effort: str = "medium",
     store: bool = False,
     use_tools: bool = True,
 ) -> tuple[str, dict]:

@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-06.a0.openai.policy.v1",
+  "version": "2026-04-25.a0.openai.policy.v2",
   "attribution": "GPT generated; context, prompt Erin Spencer",
   "hmmm": {
     "items": [
@@ -23,7 +23,7 @@
       "verbosity": "low"
     },
     "reasoning": {
-      "effort": "low"
+      "effort": "medium"
     }
   },
   "contracts": {
@@ -35,7 +35,7 @@
   },
   "roles": {
     "root_orchestrator": {
-      "model": "gpt-5.4",
+      "model": "gpt-5.5",
       "store": false,
       "parallel_tool_calls": false,
       "max_output_tokens": 4000,
@@ -68,7 +68,7 @@
       ]
     },
     "high_risk_gate": {
-      "model": "gpt-5.4",
+      "model": "gpt-5.5",
       "store": false,
       "parallel_tool_calls": false,
       "max_output_tokens": 5000,
@@ -99,7 +99,7 @@
       ]
     },
     "worker": {
-      "model": "gpt-5.4-mini",
+      "model": "gpt-5.5-mini",
       "store": false,
       "parallel_tool_calls": false,
       "max_output_tokens": 2500,
@@ -128,7 +128,7 @@
       ]
     },
     "classifier": {
-      "model": "gpt-5.4-nano",
+      "model": "gpt-5.5-nano",
       "store": false,
       "parallel_tool_calls": false,
       "max_output_tokens": 1200,
@@ -160,7 +160,7 @@
       ]
     },
     "deep_pass": {
-      "model": "gpt-5.4-pro",
+      "model": "gpt-5.5-pro",
       "store": false,
       "parallel_tool_calls": false,
       "max_output_tokens": 8000,

@@ -52,14 +52,26 @@ def resolve_role(task_text: str) -> str:
 
 
 def resolve_model(role: str) -> str:
+    """Resolve the model slug for a role.
+
+    Precedence: env var override (OPENAI_MODEL_ROOT/WORKER/CLASSIFIER/DEEP)
+    wins so operators can hot-pin a specific snapshot without editing the
+    policy file. If the env var is unset, fall back to the role's `model`
+    field in openai_policy.json so policy-file slug bumps actually take
+    effect at runtime (otherwise a slug bump is silently a no-op).
+    """
     env_key = _MODEL_ENV_MAP.get(role, "OPENAI_MODEL_ROOT")
     val = os.environ.get(env_key, "")
-    if not val:
-        raise ValueError(
-            f"OpenAI model env var '{env_key}' is not set for role '{role}'. "
-            f"Set it (e.g. in your environment secrets) before issuing OpenAI calls."
-        )
-    return val
+    if val:
+        return val
+    roles = get_roles()
+    policy_model = roles.get(role, {}).get("model", "")
+    if policy_model:
+        return policy_model
+    raise ValueError(
+        f"No OpenAI model resolvable for role '{role}': env var '{env_key}' "
+        f"is unset and openai_policy.json has no 'model' field for this role."
+    )
 
 
 def resolve_role_config(role: str) -> dict:
@@ -75,7 +87,7 @@ def resolve_role_config(role: str) -> dict:
             "max_output_tokens", defaults.get("max_output_tokens", 4000)
         ),
         "reasoning_effort": role_cfg.get("reasoning", {}).get(
-            "effort", defaults.get("reasoning", {}).get("effort", "low")
+            "effort", defaults.get("reasoning", {}).get("effort", "medium")
         ),
     }
 
