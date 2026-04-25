@@ -11,6 +11,7 @@ repl_nix_workspace.egg-info/dependency_links.txt
 repl_nix_workspace.egg-info/requires.txt
 repl_nix_workspace.egg-info/top_level.txt
 tests/test_artifacts.py
+tests/test_compute_transcript_full.py
 tests/test_cut_modes.py
 tests/test_edcm_uses_package.py
 tests/test_inference_modes_usage.py
