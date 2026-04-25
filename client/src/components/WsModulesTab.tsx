@@ -94,15 +94,35 @@ function ModuleEditor({
       if (!routeConfig) throw new Error("JSON validation failed");
       const tokenRes = await apiRequest("GET", `/api/v1/ws/modules/${mod.id}/write-token`);
       const { token } = await tokenRes.json();
-      return apiRequest("PATCH", `/api/v1/ws/modules/${mod.id}`, {
+      await apiRequest("PATCH", `/api/v1/ws/modules/${mod.id}`, {
         name, description, handler_code: handlerCode || null,
         ui_meta: uiMeta, route_config: routeConfig, write_token: token,
       });
+      // If module is currently live, redeploy so the saved code actually takes
+      // effect. Without this, Save persists to DB but the running app keeps
+      // serving the previous handler_code until the user separately clicks Deploy.
+      const wasActive = mod.status === "active";
+      const codeChanged = (handlerCode || "") !== (mod.handler_code || "");
+      if (wasActive && codeChanged && (handlerCode || "").trim()) {
+        const tokenRes2 = await apiRequest("GET", `/api/v1/ws/modules/${mod.id}/write-token`);
+        const { token: token2 } = await tokenRes2.json();
+        await apiRequest("POST", `/api/v1/ws/modules/${mod.id}/swap`, {
+          write_token: token2,
+          handler_code: handlerCode || null,
+        });
+        return { redeployed: true };
+      }
+      return { redeployed: false };
     },
-    onSuccess: () => {
+    onSuccess: (result: { redeployed: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/v1/ws/modules"] });
       queryClient.invalidateQueries({ queryKey: ["/api/v1/ui/structure"] });
-      toast({ title: "Module saved", description: `v${(mod.version || 1) + 1}` });
+      toast({
+        title: result.redeployed ? "Module saved & redeployed" : "Module saved",
+        description: result.redeployed
+          ? `v${(mod.version || 1) + 2} live`
+          : `v${(mod.version || 1) + 1}`,
+      });
       onClose();
     },
     onError: (e: Error) => {

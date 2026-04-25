@@ -249,10 +249,14 @@ class SectionPatch(BaseModel):
 
 @context_tab_router.patch("/api/v1/context/system-sections")
 async def patch_system_section(body: SectionPatch, request: Request):
-    uid = request.headers.get("x-user-id", "system")
+    uid = request.headers.get("x-user-id", "")
+    email = request.headers.get("x-user-email")
+    role = request.headers.get("x-user-role", "user")
+    if not uid or not await _is_admin(uid, email, role):
+        raise HTTPException(status_code=403, detail="Admin access required")
     if body.key not in DEFAULT_CONTEXTS:
         raise HTTPException(status_code=400, detail=f"Unknown context key: {body.key}")
-    await _upsert_context_value(body.key, body.value, uid or "system")
+    await _upsert_context_value(body.key, body.value, uid)
     return {"ok": True, "key": body.key}
 
 
@@ -263,13 +267,17 @@ class CoreContextBody(BaseModel):
 
 @context_tab_router.post("/api/context")
 async def save_core_context(body: CoreContextBody, request: Request):
-    uid = request.headers.get("x-user-id", "system")
+    uid = request.headers.get("x-user-id", "")
+    email = request.headers.get("x-user-email")
+    role = request.headers.get("x-user-role", "user")
+    if not uid or not await _is_admin(uid, email, role):
+        raise HTTPException(status_code=403, detail="Admin access required")
     saved = []
     if body.systemPrompt is not None:
-        await _upsert_context_value("a0_identity", body.systemPrompt, uid or "system")
+        await _upsert_context_value("a0_identity", body.systemPrompt, uid)
         saved.append("a0_identity")
     if body.contextPrefix is not None:
-        await _upsert_context_value("system_base", body.contextPrefix, uid or "system")
+        await _upsert_context_value("system_base", body.contextPrefix, uid)
         saved.append("system_base")
     return {"ok": True, "saved": saved}
 
