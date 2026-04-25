@@ -1,10 +1,14 @@
 // 736:5
-import { useState, useRef, useMemo, Fragment } from "react";
+import { useState, useRef, useMemo, Fragment, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { useLocation } from "wouter";
+import { loadStripe } from "@stripe/stripe-js";
+import { EmbeddedCheckout, EmbeddedCheckoutProvider } from "@stripe/react-stripe-js";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   Loader2,
@@ -16,8 +20,22 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  Heart,
+  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+type QuotaState = {
+  unlimited: boolean;
+  reason: "tier" | "donation" | "free";
+  tier: string;
+  used_this_month: number;
+  limit: number | null;
+};
+
+type BillingConfig = {
+  stripe_publishable_key: string;
+};
 
 type UploadRow = {
   id: number;
@@ -152,9 +170,62 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 
 export default function TranscriptsPage() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const fileRef = useRef<HTMLInputElement>(null);
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
+
+  // Donation flow state — opens an embedded Stripe checkout on quota lockout
+  // or when the user clicks the explicit "Donate to unlock" button.
+  const [donateOpen, setDonateOpen] = useState(false);
+  const [donateClientSecret, setDonateClientSecret] = useState<string | null>(null);
+  const [stripePromise, setStripePromise] = useState<ReturnType<typeof loadStripe> | null>(null);
+  const [donateAmount, setDonateAmount] = useState("5");
+
+  const { data: quota, refetch: refetchQuota } = useQuery<QuotaState>({
+    queryKey: ["/api/v1/transcripts/quota"],
+    refetchInterval: (query) => {
+      const q = query.state.data as QuotaState | undefined;
+      // While a donation flow is open, poll faster so unlock reflects on return.
+      return donateOpen && q?.unlimited === false ? 3000 : false;
+    },
+  });
+
+  const { data: billingConfig } = useQuery<BillingConfig>({
+    queryKey: ["/api/v1/billing/config"],
+    staleTime: Infinity,
+  });
+
+  const openDonate = useCallback(async () => {
+    try {
+      const cents = Math.max(500, Math.round(parseFloat(donateAmount || "5") * 100));
+      if (!billingConfig?.stripe_publishable_key) {
+        throw new Error("Stripe is not configured on this server.");
+      }
+      const r = await apiRequest("POST", "/api/v1/billing/donate", {
+        amount_cents: cents,
+        return_url: `${window.location.origin}/transcripts?donation=success`,
+      });
+      const j = await r.json() as { client_secret: string };
+      setStripePromise(loadStripe(billingConfig.stripe_publishable_key));
+      setDonateClientSecret(j.client_secret);
+      setDonateOpen(true);
+    } catch (err) {
+      toast({
+        title: "Donation failed",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+    }
+  }, [donateAmount, billingConfig, toast]);
+
+  const closeDonate = useCallback(() => {
+    setDonateOpen(false);
+    setDonateClientSecret(null);
+    setStripePromise(null);
+    refetchQuota();
+    queryClient.invalidateQueries({ queryKey: ["/api/v1/billing/status"] });
+  }, [refetchQuota]);
 
   const { data: uploadsData, isLoading: uploadsLoading } = useQuery<{ items: UploadRow[] }>({
     queryKey: ["/api/v1/transcripts/uploads"],
@@ -218,7 +289,18 @@ export default function TranscriptsPage() {
         credentials: "include",
       });
       if (!r.ok) {
-        const text = await r.text();
+        // Try to parse a structured quota-block payload first; fall back to text.
+        let parsed: any = null;
+        try { parsed = await r.clone().json(); } catch { /* not JSON */ }
+        if (r.status === 402) {
+          const err: any = new Error(
+            parsed?.detail?.detail || "Free tier limit reached.",
+          );
+          err.code = "quota_exceeded";
+          err.payload = parsed?.detail ?? parsed;
+          throw err;
+        }
+        const text = parsed ? JSON.stringify(parsed) : await r.text();
         throw new Error(`${r.status}: ${text}`);
       }
       return r.json() as Promise<{ mode: string; upload_id: number; report_id?: number }>;
@@ -226,6 +308,7 @@ export default function TranscriptsPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/v1/transcripts/uploads"] });
       queryClient.invalidateQueries({ queryKey: ["/api/v1/transcripts/reports"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/transcripts/quota"] });
       if (data.mode === "sync" && data.report_id) {
         setSelectedReportId(data.report_id);
         setPage(0);
@@ -237,7 +320,12 @@ export default function TranscriptsPage() {
         });
       }
     },
-    onError: (err: Error) => {
+    onError: (err: any) => {
+      if (err?.code === "quota_exceeded") {
+        // Don't toast — the quota panel renders the unlock CTA inline.
+        refetchQuota();
+        return;
+      }
       toast({ title: "Upload failed", description: err.message, variant: "destructive" });
     },
   });
@@ -286,30 +374,82 @@ export default function TranscriptsPage() {
       {/* Left rail */}
       <aside className="w-72 border-r border-border flex flex-col flex-shrink-0">
         <div className="p-3 border-b border-border space-y-2">
-          <Button
-            onClick={handlePickFile}
-            disabled={uploadMut.isPending}
-            className="w-full"
-            data-testid="button-upload-transcript"
-          >
-            {uploadMut.isPending ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <UploadIcon className="w-4 h-4 mr-2" />
-            )}
-            Upload transcript
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            className="hidden"
-            accept=".txt,.md,.json,.html,.htm,.pdf,.zip"
-            onChange={handleFileChange}
-            data-testid="input-file-upload"
-          />
-          <p className="text-[10px] text-muted-foreground leading-tight">
-            txt · md · json · html · pdf · zip · max 25 MB
-          </p>
+          {(() => {
+            const blocked =
+              quota != null &&
+              !quota.unlimited &&
+              quota.used_this_month >= (quota.limit ?? 0);
+            return (
+              <>
+                <Button
+                  onClick={handlePickFile}
+                  disabled={uploadMut.isPending || blocked}
+                  className="w-full"
+                  data-testid="button-upload-transcript"
+                >
+                  {uploadMut.isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : blocked ? (
+                    <Lock className="w-4 h-4 mr-2" />
+                  ) : (
+                    <UploadIcon className="w-4 h-4 mr-2" />
+                  )}
+                  {blocked ? "Quota reached" : "Upload transcript"}
+                </Button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  className="hidden"
+                  accept=".txt,.md,.json,.html,.htm,.pdf,.zip"
+                  onChange={handleFileChange}
+                  data-testid="input-file-upload"
+                />
+                <p className="text-[10px] text-muted-foreground leading-tight">
+                  txt · md · json · html · pdf · zip · max 25 MB
+                </p>
+                {quota && (
+                  <div
+                    className="text-[10px] text-muted-foreground border-t border-border pt-2 space-y-1"
+                    data-testid="text-quota-status"
+                  >
+                    {quota.unlimited ? (
+                      <div className="flex items-center gap-1 text-emerald-400">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Unlimited uploads ({quota.reason === "tier" ? quota.tier : "donation"})
+                      </div>
+                    ) : (
+                      <div data-testid="text-quota-free">
+                        Free tier: {quota.used_this_month} / {quota.limit} this month.
+                      </div>
+                    )}
+                    {blocked && (
+                      <div className="space-y-1.5 pt-1">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          className="w-full h-7 text-[11px]"
+                          onClick={openDonate}
+                          data-testid="button-donate-unlock"
+                        >
+                          <Heart className="w-3 h-3 mr-1" />
+                          Donate $5 to unlock
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full h-7 text-[11px]"
+                          onClick={() => navigate("/pricing")}
+                          data-testid="button-subscribe-monthly"
+                        >
+                          Or subscribe monthly
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         <div className="flex-1 overflow-auto">
@@ -770,6 +910,36 @@ export default function TranscriptsPage() {
           </div>
         )}
       </main>
+
+      <Dialog
+        open={donateOpen}
+        onOpenChange={(open) => {
+          if (!open) closeDonate();
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Heart className="w-4 h-4 text-rose-400" />
+              Donate to unlock unlimited transcript uploads
+            </DialogTitle>
+          </DialogHeader>
+          {donateClientSecret && stripePromise ? (
+            <div data-testid="container-donate-checkout">
+              <EmbeddedCheckoutProvider
+                stripe={stripePromise}
+                options={{ clientSecret: donateClientSecret }}
+              >
+                <EmbeddedCheckout />
+              </EmbeddedCheckoutProvider>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              <Loader2 className="w-5 h-5 animate-spin" />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

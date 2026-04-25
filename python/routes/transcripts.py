@@ -10,14 +10,21 @@
 # DOC notes: Hybrid sync/async — files ≤256KB ingest inline; larger files queue and the response carries upload_id only.
 
 import asyncio
-from typing import Optional
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Request, UploadFile
+from sqlalchemy import text as _sa_text
 
+from ..database import engine
 from ..services.transcript_ingest import (
     MAX_UPLOAD_BYTES, SUPPORTED_EXTS, SYNC_BYTE_LIMIT, ingest_upload,
 )
 from ..storage import storage
+
+FREE_MONTHLY_UPLOAD_LIMIT = 1
+UNLIMITED_TIERS = {"supporter", "ws", "admin"}
 
 router = APIRouter(prefix="/api/v1/transcripts", tags=["transcripts"])
 
@@ -40,6 +47,101 @@ def _require_uid(request: Request) -> str:
     return uid
 
 
+async def _quota_state(uid: str) -> dict:
+    """Compute the caller's current upload quota state.
+
+    Returns a dict shaped like:
+      {
+        "unlimited": bool,
+        "reason": "tier" | "donation" | "free",
+        "tier": str,
+        "used_this_month": int,
+        "limit": int | None,   # None when unlimited
+      }
+    """
+    async with engine.connect() as conn:
+        row = await conn.execute(
+            _sa_text(
+                "SELECT subscription_tier, transcripts_unlocked "
+                "FROM users WHERE id = :id"
+            ),
+            {"id": uid},
+        )
+        rec = row.mappings().first()
+
+    tier = (rec["subscription_tier"] if rec else "free") or "free"
+    unlocked = bool(rec["transcripts_unlocked"]) if rec else False
+
+    if tier in UNLIMITED_TIERS:
+        return {
+            "unlimited": True, "reason": "tier", "tier": tier,
+            "used_this_month": 0, "limit": None,
+        }
+    if unlocked:
+        return {
+            "unlimited": True, "reason": "donation", "tier": tier,
+            "used_this_month": 0, "limit": None,
+        }
+
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1)
+    used = await storage.count_user_uploads_since(uid, month_start)
+    return {
+        "unlimited": False, "reason": "free", "tier": tier,
+        "used_this_month": used, "limit": FREE_MONTHLY_UPLOAD_LIMIT,
+    }
+
+
+@asynccontextmanager
+async def _user_upload_lock(uid: str):
+    """Per-user Postgres advisory lock — serializes the quota-check + upload
+    insert so two concurrent free-tier uploads can't both pass the gate.
+
+    Uses a session-level (not transactional) lock held for the duration of the
+    `async with` block; explicit unlock in finally guarantees release even on
+    exception. Lock key is hashtext('transcripts:<uid>') so the keyspace is
+    namespaced and never collides with other features that may also use
+    advisory locks.
+    """
+    key_param = f"transcripts:{uid}"
+    async with engine.connect() as conn:
+        await conn.execute(
+            _sa_text("SELECT pg_advisory_lock(hashtext(:k))"),
+            {"k": key_param},
+        )
+        try:
+            yield conn
+        finally:
+            await conn.execute(
+                _sa_text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                {"k": key_param},
+            )
+
+
+def _quota_blocked_payload(state: dict) -> dict:
+    """Shape the JSON body returned with a 402 when the user is over quota."""
+    return {
+        "error": "quota_exceeded",
+        "detail": (
+            f"Free tier limit reached: {state['used_this_month']} of "
+            f"{state['limit']} upload(s) this month. Donate or subscribe "
+            "to unlock unlimited uploads."
+        ),
+        "quota": state,
+        "unlock_options": {
+            "donate": "/api/v1/billing/donate",
+            "subscribe": "/pricing",
+        },
+    }
+
+
+@router.get("/quota")
+async def get_quota(request: Request):
+    """Current caller's transcript-upload quota state."""
+    uid = _require_uid(request)
+    return await _quota_state(uid)
+
+
 @router.post("/upload")
 async def upload_transcript(
     request: Request,
@@ -53,6 +155,7 @@ async def upload_transcript(
     GET /uploads/{id} for status, then fetch /reports/{report_id}.
     """
     uid = _require_uid(request)
+
     if not file.filename:
         raise HTTPException(status_code=400, detail="filename required")
     ext = "." + file.filename.lower().rsplit(".", 1)[-1] if "." in file.filename else ""
@@ -71,13 +174,21 @@ async def upload_transcript(
             detail=f"file too large: {len(data)} bytes (max {MAX_UPLOAD_BYTES})",
         )
 
-    upload = await storage.create_transcript_upload({
-        "user_id": uid,
-        "filename": file.filename,
-        "mime": file.content_type,
-        "byte_size": len(data),
-        "status": "queued",
-    })
+    # Check quota and reserve an upload row atomically per-user.
+    # The advisory lock serializes concurrent uploads from the same caller so
+    # two parallel requests on a free account can't both pass the gate.
+    async with _user_upload_lock(uid):
+        quota = await _quota_state(uid)
+        if not quota["unlimited"] and quota["used_this_month"] >= (quota["limit"] or 0):
+            raise HTTPException(status_code=402, detail=_quota_blocked_payload(quota))
+
+        upload = await storage.create_transcript_upload({
+            "user_id": uid,
+            "filename": file.filename,
+            "mime": file.content_type,
+            "byte_size": len(data),
+            "status": "queued",
+        })
 
     # Hybrid path: small files inline, large files background.
     if len(data) <= SYNC_BYTE_LIMIT:

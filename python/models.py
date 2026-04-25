@@ -36,6 +36,7 @@ class User(Base):
     stripe_subscription_id = Column(String)
     subscription_status = Column(String(50), nullable=False, server_default="active")
     byok_enabled = Column(Boolean, nullable=False, server_default="false")
+    transcripts_unlocked = Column(Boolean, nullable=False, server_default="false")
     founder_slot = Column(Integer)
     created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))

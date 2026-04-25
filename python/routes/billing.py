@@ -70,10 +70,15 @@ INTERVAL_LABELS: dict[str, str] = {
 }
 
 _DEFAULT_RETURN_PATH = "/pricing?billing=success"
+_DONATION_RETURN_PATH = "/transcripts?donation=success"
 _WS_DOMAIN = "interdependentway.org"
-_ALLOWED_USER_COLS = {"stripe_customer_id", "stripe_subscription_id", "subscription_tier", "subscription_status"}
+_ALLOWED_USER_COLS = {
+    "stripe_customer_id", "stripe_subscription_id", "subscription_tier",
+    "subscription_status", "transcripts_unlocked",
+}
 
 VALID_TIERS = ("free", "supporter", "ws", "admin")
+DONATION_MIN_CENTS = 500  # $5.00 minimum one-off donation that unlocks transcripts
 
 
 def _user_id(request: Request) -> Optional[str]:
@@ -307,6 +312,76 @@ async def create_checkout(body: CheckoutBody, request: Request):
     return {"client_secret": session.client_secret}
 
 
+class DonateBody(BaseModel):
+    amount_cents: int
+    return_url: Optional[str] = None
+
+
+@router.post("/donate")
+async def create_donation(body: DonateBody, request: Request):
+    """One-off donation that unlocks unlimited transcript uploads.
+
+    Subscribers (supporter/ws/admin) already have unlimited uploads via tier;
+    this endpoint exists for free-tier users who want to unlock without
+    committing to a recurring subscription.
+    """
+    uid = _user_id(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    if body.amount_cents < DONATION_MIN_CENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Minimum donation is ${DONATION_MIN_CENTS / 100:.2f}",
+        )
+
+    stripe.api_key = STRIPE_SECRET_KEY
+    origin = request.headers.get("origin") or "https://a0p.replit.app"
+    return_url = body.return_url or f"{origin}{_DONATION_RETURN_PATH}"
+
+    async with engine.connect() as conn:
+        row = await conn.execute(
+            text("SELECT email, stripe_customer_id FROM users WHERE id = :id"),
+            {"id": uid},
+        )
+        rec = row.mappings().first()
+
+    customer_id = rec["stripe_customer_id"] if rec else None
+    user_email = rec["email"] if rec else None
+
+    session_kwargs: dict = {
+        "ui_mode": "embedded",
+        "return_url": return_url,
+        "mode": "payment",
+        "line_items": [
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": "a0p Transcript Unlock",
+                        "description": "One-off donation — unlocks unlimited transcript uploads.",
+                    },
+                    "unit_amount": body.amount_cents,
+                },
+                "quantity": 1,
+            }
+        ],
+        "metadata": {
+            "user_id": uid,
+            "product_key": "donation",
+            "amount_cents": str(body.amount_cents),
+        },
+    }
+    if customer_id:
+        session_kwargs["customer"] = customer_id
+    elif user_email:
+        session_kwargs["customer_email"] = user_email
+
+    session = stripe.checkout.Session.create(**session_kwargs)
+    return {"client_secret": session.client_secret}
+
+
 class PortalBody(BaseModel):
     return_url: str
 
@@ -490,6 +565,10 @@ async def _handle_checkout_completed(sess: dict) -> None:
     if product_key == "supporter":
         updates["subscription_tier"] = "supporter"
         updates["subscription_status"] = "active"
+    elif product_key == "donation":
+        # One-off donation grants permanent transcript-uploads unlock without
+        # changing tier (subscriber state stays tier-driven).
+        updates["transcripts_unlocked"] = True
 
     if updates:
         safe = {k: v for k, v in updates.items() if k in _ALLOWED_USER_COLS}

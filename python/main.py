@@ -187,6 +187,11 @@ async def lifespan(app: FastAPI):
         """))
     print("[approval_scopes] table ensured")
     async with get_session() as _sess:
+        await _sess.execute(_sa_text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS transcripts_unlocked BOOLEAN NOT NULL DEFAULT false"
+        ))
+    print("[users] transcripts_unlocked column ensured")
+    async with get_session() as _sess:
         await _sess.execute(_sa_text("""
             CREATE TABLE IF NOT EXISTS ws_modules (
                 id SERIAL PRIMARY KEY,
