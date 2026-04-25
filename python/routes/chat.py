@@ -52,6 +52,41 @@ def _store_pending_gate(conv_id: int, entry: dict) -> None:
     _pending_gates[conv_id] = entry
     _sweep_pending_gates()
 
+
+def _attach_cost_usd(usage: dict | None, provider_id: str | None) -> None:
+    """Mutate `usage` to add a `cost_usd` field for the single-mode path.
+
+    Multi-model orchestration already populates `cost_usd` via
+    `_aggregate_voice_usage`, but the single-mode reply previously had no
+    cost figure attached — so the conversation-wide running total had no
+    way to sum single-mode turns. We compute it here from the provider
+    pricing table and the cache breakdown so the running-total badge can
+    sum every assistant message uniformly.
+
+    No-ops if usage is missing/empty, cost is already populated, or the
+    provider id isn't a known billing provider (e.g. "system" replies).
+    """
+    if not usage or not isinstance(usage, dict):
+        return
+    if usage.get("cost_usd") is not None:
+        return
+    if not provider_id or provider_id == "system":
+        return
+    if not energy_registry.get_provider(provider_id):
+        return
+    try:
+        cb = energy_registry.cache_breakdown(usage)
+        cost = energy_registry.estimate_cost(
+            provider_id,
+            cb.get("fresh_input", 0),
+            cb.get("output", 0),
+            cb.get("cache_read", 0),
+            cb.get("cache_write", 0),
+        )
+        usage["cost_usd"] = round(float(cost), 6)
+    except Exception:
+        usage["cost_usd"] = None
+
 # DOC module: chat
 # DOC label: Chat
 # DOC description: Manages conversations and messages between users and the agent. Supports streaming replies, conversation history, and per-conversation metadata.
@@ -466,6 +501,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                     f"If you meant to pre-approve a category, use: APPROVE SCOPE <scope>{scope_note}"
                 )
                 approved_usage = {}
+            _attach_cost_usd(approved_usage, replay_provider)
             assistant_msg = await storage.create_message({
                 "conversation_id": conv_id,
                 "role": "assistant",
@@ -700,6 +736,8 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 "provider_id": provider_id,
                 "uid": uid,
             })
+
+        _attach_cost_usd(usage, provider_id)
 
         assistant_msg = await storage.create_message({
             "conversation_id": conv_id,

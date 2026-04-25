@@ -13,7 +13,10 @@ import {
 import {
   type Message,
   MessageBubble,
+  conversationCostUSD,
+  fmtCostUSD,
 } from "@/components/chat-messages";
+import { Badge } from "@/components/ui/badge";
 import {
   type Conversation,
   ConversationList,
@@ -219,6 +222,18 @@ export default function ChatPage() {
   });
 
   const activeTitle = conversations.find((c) => c.id === activeConvId)?.title ?? "a0p";
+  const runningCost = conversationCostUSD(messages);
+  const showRunningCost = runningCost > 0;
+  const runningCostBadge = showRunningCost ? (
+    <Badge
+      variant="outline"
+      className="text-[10px] h-5 px-1.5 font-mono text-muted-foreground"
+      title="Estimated USD spent on this conversation so far"
+      data-testid="badge-running-cost"
+    >
+      {fmtCostUSD(runningCost)}
+    </Badge>
+  ) : null;
 
   const sidebar = convsLoading ? (
     <div className="p-3 space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
@@ -261,10 +276,21 @@ export default function ChatPage() {
             <Menu className="h-5 w-5" />
           </Button>
           <span className="flex-1 text-sm font-medium truncate text-foreground">{activeTitle}</span>
+          {runningCostBadge}
           <Button size="icon" variant="ghost" className="h-10 w-10 shrink-0" onClick={() => createConv.mutate()} disabled={createConv.isPending} data-testid="btn-new-chat-mobile">
             {createConv.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           </Button>
         </div>
+        {/* desktop conversation header — shows the active conversation title and
+            the running cost total so the user knows what they've spent without
+            adding up per-message pills by hand. Hidden when no conversation is
+            selected (the empty-state card already says "Start a conversation"). */}
+        {activeConvId && (
+          <div className="hidden md:flex items-center gap-2 px-4 py-1.5 border-b border-border bg-card/50" data-testid="desktop-chat-header">
+            <span className="flex-1 text-sm font-medium truncate text-foreground" data-testid="text-conv-title">{activeTitle}</span>
+            {runningCostBadge}
+          </div>
+        )}
         {!activeConvId ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground" data-testid="chat-empty">
             <Bot className="h-10 w-10" />

@@ -91,6 +91,18 @@ export function fmtCostUSD(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/** Sum cost_usd across every assistant message's usage dict. Returns 0
+ *  when no message has a numeric cost — so the caller can hide the badge. */
+export function conversationCostUSD(messages: Message[]): number {
+  let total = 0;
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    const c = (m.metadata?.usage as { cost_usd?: number | null } | undefined)?.cost_usd;
+    if (typeof c === "number" && Number.isFinite(c) && c > 0) total += c;
+  }
+  return total;
+}
+
 function looksLikeHtmlPage(s: string): boolean {
   const head = s.trimStart().slice(0, 200).toLowerCase();
   return head.startsWith("<!doctype") || head.startsWith("<html") ||
