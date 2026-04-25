@@ -307,20 +307,76 @@ _RETRY_MAX_ATTEMPTS = 3
 _RETRY_BASE_SLEEP = 1.5
 
 
+def _safe_error_snippet(raw: object, limit: int = 200) -> str:
+    """Sanitize an arbitrary error string so it's safe to surface to the UI.
+
+    Strips control chars, collapses whitespace, drops anything that looks like
+    a credential token or query string, and truncates. Empty if nothing safe
+    remains — callers should fall back to a generic label in that case.
+    """
+    if not raw:
+        return ""
+    s = str(raw).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    s = " ".join(s.split())
+    # Strip URL query strings and obvious key=value pairs (env-var leakage guard).
+    import re as _re
+    s = _re.sub(r"\?[^\s]+", "", s)
+    s = _re.sub(r"\b[A-Za-z_][A-Za-z0-9_]*=[\S]+", "", s)
+    # Strip bearer/sk- token shapes.
+    s = _re.sub(r"\b(?:Bearer\s+|sk-)[A-Za-z0-9_\-\.]{6,}", "", s)
+    s = s.strip(" .,;:")
+    if len(s) > limit:
+        s = s[:limit].rstrip() + "…"
+    return s
+
+
 def _sanitize_provider_error(provider: str, exc: BaseException) -> str:
     """Return a single-line user-safe error summary; full detail goes to server log."""
     _log.exception("[%s] provider call failed", provider)
+
+    # google-genai SDK errors carry useful, safe fields (.code, .message, .status).
+    # Surface them so users can tell quota/auth/blocked-content apart instead of
+    # all collapsing to "[gemini error: ClientError]".
+    try:
+        from google.genai import errors as _genai_errors  # type: ignore
+        if isinstance(exc, _genai_errors.APIError):
+            code = getattr(exc, "code", None) or getattr(exc, "status", None) or "?"
+            msg = _safe_error_snippet(getattr(exc, "message", None) or str(exc))
+            return f"[{provider} error: {code} {msg}]".rstrip(" ]") + "]"
+    except ImportError:
+        pass
+
     if isinstance(exc, httpx.HTTPStatusError):
         try:
             code = exc.response.status_code
         except Exception:
             code = "?"
+        # Try to lift a JSON `error.message` / `message` field from the response body.
+        body_msg = ""
+        try:
+            data = exc.response.json()
+            if isinstance(data, dict):
+                err = data.get("error")
+                if isinstance(err, dict):
+                    body_msg = err.get("message") or err.get("code") or ""
+                elif isinstance(err, str):
+                    body_msg = err
+                else:
+                    body_msg = data.get("message") or ""
+        except Exception:
+            body_msg = ""
+        body_msg = _safe_error_snippet(body_msg)
+        if body_msg:
+            return f"[{provider} error: HTTP {code} {body_msg}]"
         return f"[{provider} error: HTTP {code}]"
     if isinstance(exc, httpx.TimeoutException):
         return f"[{provider} error: request timed out]"
     if isinstance(exc, httpx.HTTPError):
         return f"[{provider} error: network error]"
-    # Generic — never include str(exc) which may carry env-var values, URLs, or keys.
+    # Generic — include the type plus a sanitized message snippet if non-empty.
+    snippet = _safe_error_snippet(str(exc))
+    if snippet:
+        return f"[{provider} error: {type(exc).__name__}: {snippet}]"
     return f"[{provider} error: {type(exc).__name__}]"
 
 
