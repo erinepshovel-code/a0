@@ -254,6 +254,72 @@ export function SystemStatusBanner({ status }: { status: SystemStatus }) {
   );
 }
 
+function OrchestrationCard({
+  r, idx, mode, testIdPrefix, indentPx,
+}: {
+  r: OrchestrationResponse;
+  idx: number;
+  mode: string;
+  testIdPrefix: string;
+  indentPx?: number;
+}) {
+  const { toast } = useToast();
+  const [expanded, setExpanded] = useState(false);
+  const role = String((r as Record<string, unknown>).role ?? "player").toLowerCase();
+  const stepNum = Number((r as Record<string, unknown>).step_num ?? 0);
+  const isSynth = role === "synthesizer" || stepNum === -1 || (mode === "council" && stepNum === 1 && role === "council");
+  const roleLabel = isSynth ? "synthesis" : role === "council" ? "round 1" : null;
+  const content = String(r.content ?? "");
+  const copy = () => {
+    navigator.clipboard.writeText(content);
+    toast({ title: "Copied", description: r.provider ? `${r.provider} response` : undefined });
+  };
+  return (
+    <div
+      className="rounded-md border border-border bg-background/40 p-2 text-[11px] min-w-0"
+      style={indentPx ? { marginLeft: `${indentPx}px` } : undefined}
+      data-testid={`${testIdPrefix}-${idx}`}
+    >
+      <div className="flex items-center gap-1 mb-1 text-[9px] text-muted-foreground">
+        {testIdPrefix === "orchestration-step" && <span>step {idx + 1}</span>}
+        {r.provider && <Badge variant="outline" className="text-[9px] h-3.5 px-1">{r.provider}</Badge>}
+        {roleLabel && <Badge variant="secondary" className="text-[9px] h-3.5 px-1">{roleLabel}</Badge>}
+        {r.model && <span className="truncate opacity-60">{r.model}</span>}
+        <button
+          onClick={copy}
+          className="ml-auto hover:opacity-80 shrink-0"
+          title="Copy this response"
+          data-testid={`copy-orchestration-${idx}`}
+        >
+          <Copy className="h-3 w-3" />
+        </button>
+        {!r.error && content.length > 400 && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="hover:opacity-80 shrink-0"
+            title={expanded ? "Collapse" : "Expand"}
+            data-testid={`toggle-orchestration-${idx}`}
+          >
+            {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </button>
+        )}
+      </div>
+      {r.error
+        ? <p className="text-destructive text-[10px]">{r.error}</p>
+        : (
+          <p
+            className={cn(
+              "whitespace-pre-wrap break-words opacity-90",
+              !expanded && "max-h-48 overflow-auto",
+            )}
+          >
+            {content}
+          </p>
+        )}
+    </div>
+  );
+}
+
 export function OrchestrationResponses({ usage }: { usage?: UsageData | null }) {
   const responses = usage?.responses;
   if (!Array.isArray(responses) || responses.length === 0) return null;
@@ -265,43 +331,31 @@ export function OrchestrationResponses({ usage }: { usage?: UsageData | null }) 
         <span>{mode || "fan-out"}</span>
         <span className="opacity-60">·</span>
         <span>{responses.length} responses</span>
+        <span className="opacity-60 normal-case ml-1">— each card has its own copy button</span>
       </div>
       {isLadder ? (
         <div className="flex flex-col gap-1.5">
           {responses.map((r, i) => (
-            <div
+            <OrchestrationCard
               key={i}
-              className="rounded-md border border-border bg-background/40 p-2 text-[11px]"
-              style={{ marginLeft: `${i * 8}px` }}
-              data-testid={`orchestration-step-${i}`}
-            >
-              <div className="flex items-center gap-1 mb-1 text-[9px] text-muted-foreground">
-                <span>step {i + 1}</span>
-                {r.provider && <Badge variant="outline" className="text-[9px] h-3.5 px-1">{r.provider}</Badge>}
-                {r.model && <span className="opacity-60">{r.model}</span>}
-              </div>
-              {r.error
-                ? <p className="text-destructive text-[10px]">{r.error}</p>
-                : <p className="whitespace-pre-wrap break-words opacity-90">{r.content}</p>}
-            </div>
+              r={r}
+              idx={i}
+              mode={mode}
+              testIdPrefix="orchestration-step"
+              indentPx={i * 8}
+            />
           ))}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {responses.map((r, i) => (
-            <div
+            <OrchestrationCard
               key={i}
-              className="rounded-md border border-border bg-background/40 p-2 text-[11px] min-w-0"
-              data-testid={`orchestration-card-${i}`}
-            >
-              <div className="flex items-center gap-1 mb-1 text-[9px] text-muted-foreground">
-                {r.provider && <Badge variant="outline" className="text-[9px] h-3.5 px-1">{r.provider}</Badge>}
-                {r.model && <span className="truncate opacity-60">{r.model}</span>}
-              </div>
-              {r.error
-                ? <p className="text-destructive text-[10px]">{r.error}</p>
-                : <p className="whitespace-pre-wrap break-words opacity-90 max-h-48 overflow-auto">{r.content}</p>}
-            </div>
+              r={r}
+              idx={i}
+              mode={mode}
+              testIdPrefix="orchestration-card"
+            />
           ))}
         </div>
       )}
