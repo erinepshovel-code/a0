@@ -8,6 +8,7 @@ google-genai>=1.73.1
 httpx>=0.28.1
 itsdangerous>=2.2.0
 numpy>=2.4.3
+pcea
 psycopg2-binary>=2.9.11
 pydantic>=2.12.5
 pyjwt[crypto]>=2.10.1

@@ -13,6 +13,7 @@ Requires-Dist: google-genai>=1.73.1
 Requires-Dist: httpx>=0.28.1
 Requires-Dist: itsdangerous>=2.2.0
 Requires-Dist: numpy>=2.4.3
+Requires-Dist: pcea
 Requires-Dist: psycopg2-binary>=2.9.11
 Requires-Dist: pydantic>=2.12.5
 Requires-Dist: pyjwt[crypto]>=2.10.1

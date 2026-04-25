@@ -5,6 +5,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["python"]
 
+[tool.uv.sources]
+pcea = { git = "https://github.com/The-Interdependency/PCEA.git", rev = "main" }
+
 [project]
 name = "repl-nix-workspace"
 version = "0.1.0"
@@ -21,6 +24,7 @@ dependencies = [
     "httpx>=0.28.1",
     "itsdangerous>=2.2.0",
     "numpy>=2.4.3",
+    "pcea",
     "psycopg2-binary>=2.9.11",
     "pydantic>=2.12.5",
     "pyjwt[crypto]>=2.10.1",

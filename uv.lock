@@ -770,6 +770,11 @@ wheels = [
 ]
 
 [[package]]
+name = "pcea"
+version = "0.1.0"
+source = { git = "https://github.com/The-Interdependency/PCEA.git?rev=main#9dff9408aa909ed8a183dc39fdfd7b8347eb7d78" }
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1102,6 +1107,7 @@ dependencies = [
     { name = "httpx" },
     { name = "itsdangerous" },
     { name = "numpy" },
+    { name = "pcea" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -1131,6 +1137,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "itsdangerous", specifier = ">=2.2.0" },
     { name = "numpy", specifier = ">=2.4.3" },
+    { name = "pcea", git = "https://github.com/The-Interdependency/PCEA.git?rev=main" },
     { name = "psycopg2-binary", specifier = ">=2.9.11" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10.1" },
