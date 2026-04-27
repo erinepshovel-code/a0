@@ -15,6 +15,9 @@ from .tool_executor import (
     set_caller_provider,
     get_a0_skill_manifest,
 )
+# Single source of truth for provider specs — loaded from python/config/providers.json.
+# Replaces the old hardcoded PROVIDER_ENDPOINTS dict per the no-string-literals doctrine.
+from .energy_registry import BUILTIN_PROVIDERS
 
 _log = logging.getLogger("a0p.inference")
 
@@ -241,7 +244,10 @@ def _build_provider_messages(messages: list[dict], provider_id: str) -> list[dic
         if doc_blocks:
             composed_text = (text + "\n\n" if text else "") + "\n\n".join(doc_blocks)
 
-        if provider_id in ("openai", "grok", "grok-fast", "grok-code"):
+        # Vision branch: providers using OpenAI Chat-Completions style image_url
+        # parts. Driven by providers.json supports_vision flag — claude has its
+        # own native parts branch below, gemini uses the google-genai parts API.
+        if (BUILTIN_PROVIDERS.get(provider_id) or {}).get("supports_vision"):
             parts: list[dict] = []
             if composed_text:
                 parts.append({"type": "text", "text": composed_text})
@@ -434,46 +440,6 @@ def _canonical_tool_calls(tool_calls: list[dict]) -> str:
             args_str = json.dumps(args_obj, sort_keys=True, default=str)
         except Exception:
             args_str = str(args)
-        norm.append(f"{name}::{args_str}")
-    return "|".join(sorted(norm))
-
-PROVIDER_ENDPOINTS = {
-    "grok": {
-        "url": "https://api.x.ai/v1/chat/completions",
-        "env_key": "XAI_API_KEY",
-        "model": "grok-4-fast-reasoning",
-        "supports_reasoning_effort": True,
-        # xAI's hosted retrieval (web_search + x_search) lives on the Responses
-        # API at /v1/responses. The legacy `search_parameters` field on Chat
-        # Completions is gone (HTTP 410). When this flag is on we route to the
-        # Responses path; trade-off is our custom function tools (skill_*) are
-        # not invoked on that branch — only hosted retrieval runs.
-        # See https://docs.x.ai/docs/guides/tools/overview.
-        "supports_live_search": True,
-        "responses_url": "https://api.x.ai/v1/responses",
-    },
-    "gemini": {
-        "url": "https://generativelanguage.googleapis.com/v1beta/chat/completions",
-        "env_key": "GEMINI_API_KEY",
-        "model": "gemini-2.5-flash",
-        "supports_reasoning_effort": False,
-    },
-    "gemini3": {
-        "url": "https://generativelanguage.googleapis.com/v1beta/chat/completions",
-        "env_key": "GEMINI_API_KEY",
-        "model": "gemini-3-pro-preview",
-        "supports_reasoning_effort": False,
-        "min_tier": "ws",
-    },
-    "claude": {
-        "url": "https://api.anthropic.com/v1/messages",
-        "env_key": "ANTHROPIC_API_KEY",
-        "model": "claude-sonnet-4-5",
-        "supports_reasoning_effort": False,
-        "supports_thinking": True,
-        "supports_prompt_caching": True,
-    },
-}
 
 # Anthropic API version (stable; new features arrive via anthropic-beta header).
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -531,7 +497,7 @@ async def call_energy_provider(
     if provider_id == "openai":
         return await _call_openai_routed(messages, system_prompt, use_tools=use_tools, user_id=user_id, skip_approval=skip_approval)
 
-    spec = PROVIDER_ENDPOINTS.get(provider_id)
+    spec = BUILTIN_PROVIDERS.get(provider_id)
     if not spec:
         return _fallback_response(provider_id), {}
 

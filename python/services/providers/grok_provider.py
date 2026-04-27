@@ -73,9 +73,15 @@ async def call(
             max_tokens,
             reasoning_effort if spec.get("supports_reasoning_effort") else None,
         )
+    chat_url = spec.get("url")
+    if not chat_url:
+        raise ValueError(
+            "providers.json grok entry missing 'url' (chat completions endpoint). "
+            "No silent fallback to a hardcoded literal."
+        )
     return await _call_chat_completions(
         key,
-        spec.get("url", "https://api.x.ai/v1/chat/completions"),
+        chat_url,
         model,
         messages,
         max_tokens,
