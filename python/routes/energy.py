@@ -555,7 +555,10 @@ async def refresh_pricing(provider_id: str, request: Request):
     from ..services.energy_registry import reload_pricing_doc, get_pricing_models
     reload_pricing_doc()
     models = get_pricing_models(provider_id)
-    refreshed_at = int(time.time() * 1000)
+    # Use seconds (float) — consistent with run_discover_models and the
+    # `last_seen_at` field on each model entry. The frontend's timeAgo()
+    # parser assumes seconds.
+    refreshed_at = time.time()
     try:
         await _update_seed_route_config(provider_id, {
             "available_models": models,

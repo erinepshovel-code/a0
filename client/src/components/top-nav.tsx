@@ -1,6 +1,6 @@
 // 173:0
 import { useLocation, Link } from "wouter";
-import { Zap, Shield, Palette, Check, Archive, Network, Images, FileSearch, Sun, Moon, Monitor } from "lucide-react";
+import { Zap, Shield, Palette, Check, Archive, Network, Images, FileSearch, Sun, Moon, Monitor, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUiStructure } from "@/hooks/use-ui-structure";
 import { useBillingStatus } from "@/hooks/use-billing-status";
@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { path: "/archive", icon: Archive, label: "Archive" },
   { path: "/gallery", icon: Images, label: "Gallery" },
   { path: "/transcripts", icon: FileSearch, label: "Transcripts" },
+  { path: "/providers", icon: Cpu, label: "Providers" },
 ];
 
 const MODE_ICON: Record<ThemeMode, typeof Sun> = {

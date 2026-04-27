@@ -18,6 +18,7 @@ import ArchivePage from "@/pages/archive";
 import FleetPage from "@/pages/fleet";
 import GalleryPage from "@/pages/gallery";
 import TranscriptsPage from "@/pages/transcripts";
+import ProvidersPage from "@/pages/providers";
 import TopNav from "@/components/top-nav";
 import HmmmDoctrine from "@/components/hmmm-doctrine";
 
@@ -36,6 +37,7 @@ function Router() {
       <Route path="/gallery" component={GalleryPage} />
       <Route path="/fleet" component={FleetPage} />
       <Route path="/transcripts" component={TranscriptsPage} />
+      <Route path="/providers" component={ProvidersPage} />
       <Route component={ChatPage} />
     </Switch>
   );
