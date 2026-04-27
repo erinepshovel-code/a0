@@ -37,7 +37,16 @@ a0p is a mobile-first autonomous AI agent platform. One agent `a0(zeta fun alpha
 - `python/pcna.py` — PCNA engine (53-node ring topology)
 - `python/logger.py` — JSONL append logger
 - `python/agents/zfae.py` — ZFAE agent definition, compose_name(), sub_agent_name()
-- `python/services/energy_registry.py` — LLM provider registry (Gemini, Claude, Grok)
+- `python/services/energy_registry.py` — LLM provider registry (loads `python/config/providers.json`)
+- `python/services/inference.py` — Dispatcher + orchestration (`_call_openai_routed` policy/role/gate); delegates outbound API calls to `providers/<name>.py`
+- `python/services/providers/` — One file per provider (P3 of energy-model-task-overhaul):
+  - `_resolver.py` — env > seed `route_config.model_assignments[role]` > spec model lookup; raises on unresolvable
+  - `openai_provider.py` — OpenAI Responses API + tool loop
+  - `grok_provider.py` — xAI Responses-with-search + Chat-Completions tool loop + SSE streaming
+  - `gemini_provider.py` — google-genai SDK (thin wrapper over `gemini_native.py`)
+  - `claude_provider.py` — Anthropic SDK + prompt caching
+  - All four expose `async def call(messages, *, role, model_override, api_key, max_tokens, use_tools, reasoning_effort, ...) -> (text, usage)` and lazy-import shared helpers from inference.py to avoid circular imports
+- `python/services/provider_seeds_bootstrap.py` — Lifespan-time idempotent seeding of `provider_<id>` WS modules from `providers.json` (preserves admin overrides)
 - `python/services/heartbeat.py` — Background heartbeat service (30s tick)
 - `python/services/bandit.py` — Multi-Armed Bandit (UCB1) service
 - `python/services/edcm.py` — EDCM behavioral directives scoring

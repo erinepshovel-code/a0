@@ -15,11 +15,11 @@ from ..config.policy_loader import (
 )
 
 _MODEL_ENV_MAP = {
-    "root_orchestrator": "OPENAI_MODEL_ROOT",
-    "high_risk_gate": "OPENAI_MODEL_ROOT",
-    "worker": "OPENAI_MODEL_WORKER",
-    "classifier": "OPENAI_MODEL_CLASSIFIER",
-    "deep_pass": "OPENAI_MODEL_DEEP",
+    "conduct": "OPENAI_MODEL_CONDUCT",
+    "perform": "OPENAI_MODEL_CONDUCT",
+    "practice": "OPENAI_MODEL_PRACTICE",
+    "record": "OPENAI_MODEL_RECORD",
+    "derive": "OPENAI_MODEL_DERIVE",
 }
 
 _RULE_KEYWORDS: dict[str, list[str]] = {}
@@ -54,13 +54,16 @@ def resolve_role(task_text: str) -> str:
 def resolve_model(role: str) -> str:
     """Resolve the model slug for a role.
 
-    Precedence: env var override (OPENAI_MODEL_ROOT/WORKER/CLASSIFIER/DEEP)
+    Precedence: env var override (OPENAI_MODEL_CONDUCT/PRACTICE/RECORD/DERIVE)
     wins so operators can hot-pin a specific snapshot without editing the
     policy file. If the env var is unset, fall back to the role's `model`
     field in openai_policy.json so policy-file slug bumps actually take
     effect at runtime (otherwise a slug bump is silently a no-op).
+    Note: `perform` deliberately reuses OPENAI_MODEL_CONDUCT so the
+    high-stakes review path shares the planner's model unless an admin
+    overrides via the provider seed `route_config.model_assignments`.
     """
-    env_key = _MODEL_ENV_MAP.get(role, "OPENAI_MODEL_ROOT")
+    env_key = _MODEL_ENV_MAP.get(role, "OPENAI_MODEL_CONDUCT")
     val = os.environ.get(env_key, "")
     if val:
         return val

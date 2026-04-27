@@ -229,7 +229,7 @@ async def _get_seed_module(provider_id: str) -> dict | None:
         async with get_session() as session:
             result = await session.execute(
                 sa_text("SELECT id, slug, name, route_config, status, updated_at FROM ws_modules WHERE slug = :slug"),
-                {"slug": f"provider::{provider_id}"}
+                {"slug": f"provider_{provider_id}"}
             )
             row = result.mappings().first()
             if row:
@@ -250,7 +250,7 @@ async def _update_seed_route_config(provider_id: str, updates: dict) -> dict:
     """
     from ..database import get_session
     from ..services.energy_registry import BUILTIN_PROVIDERS
-    slug = f"provider::{provider_id}"
+    slug = f"provider_{provider_id}"
     import json as _json
     async with get_session() as session:
         result = await session.execute(

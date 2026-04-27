@@ -87,8 +87,11 @@ async def resolve_model_id(model_id: str) -> tuple[str, dict]:
     # Fall back to persisted route_config so any model surfaced by
     # /api/v1/models is callable.
     async with get_session() as session:
+        # ESCAPE '\' so the literal underscore in 'provider_' is not treated
+        # as a SQL single-char wildcard (which would also match the legacy
+        # 'provider::<id>' rows during the migration window).
         rows = (await session.execute(sa_text(
-            "SELECT slug, route_config FROM ws_modules WHERE slug LIKE 'provider_%'"
+            r"SELECT slug, route_config FROM ws_modules WHERE slug LIKE 'provider\_%' ESCAPE '\'"
         ))).mappings().all()
     for row in rows:
         pid = row["slug"].removeprefix("provider_")
@@ -166,7 +169,7 @@ async def list_models_for_user(user_id: Optional[str]) -> dict[str, Any]:
     cfgs: dict[str, dict] = {}
     async with get_session() as session:
         rows = (await session.execute(sa_text(
-            "SELECT slug, route_config FROM ws_modules WHERE slug LIKE 'provider_%'"
+            r"SELECT slug, route_config FROM ws_modules WHERE slug LIKE 'provider\_%' ESCAPE '\'"
         ))).mappings().all()
         for row in rows:
             pid = row["slug"].removeprefix("provider_")

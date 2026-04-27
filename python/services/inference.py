@@ -553,25 +553,35 @@ async def call_energy_provider(
         )
 
     if provider_id in ("gemini", "gemini3"):
-        from .gemini_native import call_gemini_native
-        return await call_gemini_native(
-            api_key, spec["model"], payload_messages, max_tokens,
+        from .providers.gemini_provider import call as gemini_call
+        return await gemini_call(
+            payload_messages,
+            api_key=api_key,
+            model_override=spec["model"],
+            max_tokens=max_tokens,
             use_tools=use_tools,
             reasoning_effort=reasoning_effort,
-            supports_thinking=provider_id == "gemini3",
+            provider_id=provider_id,
         )
 
-    if provider_id == "grok" and spec.get("supports_live_search") and spec.get("responses_url"):
-        return await _call_grok_responses_with_search(
-            api_key, spec["responses_url"], spec["model"], payload_messages, max_tokens,
-            reasoning_effort=reasoning_effort if spec.get("supports_reasoning_effort") else None,
+    if provider_id == "grok":
+        from .providers.grok_provider import call as grok_call
+        return await grok_call(
+            payload_messages,
+            api_key=api_key,
+            model_override=spec["model"],
+            max_tokens=max_tokens,
+            use_tools=use_tools,
+            reasoning_effort=reasoning_effort,
+            progress_callback=progress_callback,
         )
 
-    return await _call_openai_compat(
-        api_key, spec["url"], spec["model"], payload_messages, max_tokens,
-        use_tools=use_tools,
-        reasoning_effort=reasoning_effort if spec.get("supports_reasoning_effort") else None,
-        progress_callback=progress_callback,
+    # No-silent-fallback doctrine: don't quietly route an unknown provider
+    # to the openai-compat endpoint. If we got here, the provider id is not
+    # one of the four we ship — raise so the caller sees a real error.
+    raise ValueError(
+        f"Unknown provider_id={provider_id!r} reached inference dispatcher. "
+        f"Supported: openai, claude, gemini, gemini3, grok."
     )
 
 
@@ -659,15 +669,16 @@ async def _call_openai_routed(
         full_input.append({"role": "system", "content": system_prompt})
     full_input.extend(messages)
 
-    content, usage = await _call_openai_responses(
+    from .providers.openai_provider import call as openai_call
+    content, usage = await openai_call(
+        full_input,
         api_key=api_key,
-        model=call_cfg["model"],
-        input_messages=full_input,
-        max_output_tokens=call_cfg["max_output_tokens"],
-        temperature=call_cfg["temperature"],
-        reasoning_effort=call_cfg["reasoning_effort"],
-        store=call_cfg["store"],
+        model_override=call_cfg["model"],
+        max_tokens=call_cfg["max_output_tokens"],
         use_tools=use_tools,
+        reasoning_effort=call_cfg["reasoning_effort"],
+        temperature=call_cfg["temperature"],
+        store=call_cfg["store"],
     )
 
     input_repr = json.dumps(full_input)
@@ -683,383 +694,6 @@ async def _call_openai_routed(
     return content, usage
 
 
-async def _call_openai_responses(
-    api_key: str,
-    model: str,
-    input_messages: list[dict],
-    max_output_tokens: int = 4000,
-    temperature: float = 1.0,
-    reasoning_effort: str = "medium",
-    store: bool = False,
-    use_tools: bool = True,
-) -> tuple[str, dict]:
-    """
-    Call the OpenAI Responses API (/v1/responses) with optional tool calling.
-    Runs up to _MAX_TOOL_ROUNDS tool-call/result loops before returning final text.
-    """
-    # Pin the tool-result distiller to the same provider handling this call so
-    # large tool results self-distill instead of crossing vendors mid-loop.
-    set_caller_provider("openai")
-
-    def _fmt_messages(msgs: list[dict]) -> list[dict]:
-        out: list[dict] = []
-        for m in msgs:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-            if role == "system":
-                out.append({"role": "system", "content": content})
-            elif role == "assistant":
-                out.append({"role": "assistant", "content": [{"type": "output_text", "text": content}]})
-            else:
-                out.append({"role": "user", "content": [{"type": "input_text", "text": content}]})
-        return out
-
-    # Defensive deepcopy: caller's list is never mutated by our tool loop.
-    openai_input = _fmt_messages(copy.deepcopy(input_messages))
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    accumulated_usage: dict = {}
-    prev_call_fingerprint: Optional[str] = None
-
-    for _round in range(_MAX_TOOL_ROUNDS + 1):
-        payload: dict = {
-            "model": model,
-            "input": openai_input,
-            "store": store,
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-            "text": {"format": {"type": "text"}},
-        }
-        if reasoning_effort and reasoning_effort != "none":
-            payload["reasoning"] = {"effort": reasoning_effort}
-        if use_tools:
-            payload["tools"] = TOOL_SCHEMAS_RESPONSES
-
-        try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
-                resp = await _post_with_retry(client, _OPENAI_RESPONSES_URL, json_payload=payload, headers=headers)
-                data = resp.json()
-        except Exception as exc:
-            return _sanitize_provider_error("openai", exc), accumulated_usage
-
-        for k, v in data.get("usage", {}).items():
-            accumulated_usage[k] = accumulated_usage.get(k, 0) + (v if isinstance(v, (int, float)) else 0)
-
-        output_items = data.get("output", [])
-        tool_calls = [item for item in output_items if item.get("type") == "function_call"]
-
-        # Repeat-tool break: if the LLM emitted the exact same set of calls
-        # as last round, it's looping. Stop and answer directly.
-        if tool_calls:
-            fp = _canonical_tool_calls(tool_calls)
-            if prev_call_fingerprint is not None and fp == prev_call_fingerprint:
-                return "[noticed repeat tool call — answering directly]", accumulated_usage
-            prev_call_fingerprint = fp
-
-        if not tool_calls or not use_tools or _round >= _MAX_TOOL_ROUNDS:
-            content = ""
-            for item in output_items:
-                if item.get("type") == "message":
-                    for part in item.get("content", []):
-                        if part.get("type") == "output_text":
-                            content = part.get("text", "")
-                            break
-                if content:
-                    break
-            return content or "[openai: empty response]", accumulated_usage
-
-        # Responses API multi-turn: only function_call items from the model's output
-        # belong in the next round's input (ahead of function_call_output results).
-        # Including message/reasoning/web_search_call items causes 400/404 errors.
-        for item in output_items:
-            if item.get("type") == "function_call":
-                openai_input.append(item)
-
-        for tc in tool_calls:
-            call_id = tc.get("call_id", "")
-            name = tc.get("name", "")
-            try:
-                args = json.loads(tc.get("arguments", "{}"))
-            except Exception:
-                args = {}
-            result = await execute_tool(name, args)
-            openai_input.append({
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": result,
-            })
-
-    return "[openai: tool loop exhausted]", accumulated_usage
-
-
-async def _call_openai_compat(
-    api_key: str,
-    url: str,
-    model: str,
-    messages: list[dict],
-    max_tokens: int,
-    use_tools: bool = True,
-    reasoning_effort: Optional[str] = None,
-    progress_callback: Optional[Callable[[int, int], None]] = None,
-) -> tuple[str, dict]:
-    """
-    Chat Completions format (Grok, Gemini).
-    Runs tool-calling loop: execute tool_calls, inject tool results, re-call until done.
-    reasoning_effort is forwarded only when the caller has confirmed support (Grok).
-
-    progress_callback(cumulative_chars, cumulative_tokens_estimate) — when
-    supplied with use_tools=False (multi-model path) the response streams
-    via SSE; tool-enabled calls keep the non-streaming tool loop intact.
-    """
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    # Defensive deepcopy: caller's list is never mutated by our tool loop.
-    current_messages = copy.deepcopy(messages)
-    accumulated_usage: dict = {}
-    prev_call_fingerprint: Optional[str] = None
-    # Provider name for sanitized errors — derive from URL.
-    provider_name = "grok" if "x.ai" in url else ("gemini" if "googleapis" in url else "provider")
-    # Pin distiller to this provider so tool-result summarization self-routes.
-    set_caller_provider(provider_name)
-
-    # Streaming branch only when the caller opted in AND tools are off.
-    # Falls back to the non-streaming branch on any error.
-    if progress_callback is not None and not use_tools:
-        try:
-            return await _call_openai_compat_streamed(
-                api_key, url, model, current_messages, max_tokens,
-                reasoning_effort=reasoning_effort,
-                provider_name=provider_name,
-                progress_callback=progress_callback,
-            )
-        except Exception as exc:
-            _log.warning("streaming path failed for %s, falling back: %s", provider_name, exc)
-
-    chat_tools = TOOL_SCHEMAS_CHAT if use_tools else []
-
-    for _round in range(_MAX_TOOL_ROUNDS + 1):
-        payload: dict = {
-            "model": model,
-            "messages": current_messages,
-            "max_tokens": max_tokens,
-        }
-        if reasoning_effort:
-            payload["reasoning_effort"] = _gate_to_effort(reasoning_effort)
-        if use_tools:
-            payload["tools"] = chat_tools
-            payload["tool_choice"] = "auto"
-
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await _post_with_retry(client, url, json_payload=payload, headers=headers)
-                data = resp.json()
-        except Exception as exc:
-            return _sanitize_provider_error(provider_name, exc), accumulated_usage
-
-        for k, v in data.get("usage", {}).items():
-            accumulated_usage[k] = accumulated_usage.get(k, 0) + (v if isinstance(v, (int, float)) else 0)
-
-        choice = data.get("choices", [{}])[0]
-        message = choice.get("message", {})
-        finish_reason = choice.get("finish_reason", "stop")
-        tool_calls = message.get("tool_calls") or []
-
-        # Repeat-tool break: detect and short-circuit identical call sets.
-        if tool_calls:
-            fp = _canonical_tool_calls(tool_calls)
-            if prev_call_fingerprint is not None and fp == prev_call_fingerprint:
-                return "[noticed repeat tool call — answering directly]", accumulated_usage
-            prev_call_fingerprint = fp
-
-        if not tool_calls or not use_tools or _round >= _MAX_TOOL_ROUNDS:
-            content = message.get("content") or "[no content]"
-            return content, accumulated_usage
-
-        current_messages.append(message)
-
-        for tc in tool_calls:
-            name = tc.get("function", {}).get("name", "")
-            call_id = tc.get("id", "")
-            try:
-                args = json.loads(tc.get("function", {}).get("arguments", "{}"))
-            except Exception:
-                args = {}
-            result = await execute_tool(name, args)
-            current_messages.append({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": result,
-            })
-
-    return "[tool loop exhausted]", accumulated_usage
-
-
-async def _call_openai_compat_streamed(
-    api_key: str,
-    url: str,
-    model: str,
-    messages: list[dict],
-    max_tokens: int,
-    reasoning_effort: Optional[str] = None,
-    provider_name: str = "provider",
-    progress_callback: Optional[Callable[[int, int], None]] = None,
-) -> tuple[str, dict]:
-    """Streaming Chat Completions call used by the multi-model path.
-    Emits ~6 progress callbacks/sec with chars/4 token estimates; final
-    usage block (stream_options.include_usage) overwrites the estimate."""
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream",
-    }
-    payload: dict = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-    }
-    if reasoning_effort:
-        payload["reasoning_effort"] = _gate_to_effort(reasoning_effort)
-
-    accumulated_usage: dict = {}
-    text_parts: list[str] = []
-    cumulative_chars = 0
-    last_emit = 0.0
-    EMIT_THROTTLE_S = 0.15  # cap progress events to ~6/sec/provider
-
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0)) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                if resp.status_code >= 400:
-                    body = await resp.aread()
-                    raise RuntimeError(f"HTTP {resp.status_code}: {body[:300]!r}")
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    chunk_str = line[5:].strip()
-                    if not chunk_str or chunk_str == "[DONE]":
-                        continue
-                    try:
-                        chunk = json.loads(chunk_str)
-                    except Exception:
-                        continue
-                    cu = chunk.get("usage") or {}
-                    for k, v in cu.items():
-                        if isinstance(v, (int, float)):
-                            accumulated_usage[k] = accumulated_usage.get(k, 0) + v
-                    for ch in chunk.get("choices") or []:
-                        delta = (ch.get("delta") or {}).get("content")
-                        if not delta:
-                            continue
-                        text_parts.append(delta)
-                        cumulative_chars += len(delta)
-                        if progress_callback is not None:
-                            now = asyncio.get_event_loop().time()
-                            if now - last_emit >= EMIT_THROTTLE_S:
-                                last_emit = now
-                                est_tokens = max(1, cumulative_chars // 4)
-                                try:
-                                    progress_callback(cumulative_chars, est_tokens)
-                                except Exception:
-                                    pass
-    except Exception:
-        raise
-
-    # Final flush so the live counter lands on the last estimate before call_complete.
-    if progress_callback is not None and cumulative_chars > 0:
-        try:
-            progress_callback(cumulative_chars, max(1, cumulative_chars // 4))
-        except Exception:
-            pass
-
-    content = "".join(text_parts) or "[no content]"
-    return content, accumulated_usage
-
-
-async def _call_grok_responses_with_search(
-    api_key: str,
-    url: str,
-    model: str,
-    messages: list[dict],
-    max_tokens: int,
-    reasoning_effort: Optional[str] = None,
-) -> tuple[str, dict]:
-    """
-    Grok via the Responses API with hosted retrieval (web_search + x_search).
-
-    The legacy `search_parameters` field on Chat Completions returns HTTP 410.
-    xAI's current way to do native retrieval is the Agent Tools API at
-    /v1/responses with `tools=[{type:"web_search"},{type:"x_search"}]`.
-    Citations come back as `url_citation` annotations on message content items.
-
-    Trade-off: this path does not run our custom function tools (skill_*).
-    Live-search Grok is a "search-then-answer" surface; mixed retrieval +
-    skill loading would require parsing function_call output items here.
-    """
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    set_caller_provider("grok")
-    accumulated_usage: dict = {}
-
-    payload: dict = {
-        "model": model,
-        "input": messages,
-        "max_output_tokens": max_tokens,
-        "tools": [{"type": "web_search"}, {"type": "x_search"}],
-    }
-    if reasoning_effort:
-        payload["reasoning"] = {"effort": _gate_to_effort(reasoning_effort)}
-
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await _post_with_retry(client, url, json_payload=payload, headers=headers)
-            data = resp.json()
-    except Exception as exc:
-        return _sanitize_provider_error("grok", exc), accumulated_usage
-
-    # Roll up token counts.
-    for k, v in (data.get("usage") or {}).items():
-        if isinstance(v, (int, float)):
-            accumulated_usage[k] = accumulated_usage.get(k, 0) + v
-
-    # Walk the output array to find the assistant message + collect citations.
-    text_parts: list[str] = []
-    citation_urls: list[str] = []
-    seen_urls: set[str] = set()
-    for item in data.get("output") or []:
-        if item.get("type") != "message":
-            continue
-        for c in item.get("content") or []:
-            if c.get("type") == "output_text":
-                if c.get("text"):
-                    text_parts.append(c["text"])
-                for ann in c.get("annotations") or []:
-                    if ann.get("type") == "url_citation":
-                        u = ann.get("url")
-                        if u and u not in seen_urls:
-                            seen_urls.add(u)
-                            citation_urls.append(u)
-
-    content = "\n".join(text_parts).strip() or "[no content]"
-
-    if citation_urls:
-        accumulated_usage["live_search_sources"] = (
-            accumulated_usage.get("live_search_sources", 0) + len(citation_urls)
-        )
-        bullets = "\n".join(f"- {u}" for u in citation_urls[:10])
-        content = f"{content}\n\n---\n**Sources:**\n{bullets}"
-
-    return content, accumulated_usage
-
 
 async def _call_anthropic(
     api_key: str,
@@ -1070,20 +704,38 @@ async def _call_anthropic(
     reasoning_effort: Optional[str] = None,
     enable_caching: bool = True,
 ) -> tuple[str, dict]:
-    """
-    Anthropic Messages API via the official `anthropic` SDK.
+    """Backward-compat shim — delegates to providers.claude_provider.call.
 
-    - reasoning_effort: when set, enables extended thinking with a budget mapped from effort.
-    - enable_caching: when True, marks the system prompt and tools list with cache_control,
-      cutting input cost ~80% on repeated turns. Requires the prefix to be >= 1024 tokens
-      to actually cache (Anthropic ignores cache_control on smaller prefixes silently).
-
-    Migrated from raw httpx to the SDK so we get typed responses, automatic
-    retries on 429/5xx (max_retries=2 default), and forward-compat with new
-    Anthropic features (computer use, files, beta headers) without rewriting
-    the request shape.
+    The real implementation moved to python/services/providers/claude_provider.py
+    per energy-model-task-overhaul P3. New callers should import that module
+    directly and pass `role=` instead of a pre-resolved model id; legacy
+    callers in this file (the dispatcher at line ~547) still pass `model`
+    positionally and that path keeps working via `model_override`.
     """
-    # Pin distiller to claude so large tool results stay in-vendor.
+    from .providers.claude_provider import call as _claude_call
+    return await _claude_call(
+        messages,
+        api_key=api_key,
+        model_override=model,
+        max_tokens=max_tokens,
+        use_tools=use_tools,
+        reasoning_effort=reasoning_effort,
+        enable_caching=enable_caching,
+    )
+
+
+async def _call_anthropic_LEGACY_DEAD_PATH(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+    use_tools: bool = True,
+    reasoning_effort: Optional[str] = None,
+    enable_caching: bool = True,
+) -> tuple[str, dict]:
+    """Pre-extraction body, kept temporarily as a reference for the rest of
+    the P3 extraction work (grok/openai/gemini). Will be removed in the
+    final cleanup pass once all four providers are out. Not wired."""
     set_caller_provider("claude")
     from anthropic import AsyncAnthropic
     client = AsyncAnthropic(api_key=api_key, max_retries=2, timeout=90.0)

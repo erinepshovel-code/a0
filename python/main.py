@@ -416,6 +416,10 @@ async def lifespan(app: FastAPI):
     print("[agent_runs/agent_logs/settings] tables ensured")
     await _seed_system_shadow_modules()
     print("[ws_modules] system shadows seeded")
+    from .services.provider_seeds_bootstrap import seed_provider_modules
+    from .services.energy_registry import BUILTIN_PROVIDERS as _BP
+    _prov_changed = await seed_provider_modules()
+    print(f"[providers] {_prov_changed} provider seed(s) upserted ({len(_BP)} total in catalog)")
     _hot_count = await get_registry().load_all_active()
     if _hot_count:
         print(f"[module_registry] {_hot_count} hot-swap module(s) mounted")

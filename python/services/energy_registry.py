@@ -1,161 +1,43 @@
-# 395:105
 import contextvars
+import json
 import os
+from pathlib import Path
 from typing import Optional
+
 from sqlalchemy import text as sa_text
 
-BUILTIN_PROVIDERS = {
-    "openai": {
-        "id": "openai",
-        "label": "GPT-5 mini (Responses API)",
-        "model": "gpt-5-mini",
-        "vendor": "openai",
-        "env_key": "OPENAI_API_KEY",
-        "cost_per_1k_input": 0.00025,
-        "cost_per_1k_output": 0.002,
-        "cache_read_per_1k_input": 0.000025,
-        "max_tokens": 128000,
-        "supports_streaming": False,
-        "supports_prompt_caching": True,
-        "api_family": "responses",
-        "note": "gpt-5-mini default; cached input 90% off (automatic on >=1024 token prefixes)",
-    },
-    "gemini": {
-        "id": "gemini",
-        "label": "Gemini 2.5 Flash",
-        "model": "gemini-2.5-flash",
-        "vendor": "google",
-        "env_key": "GEMINI_API_KEY",
-        "cost_per_1k_input": 0.0003,
-        "cost_per_1k_output": 0.0025,
-        "cache_read_per_1k_input": 0.000075,
-        "max_tokens": 65536,
-        "supports_streaming": True,
-        "note": "Implicit cache hits returned via usage.cached_content_token_count when prefix is reused",
-    },
-    "gemini3": {
-        "id": "gemini3",
-        "label": "Gemini 3 Pro",
-        "model": "gemini-3-pro-preview",
-        "vendor": "google",
-        "env_key": "GEMINI_API_KEY",
-        "cost_per_1k_input": 0.00125,
-        "cost_per_1k_output": 0.010,
-        "cache_read_per_1k_input": 0.00031,
-        "max_tokens": 65536,
-        "supports_streaming": True,
-        "supports_thinking": True,
-        "min_tier": "ws",
-        "note": "Top-tier reasoning; ws/admin only. Pricing doubles above 200K input tokens.",
-    },
-    "claude": {
-        "id": "claude",
-        "label": "Claude Sonnet 4.5",
-        "model": "claude-sonnet-4-5",
-        "vendor": "anthropic",
-        "env_key": "ANTHROPIC_API_KEY",
-        "cost_per_1k_input": 0.003,
-        "cost_per_1k_output": 0.015,
-        "cache_read_per_1k_input": 0.0003,
-        "cache_write_per_1k_input": 0.00375,
-        "max_tokens": 64000,
-        "supports_streaming": True,
-        "supports_prompt_caching": True,
-    },
-    "grok": {
-        "id": "grok",
-        "label": "Grok 4 Fast (reasoning)",
-        "model": "grok-4-fast-reasoning",
-        "vendor": "xai",
-        "env_key": "XAI_API_KEY",
-        "cost_per_1k_input": 0.0002,
-        "cost_per_1k_output": 0.0005,
-        "cache_read_per_1k_input": 0.00005,
-        "max_tokens": 2000000,
-        "supports_streaming": True,
-        "supports_reasoning_effort": True,
-        "supports_prompt_caching": True,
-        "note": "Auto-cache on >=1024 token prefix; cached_tokens reported in prompt_tokens_details",
-    },
+# Provider catalog and per-provider optimizer presets live as JSON data, not
+# code literals (doctrine: no executable-data string literals — model slugs,
+# provider IDs, and capability flags must be edit-without-deploy values).
+# Source of truth: python/config/providers.json. Loaded once on import.
+_PROVIDERS_JSON_PATH = Path(__file__).parent.parent / "config" / "providers.json"
+with open(_PROVIDERS_JSON_PATH, "r", encoding="utf-8") as _fh:
+    _PROVIDERS_DOC = json.load(_fh)
+
+BUILTIN_PROVIDERS: dict = _PROVIDERS_DOC["providers"]
+_PROVIDER_PRESETS: dict[str, dict] = _PROVIDERS_DOC["presets"]
+_PROVIDER_PRICING_URLS: dict[str, str] = {
+    pid: spec.get("pricing_url", "")
+    for pid, spec in BUILTIN_PROVIDERS.items()
+    if spec.get("pricing_url")
 }
 
-
+# Mutable runtime caches. Auto-discovery (Phase 5) populates available_models;
+# capability detection populates capabilities; per-seed enabled_tools list is
+# read from ws_modules.route_config in callers, this dict is a lazy mirror.
 _PROVIDER_DEFAULT_ASSIGNMENTS: dict[str, dict] = {}
+_PROVIDER_AVAILABLE_MODELS: dict[str, list] = {}
+_PROVIDER_CAPABILITIES: dict[str, dict] = {}
+_PROVIDER_ENABLED_TOOLS: dict[str, list] = {}
 
-# Per-provider optimizer presets. The optimize endpoint maps
-# {speed,depth,price,balance,creativity,coding} → a {role: model_id} dict
-# that gets merged into route_config.model_assignments. Roles are the five
-# pipeline slots validated in routes/energy.py: record, practice, conduct,
-# perform, derive.
-#
-# Model IDs below are the documented current names for each provider's
-# API as of 2026-04. If a provider only offers one realistic model in this
-# stack (e.g. gemini3), every preset just pins all roles to it so the
-# button still does something coherent (sets active_preset, normalizes the
-# assignments) instead of 400-ing.
-def _preset(record, practice, conduct, perform, derive):
+
+def _preset(record, practice, conduct, perform, derive) -> dict:
+    """Deprecated builder kept for any in-tree callers; new code reads
+    presets directly from BUILTIN_PROVIDERS / _PROVIDER_PRESETS."""
     return {
         "record": record, "practice": practice, "conduct": conduct,
         "perform": perform, "derive": derive,
     }
-
-
-_PROVIDER_PRESETS: dict[str, dict] = {
-    # OpenAI slugs intentionally left unversioned (gpt-5, gpt-5-mini, gpt-5-nano)
-    # so OpenAI's latest-alias rolls us forward through the 5.x series (5.5 today,
-    # 5.6+ later) without a config edit. The policy file (openai_policy.json)
-    # pins explicit gpt-5.5* slugs for the routed-call path where we want
-    # deterministic version control.
-    "openai": {
-        "speed":      _preset("gpt-5-nano", "gpt-5-nano", "gpt-5-mini", "gpt-5-mini", "gpt-5-nano"),
-        "price":      _preset("gpt-5-nano", "gpt-5-nano", "gpt-5-nano", "gpt-5-mini", "gpt-5-nano"),
-        "balance":    _preset("gpt-5-nano", "gpt-5-mini", "gpt-5-mini", "gpt-5-mini", "gpt-5-mini"),
-        "depth":      _preset("gpt-5-mini", "gpt-5",       "gpt-5",       "gpt-5",       "gpt-5"),
-        "coding":     _preset("gpt-5-nano", "gpt-5-mini", "gpt-5",       "gpt-5",       "gpt-5-mini"),
-        "creativity": _preset("gpt-5-mini", "gpt-5",       "gpt-5",       "gpt-5",       "gpt-5-mini"),
-    },
-    "gemini": {
-        "speed":      _preset("gemini-2.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash",     "gemini-2.5-flash",     "gemini-2.5-flash-lite"),
-        "price":      _preset("gemini-2.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash-lite","gemini-2.5-flash",     "gemini-2.5-flash-lite"),
-        "balance":    _preset("gemini-2.5-flash-lite", "gemini-2.5-flash",      "gemini-2.5-flash",     "gemini-2.5-flash",     "gemini-2.5-flash"),
-        "depth":      _preset("gemini-2.5-flash",      "gemini-2.5-pro",        "gemini-2.5-pro",       "gemini-2.5-pro",       "gemini-2.5-pro"),
-        "coding":     _preset("gemini-2.5-flash-lite", "gemini-2.5-flash",      "gemini-2.5-pro",       "gemini-2.5-pro",       "gemini-2.5-flash"),
-        "creativity": _preset("gemini-2.5-flash",      "gemini-2.5-pro",        "gemini-2.5-pro",       "gemini-2.5-pro",       "gemini-2.5-flash"),
-    },
-    "gemini3": {
-        # Single-model provider — every preset pins all roles, but
-        # active_preset still flips so the UI reflects the choice.
-        p: _preset("gemini-3-pro-preview", "gemini-3-pro-preview", "gemini-3-pro-preview", "gemini-3-pro-preview", "gemini-3-pro-preview")
-        for p in ("speed", "price", "balance", "depth", "coding", "creativity")
-    },
-    "claude": {
-        "speed":      _preset("claude-haiku-4-5",  "claude-haiku-4-5",  "claude-sonnet-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"),
-        "price":      _preset("claude-haiku-4-5",  "claude-haiku-4-5",  "claude-haiku-4-5",  "claude-sonnet-4-5", "claude-haiku-4-5"),
-        "balance":    _preset("claude-haiku-4-5",  "claude-sonnet-4-5", "claude-sonnet-4-5", "claude-sonnet-4-5", "claude-sonnet-4-5"),
-        "depth":      _preset("claude-sonnet-4-5", "claude-opus-4-1",   "claude-opus-4-1",   "claude-opus-4-1",   "claude-opus-4-1"),
-        "coding":     _preset("claude-haiku-4-5",  "claude-sonnet-4-5", "claude-sonnet-4-5", "claude-sonnet-4-5", "claude-sonnet-4-5"),
-        "creativity": _preset("claude-sonnet-4-5", "claude-opus-4-1",   "claude-opus-4-1",   "claude-opus-4-1",   "claude-sonnet-4-5"),
-    },
-    "grok": {
-        "speed":      _preset("grok-4-fast-non-reasoning", "grok-4-fast-non-reasoning", "grok-4-fast-reasoning",     "grok-4-fast-reasoning", "grok-4-fast-non-reasoning"),
-        "price":      _preset("grok-4-fast-non-reasoning", "grok-4-fast-non-reasoning", "grok-4-fast-non-reasoning", "grok-4-fast-reasoning", "grok-4-fast-non-reasoning"),
-        "balance":    _preset("grok-4-fast-non-reasoning", "grok-4-fast-reasoning",     "grok-4-fast-reasoning",     "grok-4-fast-reasoning", "grok-4-fast-reasoning"),
-        "depth":      _preset("grok-4-fast-reasoning",     "grok-4",                    "grok-4",                    "grok-4",                "grok-4"),
-        "coding":     _preset("grok-4-fast-non-reasoning", "grok-code-fast-1",          "grok-code-fast-1",          "grok-code-fast-1",      "grok-4-fast-reasoning"),
-        "creativity": _preset("grok-4-fast-reasoning",     "grok-4",                    "grok-4",                    "grok-4",                "grok-4-fast-reasoning"),
-    },
-}
-
-_PROVIDER_AVAILABLE_MODELS: dict[str, list] = {}
-_PROVIDER_PRICING_URLS: dict[str, str] = {
-    "openai": "https://openai.com/api/pricing/",
-    "gemini": "https://ai.google.dev/pricing",
-    "gemini3": "https://ai.google.dev/pricing",
-    "claude": "https://www.anthropic.com/pricing",
-    "grok": "https://docs.x.ai/docs/models",
-}
-_PROVIDER_CAPABILITIES: dict[str, dict] = {}
-_PROVIDER_ENABLED_TOOLS: dict[str, list] = {}
 
 
 class EnergyRegistry:
@@ -544,4 +426,3 @@ def resolve_providers(providers: list[str] | None) -> list[str]:
         elif p in BUILTIN_PROVIDERS and p not in out:
             out.append(p)
     return out
-# 395:105
