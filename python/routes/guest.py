@@ -23,7 +23,16 @@ async def guest_chat(body: GuestChatBody):
     if not body.message or not body.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
 
-    provider_id = energy_registry.get_active_provider() or "gemini"
+    # No silent fallback: guest chat can only run if an admin has
+    # explicitly set the global active_provider. Refusing with 503 is
+    # honest — silently routing to "gemini" disguised the operator
+    # intent and made provider switching feel broken.
+    provider_id = energy_registry.get_active_provider()
+    if not provider_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Guest chat unavailable: no active_provider configured.",
+        )
 
     content, usage = await call_energy_provider(
         provider_id=provider_id,

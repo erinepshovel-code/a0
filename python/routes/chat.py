@@ -150,7 +150,10 @@ router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 class CreateConversation(BaseModel):
     title: str = "New Chat"
-    model: str = "gemini"
+    # null → resolve from current active_provider at creation. No silent
+    # default to "gemini" — the global active_provider is the single source
+    # of truth (set via POST /api/agents/active-provider).
+    model: Optional[str] = None
     agent_id: Optional[int] = None
     # Note: userId from body is now ignored — owner is always the authenticated caller.
 
@@ -221,7 +224,21 @@ async def list_conversations(
 @router.post("/conversations")
 async def create_conversation(body: CreateConversation, request: Request):
     uid = _caller_uid(request)
-    data: dict = {"title": body.title, "model": body.model}
+    # Resolve the conversation's stored model honestly: explicit body wins,
+    # then fall back to the current global active_provider. If neither is
+    # set the system has no way to route chat, so refuse instead of silently
+    # binding to "gemini" (the old behavior). Admin can fix by calling
+    # POST /api/agents/active-provider {provider_id}.
+    model = body.model or energy_registry.get_active_provider()
+    if not model:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No model resolvable: request had no `model` and no global "
+                "active_provider is set. Set one via POST /api/agents/active-provider."
+            ),
+        )
+    data: dict = {"title": body.title, "model": model}
     if uid:
         data["user_id"] = uid
     return await storage.create_conversation(data)
@@ -397,7 +414,30 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 # would silently regress existing forge agents.
                 agent_inst.use_tools = True
 
-        model_id = body.model or agent_model_id or conv.get("model", "grok")
+        # Honest resolution chain (no silent fallback to a hardcoded provider):
+        #   per-message body.model > agent's configured model > current
+        #   global active_provider > stored conversation model.
+        # active_provider wins over conv.model so toggling the global active
+        # provider via /api/agents/active-provider takes effect on the next
+        # turn of every existing conversation. If all four are empty we
+        # cannot route, so refuse — same principle as the inference
+        # dispatcher's no-silent-fallback contract.
+        model_id = (
+            body.model
+            or agent_model_id
+            or energy_registry.get_active_provider()
+            or conv.get("model")
+        )
+        if not model_id:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "No model resolvable for this turn: no body.model, no agent "
+                    "model, no active_provider set, and conversation has no "
+                    "stored model. Set the global default via "
+                    "POST /api/agents/active-provider."
+                ),
+            )
         # Resolve model_id → provider_id via the catalog so forge agents
         # whose model_id is a real model name (e.g. "gpt-5-mini") route
         # correctly downstream. Falls back to the legacy alias when

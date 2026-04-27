@@ -257,7 +257,16 @@ class HeartbeatService:
         transcript = "\n".join(msg_lines)
 
         prompt_text = REVIEW_PROMPT + transcript
-        provider_id = energy_registry.get_active_provider() or "gemini"
+        # No silent fallback: heartbeat conversation reviews require an
+        # explicitly configured active_provider. Skipping a tick is
+        # preferable to silently sending Gemini-bound traffic when the
+        # admin intended a different provider.
+        provider_id = energy_registry.get_active_provider()
+        if not provider_id:
+            return (
+                "conversation_review_skipped: no active_provider configured "
+                "(set via POST /api/agents/active-provider)"
+            )
 
         try:
             raw_content, _ = await call_energy_provider(

@@ -274,7 +274,18 @@ async def instantiate(request: Request, body: InstantiateRequest) -> dict:
     tools = _validate_tools(body.enabled_tools if body.enabled_tools is not None else arche["suggested_tools"])
     prompt = body.system_prompt_override or arche["system_prompt"]
     personality = body.personality_override or arche["personality"]
-    model_id = body.model_id or energy_registry.get_active_provider() or "gemini"
+    # No silent fallback to "gemini": forge requires either an explicit
+    # model_id in the body or a configured global active_provider.
+    model_id = body.model_id or energy_registry.get_active_provider()
+    if not model_id:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Cannot instantiate forge agent: no model_id provided and no "
+                "active_provider configured. Set one via "
+                "POST /api/agents/active-provider."
+            ),
+        )
     provider_info = _validate_model(model_id)
     provider = provider_info.get("vendor", model_id)
     stats = arche["stats"]
