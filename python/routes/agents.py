@@ -201,6 +201,110 @@ async def merge_sub_agent(agent_name: str):
     return result
 
 
+@router.get("/agents/learning_summary")
+async def learning_summary(limit: int = 200):
+    """Aggregate alpha echo's learning gains from sub-agent merges.
+
+    Reads recent 'merge' events written by spawn_executor and rolls up:
+      * total merges counted
+      * cumulative phi/psi/omega coherence deltas (the four ring metrics)
+      * per-provider breakdown (which providers' work has compounded most)
+      * the live primary-PCNA snapshot so the user can compare
+        "alpha echo right now" against the cumulative gain it absorbed
+
+    This is the surface that lets you SEE alpha echo getting smarter from
+    spawned work — not just trust that it does. No schema change; pure
+    aggregation over agent_logs.event = 'merge' rows.
+    """
+    from sqlalchemy import text as _sa_text
+    from ..database import get_session
+    from ..main import get_pcna
+    if limit < 1 or limit > 1000:
+        raise HTTPException(status_code=400, detail="limit must be 1..1000")
+    rows = []
+    async with get_session() as s:
+        r = await s.execute(_sa_text(
+            "SELECT payload, ts FROM agent_logs "
+            "WHERE event = 'merge' ORDER BY ts DESC LIMIT :lim"
+        ), {"lim": limit})
+        rows = r.mappings().all()
+    def _num(v, caster):
+        """Coerce v to int/float defensively; return 0 for malformed input."""
+        try:
+            return caster(v) if v is not None else caster(0)
+        except (TypeError, ValueError):
+            return caster(0)
+
+    cum = {
+        "merges": 0,
+        "phi_delta_sum": 0.0,
+        "psi_delta_sum": 0.0,
+        "omega_delta_sum": 0.0,
+        "theta_circles_delta_sum": 0,
+    }
+    by_provider: dict[str, dict] = {}
+    most_recent = None
+    malformed_skipped = 0
+    for row in rows:
+        p = row["payload"]
+        if not isinstance(p, dict):
+            malformed_skipped += 1
+            continue
+        d = p.get("delta")
+        if not isinstance(d, dict):
+            d = {}
+        cum["merges"] += 1
+        cum["phi_delta_sum"] += _num(d.get("phi_delta"), float)
+        cum["psi_delta_sum"] += _num(d.get("psi_delta"), float)
+        cum["omega_delta_sum"] += _num(d.get("omega_delta"), float)
+        cum["theta_circles_delta_sum"] += _num(d.get("theta_circles_delta"), int)
+        prov = str(p.get("provider") or "unknown")
+        bp = by_provider.setdefault(prov, {
+            "merges": 0,
+            "phi_delta_sum": 0.0,
+            "psi_delta_sum": 0.0,
+            "omega_delta_sum": 0.0,
+        })
+        bp["merges"] += 1
+        bp["phi_delta_sum"] += _num(d.get("phi_delta"), float)
+        bp["psi_delta_sum"] += _num(d.get("psi_delta"), float)
+        bp["omega_delta_sum"] += _num(d.get("omega_delta"), float)
+        if most_recent is None:
+            most_recent = {"ts": str(row["ts"]), **p}
+    cum["phi_delta_sum"] = round(cum["phi_delta_sum"], 6)
+    cum["psi_delta_sum"] = round(cum["psi_delta_sum"], 6)
+    cum["omega_delta_sum"] = round(cum["omega_delta_sum"], 6)
+    for bp in by_provider.values():
+        bp["phi_delta_sum"] = round(bp["phi_delta_sum"], 6)
+        bp["psi_delta_sum"] = round(bp["psi_delta_sum"], 6)
+        bp["omega_delta_sum"] = round(bp["omega_delta_sum"], 6)
+    # Live primary snapshot — explicit error surfaces the failure rather
+    # than collapsing into a silent None that hides a real bug.
+    primary = None
+    primary_error = None
+    try:
+        p = get_pcna()
+        primary = {
+            "phi_coherence": round(float(p.phi.ring_coherence), 6),
+            "psi_coherence": round(float(p.psi.ring_coherence), 6),
+            "omega_coherence": round(float(p.omega.ring_coherence), 6),
+            "theta_circles": int(p.theta.circle_count.mean()),
+            "infer_count": int(getattr(p, "infer_count", 0)),
+            "instance_id": p.theta.instance_id,
+        }
+    except Exception as exc:
+        primary_error = f"{type(exc).__name__}: {exc}"[:200]
+    return {
+        "window_size": len(rows),
+        "malformed_skipped": malformed_skipped,
+        "cumulative": cum,
+        "by_provider": by_provider,
+        "primary_pcna_now": primary,
+        "primary_pcna_error": primary_error,
+        "most_recent_merge": most_recent,
+    }
+
+
 from ..services.editable_registry import editable_registry, EditableField
 editable_registry.register(EditableField(
     key="active_energy_provider",

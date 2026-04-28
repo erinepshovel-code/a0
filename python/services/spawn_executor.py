@@ -60,6 +60,24 @@ Honest single-concern:
 #   then:  _resolve_provider raises ValueError (no silent default-to-active)
 #   class: correctness
 #   call:  python.tests.contracts.spawn_executor.test_resolve_provider_rejects_empty
+#
+# id: spawn_executor_snapshot_pcna_shape
+#   given: a primary-shaped PCNAEngine instance
+#   then:  _snapshot_pcna returns the four delta-tracked floats/ints
+#          (phi, psi, omega, theta_circles); types and ordering are
+#          stable so log consumers can subtract before/after dicts
+#   class: correctness
+#   call:  python.tests.contracts.spawn_executor.test_snapshot_pcna_shape
+#
+# id: spawn_executor_merge_helpers_tolerate_no_pcna
+#   given: a missing primary PCNA (cold-start or test bootstrap)
+#   then:  _try_get_primary_pcna returns None and _retire_fork_quietly
+#          returns without raising — degraded mode never crashes the
+#          executor, satisfying the no-silent-fallback rule by routing
+#          the absence into a 'pcna_fork_skipped' log event instead of
+#          masking it as success
+#   class: correctness
+#   call:  python.tests.contracts.spawn_executor.test_merge_helpers_tolerate_no_pcna
 # === END CONTRACTS ===
 """
 from __future__ import annotations
@@ -165,8 +183,71 @@ def _resolve_provider(providers: Any) -> str:
     return pid
 
 
+def _snapshot_pcna(p) -> dict:
+    """Capture the four observable PCNA quantities used as merge deltas.
+
+    Cheap — reads four floats off in-memory ring state. Safe to call on
+    the same PCNA before and after absorb to compute the learning gain.
+    """
+    return {
+        "phi": round(float(p.phi.ring_coherence), 6),
+        "psi": round(float(p.psi.ring_coherence), 6),
+        "omega": round(float(p.omega.ring_coherence), 6),
+        "theta_circles": int(p.theta.circle_count.mean()),
+    }
+
+
+def _try_get_primary_pcna() -> tuple[Any, Optional[str]]:
+    """Return (primary_pcna_or_None, error_or_None).
+
+    Lazy import from ``python.main`` (where the singleton lives) so this
+    module stays importable during early bootstrap and so the lazy import
+    cleanly breaks the main↔services cycle. The two-value return surfaces
+    *why* the PCNA was unreachable rather than collapsing into a silent
+    None — callers log the reason so a real bug never masquerades as a
+    benign 'primary unavailable' skip.
+    """
+    try:
+        from ..main import get_pcna
+    except Exception as exc:
+        return None, f"import_failed: {type(exc).__name__}: {exc}"[:200]
+    try:
+        p = get_pcna()
+    except Exception as exc:
+        return None, f"call_failed: {type(exc).__name__}: {exc}"[:200]
+    if p is None:
+        return None, "get_pcna_returned_none"
+    return p, None
+
+
+def _retire_fork_quietly(parent_pcna, sub_name: str) -> None:
+    """Best-effort fork cleanup for failure paths. Never raises."""
+    if not sub_name or parent_pcna is None:
+        return
+    try:
+        from .agent_lifecycle import merge_sub_agent
+        merge_sub_agent(parent_pcna, sub_name)
+    except Exception:
+        pass
+
+
 async def _execute_one(row: dict[str, Any]) -> None:
     """Run one claimed spawn row to terminal status. Never raises.
+
+    Lifecycle (single mode):
+      1. Bind run-scoped ContextVars from the row.
+      2. Fork a child PCNA from the primary (if reachable). The fork
+         carries the parent's full ring topology — the sub-agent's work
+         updates THIS state, not the primary's.
+      3. Construct an AgentInstance against the row's declared provider
+         and run one inference turn with the row's task_summary.
+      4. Feed the task and the model response into child.infer() so the
+         child PCNA accumulates observations from the work just done.
+      5. Snapshot parent state, absorb the child back into the parent,
+         snapshot again — log the merge event with full before/after/delta
+         payload so the user can SEE alpha echo's learning gain.
+      6. Mark the row terminal (completed | failed). On any failure the
+         fork is best-effort retired so it doesn't leak in _sub_agents.
 
     Exceptions during execution are converted to status='failed' plus
     an 'error' event on the run's log stream. The poller never sees
@@ -181,6 +262,9 @@ async def _execute_one(row: dict[str, Any]) -> None:
         parent_run_id=row.get("parent_run_id"),
     )
     logger = get_run_logger()
+    sub_name: Optional[str] = None
+    parent_pcna = None
+    merge_payload: Optional[dict] = None
     try:
         if mode not in _SUPPORTED_MODES:
             raise NotImplementedError(
@@ -188,6 +272,31 @@ async def _execute_one(row: dict[str, Any]) -> None:
                 f"supported: {sorted(_SUPPORTED_MODES)}"
             )
         provider_id = _resolve_provider(row.get("providers"))
+
+        # ---- (2) fork child PCNA from primary -------------------------
+        parent_pcna, pcna_err = _try_get_primary_pcna()
+        if parent_pcna is not None:
+            try:
+                from .agent_lifecycle import spawn_sub_agent
+                fork_info = spawn_sub_agent(parent_pcna, provider=provider_id)
+                sub_name = fork_info.get("sub_agent_name")
+                logger.emit("custom", {"phase": "pcna_fork", **fork_info})
+            except Exception as exc:
+                logger.emit("error", {
+                    "stage": "pcna_fork",
+                    "error": str(exc)[:300],
+                })
+                sub_name = None
+        else:
+            # explicit, not silent — the reason is logged so a genuine
+            # bug here surfaces in the run stream instead of presenting
+            # as a benign skip
+            logger.emit("error", {
+                "stage": "pcna_fork_skipped",
+                "reason": pcna_err or "primary_pcna_unreachable",
+            })
+
+        # ---- (3) inference --------------------------------------------
         instance = AgentInstance.from_model(
             model_id=provider_id,
             user_id=None,
@@ -197,26 +306,68 @@ async def _execute_one(row: dict[str, Any]) -> None:
         )
         messages = [{"role": "user", "content": row.get("task_summary") or ""}]
         content, usage = await instance.run(messages)
-        logger.emit(
-            "spawn_complete",
-            {
-                "provider": provider_id,
-                "content_preview": (content or "")[:500],
-                "usage": usage,
-                "mode": mode,
-            },
-        )
+
+        # ---- (4) feed observations to child PCNA ----------------------
+        if sub_name:
+            try:
+                from .agent_lifecycle import get_sub_agent_engine
+                child = get_sub_agent_engine(sub_name)
+                if child is not None:
+                    if row.get("task_summary"):
+                        child.infer(row["task_summary"])
+                    if content:
+                        child.infer(content[:2000])
+            except Exception as exc:
+                logger.emit("error", {
+                    "stage": "child_infer",
+                    "error": str(exc)[:300],
+                })
+
+        # ---- (5) absorb child back into parent ------------------------
+        if sub_name and parent_pcna is not None:
+            try:
+                from .agent_lifecycle import merge_sub_agent as _merge_now
+                before = _snapshot_pcna(parent_pcna)
+                absorb_result = _merge_now(parent_pcna, sub_name)
+                after = _snapshot_pcna(parent_pcna)
+                delta = {
+                    "phi_delta": round(after["phi"] - before["phi"], 6),
+                    "psi_delta": round(after["psi"] - before["psi"], 6),
+                    "omega_delta": round(after["omega"] - before["omega"], 6),
+                    "theta_circles_delta": (
+                        after["theta_circles"] - before["theta_circles"]
+                    ),
+                }
+                merge_payload = {
+                    "sub_agent_name": sub_name,
+                    "provider": provider_id,
+                    "before": before,
+                    "after": after,
+                    "delta": delta,
+                    **absorb_result,
+                }
+                sub_name = None  # ownership transferred — fork retired by absorb
+                logger.emit("merge", merge_payload)
+            except Exception as exc:
+                logger.emit("error", {
+                    "stage": "pcna_merge",
+                    "error": str(exc)[:300],
+                })
+
+        logger.emit("spawn_complete", {
+            "provider": provider_id,
+            "content_preview": (content or "")[:500],
+            "usage": usage,
+            "mode": mode,
+            "merge": merge_payload,
+        })
         await _mark_terminal(run_id, "completed", usage)
     except Exception as exc:
-        logger.emit(
-            "error",
-            {
-                "stage": "spawn_executor.execute",
-                "error_type": type(exc).__name__,
-                "error": str(exc)[:500],
-            },
-            level="ERROR",
-        )
+        logger.emit("error", {
+            "stage": "spawn_executor.execute",
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+        }, level="ERROR")
         try:
             await _mark_terminal(run_id, "failed")
         except Exception as inner:
@@ -225,6 +376,7 @@ async def _execute_one(row: dict[str, Any]) -> None:
                 run_id, inner,
             )
     finally:
+        _retire_fork_quietly(parent_pcna, sub_name or "")
         reset_run(tokens)
         try:
             from .run_logger import flush as _flush

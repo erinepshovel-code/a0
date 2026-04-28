@@ -24,6 +24,9 @@ from ...services.spawn_executor import (
     _claim_one_pending,
     _execute_one,
     _resolve_provider,
+    _snapshot_pcna,
+    _try_get_primary_pcna,
+    _retire_fork_quietly,
 )
 
 
@@ -192,3 +195,56 @@ def test_resolve_provider_rejects_empty() -> None:
         pass
     else:
         raise AssertionError("expected ValueError on malformed providers")
+
+
+def test_snapshot_pcna_shape() -> None:
+    """_snapshot_pcna returns the four delta-tracked quantities with
+    stable shape so before/after dicts can be subtracted in log payloads.
+    Uses a fresh PCNAEngine to avoid depending on global state."""
+    from python.engine import PCNAEngine
+    p = PCNAEngine()
+    snap = _snapshot_pcna(p)
+    expected = {"phi", "psi", "omega", "theta_circles"}
+    assert set(snap.keys()) == expected, (
+        f"snapshot keys drift: got {set(snap.keys())}, expected {expected}"
+    )
+    assert isinstance(snap["phi"], float), f"phi must be float, got {type(snap['phi'])}"
+    assert isinstance(snap["psi"], float), f"psi must be float, got {type(snap['psi'])}"
+    assert isinstance(snap["omega"], float), f"omega must be float, got {type(snap['omega'])}"
+    assert isinstance(snap["theta_circles"], int), (
+        f"theta_circles must be int, got {type(snap['theta_circles'])}"
+    )
+    # Subtractability — what the merge log payload relies on
+    snap2 = _snapshot_pcna(p)
+    delta = snap2["phi"] - snap["phi"]
+    assert isinstance(delta, float)
+
+
+def test_merge_helpers_tolerate_no_pcna() -> None:
+    """The merge helpers must degrade cleanly when the primary PCNA
+    is unreachable. _try_get_primary_pcna returns (engine_or_None,
+    error_or_None) — the two-value shape is the contract that lets
+    callers log *why* PCNA was missing instead of swallowing it as a
+    silent fallback. _retire_fork_quietly must accept None / empty
+    name / unknown name without raising."""
+    result = _try_get_primary_pcna()
+    assert isinstance(result, tuple) and len(result) == 2, (
+        f"_try_get_primary_pcna must return 2-tuple, got {type(result)}"
+    )
+    pri, err = result
+    assert pri is None or hasattr(pri, "phi"), (
+        f"_try_get_primary_pcna first element wrong shape: {type(pri)}"
+    )
+    assert err is None or isinstance(err, str), (
+        f"_try_get_primary_pcna second element must be str|None: {type(err)}"
+    )
+    # When pri is None, err must be set; when pri is set, err must be None
+    if pri is None:
+        assert err, "missing PCNA must be accompanied by explicit error string"
+    else:
+        assert err is None, f"PCNA reachable but error string set: {err!r}"
+    # _retire_fork_quietly must never raise on degraded inputs
+    _retire_fork_quietly(None, "")
+    _retire_fork_quietly(None, "nonexistent_sub_agent_name")
+    _retire_fork_quietly(pri, "")
+    _retire_fork_quietly(pri, "definitely_not_a_real_subagent_xyz")
