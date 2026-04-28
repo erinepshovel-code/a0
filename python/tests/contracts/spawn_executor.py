@@ -178,14 +178,8 @@ async def test_marks_failed_on_exception() -> None:
 
 
 def test_resolve_provider_rejects_empty() -> None:
-    """_resolve_provider raises on empty/malformed input — no silent default."""
-    import pytest_style
-del None  # noqa
-
-
-def _smoke_resolve_provider() -> None:
-    """Synchronous smoke checks for _resolve_provider (called by the
-    other tests via import); not registered as a contract itself."""
+    """_resolve_provider raises ValueError on empty/malformed providers
+    input — no silent default-to-active fallback."""
     try:
         _resolve_provider([])
     except ValueError:
@@ -198,6 +192,3 @@ def _smoke_resolve_provider() -> None:
         pass
     else:
         raise AssertionError("expected ValueError on malformed providers")
-
-
-_smoke_resolve_provider()

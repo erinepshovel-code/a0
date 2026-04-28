@@ -51,7 +51,8 @@ a0p is a mobile-first autonomous AI agent platform. One agent `a0(zeta fun alpha
 - `python/services/bandit.py` — Multi-Armed Bandit (UCB1) service
 - `python/services/edcm.py` — EDCM behavioral directives scoring
 - `python/services/research.py` — Autonomous research (GitHub, AI social search)
-- `python/services/agent_lifecycle.py` — Sub-agent spawn/merge lifecycle
+- `python/services/agent_lifecycle.py` — Sub-agent PCNA fork/merge math
+- `python/services/spawn_executor.py` — Background poller that picks up `agent_runs` rows written by `sub_agent_spawn` and actually executes them: atomic claim (UPDATE … FOR UPDATE SKIP LOCKED), per-row provider binding via `AgentInstance`, single-mode inference, result logged via `run_logger.emit` (flows into existing agent_logs → JSONL artifact pipeline). Crash isolation per row; orchestration_mode != 'single' raises NotImplementedError (no silent fallback).
 - `python/services/zeta_observe.py` — ZFAE observation service
 - `python/storage/core.py` — Core CRUD storage (raw SQL via asyncpg)
 - `python/storage/domain.py` — Domain-specific storage (heartbeat, memory, PCNA, bandits)

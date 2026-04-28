@@ -54,6 +54,12 @@ Honest single-concern:
 #          'failed', and an 'error' event was logged for the run_id
 #   class: correctness
 #   call:  python.tests.contracts.spawn_executor.test_marks_failed_on_exception
+#
+# id: spawn_executor_resolve_provider_rejects_empty
+#   given: an empty list or malformed providers value
+#   then:  _resolve_provider raises ValueError (no silent default-to-active)
+#   class: correctness
+#   call:  python.tests.contracts.spawn_executor.test_resolve_provider_rejects_empty
 # === END CONTRACTS ===
 """
 from __future__ import annotations
