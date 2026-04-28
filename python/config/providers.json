@@ -90,6 +90,42 @@
       "responses_url": "https://api.x.ai/v1/responses",
       "supports_live_search": true,
       "supports_vision": true
+    },
+    "openai-5.5": {
+      "id": "openai-5.5",
+      "label": "GPT-5.5 (Responses API)",
+      "model": "gpt-5.5",
+      "vendor": "openai",
+      "env_key": "OPENAI_API_KEY",
+      "cost_per_1k_input": 0.005,
+      "cost_per_1k_output": 0.03,
+      "cache_read_per_1k_input": 0.0005,
+      "max_tokens": 128000,
+      "supports_streaming": false,
+      "supports_prompt_caching": true,
+      "supports_reasoning_effort": true,
+      "supports_vision": true,
+      "api_family": "responses",
+      "pricing_url": "https://openai.com/api/pricing/",
+      "note": "GPT-5.5 frontier model; 1M context; cached input 90% off (automatic on >=1024 token prefixes); released Apr 2026."
+    },
+    "openai-5.5-pro": {
+      "id": "openai-5.5-pro",
+      "label": "GPT-5.5 Pro (Responses API)",
+      "model": "gpt-5.5-pro",
+      "vendor": "openai",
+      "env_key": "OPENAI_API_KEY",
+      "cost_per_1k_input": 0.03,
+      "cost_per_1k_output": 0.18,
+      "cache_read_per_1k_input": 0.003,
+      "max_tokens": 128000,
+      "supports_streaming": false,
+      "supports_prompt_caching": true,
+      "supports_reasoning_effort": true,
+      "supports_vision": true,
+      "api_family": "responses",
+      "pricing_url": "https://openai.com/api/pricing/",
+      "note": "GPT-5.5 Pro highest-accuracy variant; 1M context; FrontierMath Tier 4 SOTA at release; reserve for PCNA-critical merges and hardest reasoning."
     }
   },
   "presets": {
@@ -311,6 +347,94 @@
         "conduct": "grok-4",
         "perform": "grok-4",
         "derive": "grok-4-fast-reasoning"
+      }
+    },
+    "openai-5.5": {
+      "speed": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "price": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "balance": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "depth": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "coding": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "creativity": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      }
+    },
+    "openai-5.5-pro": {
+      "speed": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "price": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "balance": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "depth": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "coding": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "creativity": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
       }
     }
   }

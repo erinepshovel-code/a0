@@ -31,6 +31,8 @@ from ..energy_registry import BUILTIN_PROVIDERS
 # for backward-compat with policy-based routing on the openai path.
 _PROVIDER_ENV_PREFIX: dict[str, str] = {
     "openai": "OPENAI_MODEL_",
+    "openai-5.5": "OPENAI_5_5_MODEL_",
+    "openai-5.5-pro": "OPENAI_5_5_PRO_MODEL_",
     "grok": "GROK_MODEL_",
     "gemini": "GEMINI_MODEL_",
     "gemini3": "GEMINI3_MODEL_",
