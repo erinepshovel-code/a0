@@ -585,4 +585,24 @@ async def converge_provider_pcna(provider_id: str, request: Request):
     provider_core._checkpoint_key = f"pcna_provider_{provider_id}"
     await provider_core.save_checkpoint()
     return {"provider_id": provider_id, "converge_result": result}
+
+
+# === CONTRACTS ===
+# id: energy_seed_patch_admin_only
+#   given: PATCH /api/energy/providers/{id}/seed without x-user-role=admin
+#   then:  403 for every payload shape (enabled, disabled_models,
+#          model_assignments). With admin role, same payloads return 200.
+#          No "user_only" branch may exist that lets non-admins toggle
+#          shared route_config fields.
+#   class: security
+#   call:  python.tests.contracts.energy.test_seed_patch_requires_admin
+#
+# id: energy_providers_list_public_read
+#   given: GET /api/energy/providers with any signed-in user
+#   then:  200 with a non-empty list of providers, each entry shaped
+#          {id, route_config, ...}. The model picker depends on this
+#          shape; admin-only data must not be returned here.
+#   class: correctness
+#   call:  python.tests.contracts.energy.test_providers_list_public_read
+# === END CONTRACTS ===
 # 406:87

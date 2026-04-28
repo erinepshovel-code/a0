@@ -529,4 +529,23 @@ class _CoreStorage:
     async def delete_custom_tool(self, id: int) -> None:
         async with get_session() as session:
             await session.execute(delete(CustomTool).where(CustomTool.id == id))
+
+
+# === CONTRACTS ===
+# id: storage_create_owner_isolation
+#   given: create_conversation called via POST /api/v1/conversations with
+#          {"user_id": "attacker"} in the body and x-user-id="legit"
+#   then:  stored row.user_id == "legit"; smuggled value is dropped by
+#          _CONV_ALLOWED_FIELDS
+#   class: security
+#   call:  python.tests.contracts.chat.test_create_owner_isolation
+#
+# id: storage_anonymous_owner_null
+#   given: POST /api/v1/conversations with no x-user-id header
+#   then:  row lands with user_id=NULL (owner_user_id kwarg defaults to
+#          None when caller is unauthenticated; nothing leaks into the
+#          owner field from the request body)
+#   class: security
+#   call:  python.tests.contracts.chat.test_create_anonymous_owner_null
+# === END CONTRACTS ===
 # 426:25

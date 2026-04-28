@@ -420,6 +420,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
         # turn of every existing conversation. If all four are empty we
         # cannot route, so refuse — same principle as the inference
         # dispatcher's no-silent-fallback contract.
+        model_from_body = bool(body.model)
         model_id = (
             body.model
             or agent_model_id
@@ -438,12 +439,26 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
             )
         # Resolve model_id → provider_id via the catalog so forge agents
         # whose model_id is a real model name (e.g. "gpt-5-mini") route
-        # correctly downstream. Falls back to the legacy alias when
-        # resolution misses (then the chat-level gate catches it).
+        # correctly downstream. The fallback below is intentionally
+        # asymmetric: only server-controlled sources (agent model,
+        # active_provider, conv.model) get the silent fallback. A
+        # user-supplied body.model that the catalog can't resolve is a
+        # picker typo or a stale id and must fail loudly — silently
+        # rerouting it to the active provider would let the user
+        # believe they got the model they asked for.
         from ..services.model_catalog import resolve_model_id as _resolve_model
         try:
             provider_id, _ = await _resolve_model(model_id)
         except ValueError:
+            if model_from_body:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unknown model id {model_id!r}. The model picker may "
+                        f"be out of date or this id is not registered in the "
+                        f"catalog. Refresh the providers list or pick 'auto'."
+                    ),
+                )
             provider_id = energy_registry.get_active_provider() or model_id
 
         # Tier-gate restricted models (e.g. gemini3 = ws/admin only).
@@ -853,4 +868,28 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
         tb = traceback.format_exc()
         print(f"[chat] send_message error: {exc}\n{tb}")
         raise HTTPException(status_code=500, detail=f"Chat error: {exc}")
+
+
+# === CONTRACTS ===
+# id: chat_get_other_owner_404
+#   given: GET /api/v1/conversations/{id} with x-user-id != row.user_id
+#   then:  404 (existence non-disclosure, never 403 or 200)
+#   class: security
+#   call:  python.tests.contracts.chat.test_get_other_owner_404
+#
+# id: chat_delete_other_owner_404
+#   given: DELETE /api/v1/conversations/{id} with x-user-id != row.user_id
+#   then:  404; the row remains intact for the real owner
+#   class: security
+#   call:  python.tests.contracts.chat.test_delete_other_owner_404
+#
+# id: chat_unknown_body_model_400
+#   given: POST /api/v1/conversations/{id}/messages with body.model that
+#          the catalog cannot resolve
+#   then:  400 with a detail naming the unknown id (no silent fallback to
+#          active_provider — server-side sources still fall back, only
+#          user input is strict)
+#   class: correctness
+#   call:  python.tests.contracts.chat.test_unknown_body_model_400
+# === END CONTRACTS ===
 # 601:130

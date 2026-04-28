@@ -453,6 +453,18 @@ async def stripe_webhook(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    return await _process_event_idempotent(event)
+
+
+async def _process_event_idempotent(event: dict) -> dict:
+    """Claim → dispatch → release pipeline shared by the public Stripe
+    webhook (after signature verification) and the internal contract-test
+    surface (which skips signature verification).
+
+    Returns ``{"received": True}`` on first dispatch and
+    ``{"received": True, "duplicate": True}`` on replay of an event id
+    already processed.
+    """
     event_id = event.get("id") or ""
     event_type = event.get("type") or ""
     claimed = False
@@ -487,6 +499,17 @@ async def stripe_webhook(request: Request):
         raise
 
     return {"received": True}
+
+
+# Note: there is intentionally NO HTTP surface that bypasses Stripe
+# signature verification. An earlier draft added an /internal/test-webhook
+# endpoint gated by the x-a0p-internal middleware, but Express injects
+# that header on every public /api request — so the endpoint would have
+# been reachable from the internet through the proxy, allowing forged
+# billing events. The idempotency contract is instead exercised by
+# importing _process_event_idempotent directly from
+# python/tests/contracts/billing.py, which has no HTTP surface and
+# cannot be triggered remotely.
 
 
 # --- Internal endpoint: WS-tier promotion at registration/login ---
@@ -614,4 +637,17 @@ async def _handle_subscription_deleted(sub: dict) -> None:
             """),
             {"cid": customer_id},
         )
+
+
+# === CONTRACTS ===
+# id: billing_webhook_replay_idempotent
+#   given: same Stripe event id POSTed twice to the webhook (via the
+#          internal test surface to bypass HMAC verification)
+#   then:  first call returns {received: True}; replay returns
+#          {received: True, duplicate: True}; _dispatch_webhook runs at
+#          most once per event id (processed_stripe_events claim is
+#          atomic)
+#   class: idempotency
+#   call:  python.tests.contracts.billing.test_webhook_replay_is_idempotent
+# === END CONTRACTS ===
 # 371:80
