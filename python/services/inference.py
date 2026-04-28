@@ -531,6 +531,39 @@ async def call_energy_provider(
             f"This indicates a misrouted call; fix at the caller."
         )
 
+    # OpenAI-vendored single-model providers (openai-5.5, openai-5.5-pro and
+    # any future siblings). The legacy "openai" provider above goes through
+    # role-based router; these go straight to openai_provider.call with the
+    # spec's pinned model. reasoning_effort is clamped UP to the spec's
+    # min_reasoning_effort (no silent downgrade — gpt-5.5-pro returns HTTP
+    # 400 on 'low', so we honor the floor verbatim, not silently swallow).
+    if spec.get("vendor") == "openai":
+        api_key = os.environ.get(spec["env_key"], "")
+        if not api_key:
+            raise RuntimeError(
+                f"{provider_id} unavailable: env var {spec['env_key']} is not set. "
+                f"Set the API key or route the request to a configured provider."
+            )
+        effective_effort = (reasoning_effort or "medium").lower()
+        min_effort = spec.get("min_reasoning_effort")
+        if min_effort:
+            order = {"minimal": 0, "low": 1, "medium": 2, "high": 3}
+            if order.get(effective_effort, 0) < order.get(min_effort, 0):
+                effective_effort = min_effort
+        payload_messages: list[dict] = []
+        if system_prompt:
+            payload_messages.append({"role": "system", "content": system_prompt})
+        payload_messages.extend(messages)
+        from .providers.openai_provider import call as openai_call
+        return await openai_call(
+            payload_messages,
+            model_override=spec["model"],
+            api_key=api_key,
+            max_tokens=max_tokens,
+            use_tools=use_tools,
+            reasoning_effort=effective_effort,
+        )
+
     api_key = os.environ.get(spec["env_key"], "")
     if not api_key:
         raise RuntimeError(

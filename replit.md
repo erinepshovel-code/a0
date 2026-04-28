@@ -107,10 +107,14 @@ PostgreSQL via SQLAlchemy (Python) and Drizzle ORM (schema management).
 - Deprecated names (alfa/beta/gamma) cleaned on boot
 
 ### Energy Providers
-LLMs are energy sources, not agents. Managed by `energy_registry.py`:
-- **grok** — xAI Grok-3 Mini (default)
+LLMs are energy sources, not agents. Managed by `energy_registry.py` (loads `python/config/providers.json` + `python/config/pricing.json`):
+- **grok** — xAI Grok-4 Fast (reasoning)
 - **gemini** — Google Gemini 2.5 Flash
-- **claude** — Anthropic Claude
+- **gemini3** — Google Gemini 3 Pro (preview)
+- **claude** — Anthropic Claude Sonnet 4.5
+- **openai** — OpenAI GPT-5 mini (Responses API)
+- **openai-5.5** — OpenAI GPT-5.5 (1M ctx, $5/$30 per 1M in/out, cached $0.50; released Apr 2026)
+- **openai-5.5-pro** — OpenAI GPT-5.5 Pro (1M ctx, $30/$180 per 1M, cached $3.00; FrontierMath Tier 4 SOTA — reserve for PCNA-critical merges; requires `reasoning_effort >= medium`)
 
 ### PCNA Engine
 53-node circular topology with rings: Phi, Psi, Omega, Theta (formerly "Guardian"; runs PCEA encryption over its tensor state via the `pcea-lib` package).

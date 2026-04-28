@@ -107,7 +107,8 @@
       "supports_vision": true,
       "api_family": "responses",
       "pricing_url": "https://openai.com/api/pricing/",
-      "note": "GPT-5.5 frontier model; 1M context; cached input 90% off (automatic on >=1024 token prefixes); released Apr 2026."
+      "note": "GPT-5.5 frontier model; 1M context; cached input 90% off (automatic on >=1024 token prefixes); released Apr 2026.",
+      "min_reasoning_effort": "low"
     },
     "openai-5.5-pro": {
       "id": "openai-5.5-pro",
@@ -125,7 +126,8 @@
       "supports_vision": true,
       "api_family": "responses",
       "pricing_url": "https://openai.com/api/pricing/",
-      "note": "GPT-5.5 Pro highest-accuracy variant; 1M context; FrontierMath Tier 4 SOTA at release; reserve for PCNA-critical merges and hardest reasoning."
+      "note": "GPT-5.5 Pro highest-accuracy variant; 1M context; FrontierMath Tier 4 SOTA at release; reserve for PCNA-critical merges and hardest reasoning.",
+      "min_reasoning_effort": "medium"
     }
   },
   "presets": {
