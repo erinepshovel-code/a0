@@ -1,21 +1,16 @@
 # 94:11
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter
 from typing import Optional
 
 from ..storage import storage
-from ._admin_gate import require_admin
 
 # DOC module: bandits
 # DOC label: Bandits
-# DOC description: Multi-armed bandit engine for reinforcement-based decision making. Manages arms, records rewards, and surfaces correlation data across bandit strategies.
+# DOC description: UCB1 bandit driving provider selection on the PCNA core (Task #112). Live arm stats live in PCNAEngine.bandit_state; bandit_pulls is the append-only audit log.
 # DOC tier: free
-# DOC endpoint: GET /api/v1/bandits/arms | List all bandit arms
-# DOC endpoint: POST /api/v1/bandits/arms | Create a new arm
-# DOC endpoint: GET /api/v1/bandits/arms/{id} | Get a specific arm
-# DOC endpoint: PATCH /api/v1/bandits/arms/{id} | Update arm parameters
-# DOC endpoint: POST /api/v1/bandits/arms/reset | Reset all arm statistics
-# DOC endpoint: GET /api/v1/bandits/correlations | Get arm correlation data
+# DOC endpoint: GET /api/v1/bandits/state | Live in-memory bandit_state on the primary PCNA — source of truth for the next pull
+# DOC endpoint: GET /api/v1/bandits/pulls | Append-only audit log of bandit decisions + rewards (Task #112)
+# DOC endpoint: GET /api/v1/bandits/correlations | Joint tool/model reward correlations
 
 UI_META = {
     "tab_id": "bandits",
@@ -24,16 +19,27 @@ UI_META = {
     "order": 5,
     "sections": [
         {
-            "id": "arms",
-            "label": "Bandit Arms",
-            "endpoint": "/api/v1/bandits/arms",
+            "id": "state",
+            "label": "Live Arms",
+            "endpoint": "/api/v1/bandits/state",
             "fields": [
-                {"key": "domain", "type": "badge", "label": "Domain"},
-                {"key": "arm_name", "type": "text", "label": "Arm"},
+                {"key": "arm_id", "type": "text", "label": "Arm"},
                 {"key": "pulls", "type": "text", "label": "Pulls"},
                 {"key": "avg_reward", "type": "gauge", "label": "Avg Reward"},
                 {"key": "ucb_score", "type": "gauge", "label": "UCB Score"},
-                {"key": "enabled", "type": "badge", "label": "Enabled"},
+                {"key": "last_pulled", "type": "text", "label": "Last Pulled"},
+            ],
+        },
+        {
+            "id": "pulls",
+            "label": "Pull Log",
+            "endpoint": "/api/v1/bandits/pulls",
+            "fields": [
+                {"key": "ts", "type": "text", "label": "Time"},
+                {"key": "domain", "type": "badge", "label": "Domain"},
+                {"key": "arm_id", "type": "text", "label": "Arm"},
+                {"key": "reward", "type": "gauge", "label": "Reward"},
+                {"key": "cost_usd", "type": "text", "label": "Cost (USD)"},
             ],
         },
         {
@@ -52,11 +58,8 @@ UI_META = {
 
 DATA_SCHEMA = {
     "endpoints": [
-        {"method": "GET", "path": "/api/v1/bandits/arms"},
-        {"method": "POST", "path": "/api/v1/bandits/arms"},
-        {"method": "GET", "path": "/api/v1/bandits/arms/{id}"},
-        {"method": "PATCH", "path": "/api/v1/bandits/arms/{id}"},
-        {"method": "POST", "path": "/api/v1/bandits/arms/reset"},
+        {"method": "GET", "path": "/api/v1/bandits/state"},
+        {"method": "GET", "path": "/api/v1/bandits/pulls"},
         {"method": "GET", "path": "/api/v1/bandits/correlations"},
     ],
 }
@@ -64,67 +67,77 @@ DATA_SCHEMA = {
 router = APIRouter(prefix="/api/v1", tags=["bandits"])
 
 
-class UpsertArm(BaseModel):
-    domain: str
-    arm_name: str
-    pulls: int = 0
-    total_reward: float = 0
-    avg_reward: float = 0
-    ema_reward: float = 0
-    ucb_score: float = 0
-    enabled: bool = True
-
-
-class UpdateArm(BaseModel):
-    pulls: Optional[int] = None
-    total_reward: Optional[float] = None
-    avg_reward: Optional[float] = None
-    ema_reward: Optional[float] = None
-    ucb_score: Optional[float] = None
-    enabled: Optional[bool] = None
-
-
-class ResetDomain(BaseModel):
-    domain: str
-
-
-@router.get("/bandits/arms")
-async def list_arms(domain: Optional[str] = None):
-    return await storage.get_bandit_arms(domain)
-
-
-@router.post("/bandits/arms")
-async def upsert_arm(request: Request, body: UpsertArm):
-    await require_admin(request)
-    return await storage.upsert_bandit_arm(body.model_dump())
-
-
-@router.get("/bandits/arms/{arm_id}")
-async def get_arm(arm_id: int):
-    arm = await storage.get_bandit_arm(arm_id)
-    if not arm:
-        raise HTTPException(status_code=404, detail="arm not found")
-    return arm
-
-
-@router.patch("/bandits/arms/{arm_id}")
-async def update_arm(arm_id: int, request: Request, body: UpdateArm):
-    await require_admin(request)
-    updates = body.model_dump(exclude_none=True)
-    if not updates:
-        raise HTTPException(status_code=400, detail="no updates provided")
-    await storage.update_bandit_arm(arm_id, updates)
-    return {"ok": True}
-
-
-@router.post("/bandits/arms/reset")
-async def reset_domain(request: Request, body: ResetDomain):
-    await require_admin(request)
-    await storage.reset_bandit_domain(body.domain)
-    return {"ok": True, "domain": body.domain}
+# Task #112 — bandit_arms (table + endpoints) is gone. Live arms live
+# on PCNAEngine.bandit_state (see /bandits/state); the audit log of
+# every pull lives in bandit_pulls (see /bandits/pulls). The legacy
+# table is dropped at lifespan startup so operators are not misled by
+# a stale summary that the selector no longer reads from.
 
 
 @router.get("/bandits/correlations")
 async def list_correlations(limit: int = 50):
     return await storage.get_bandit_correlations(limit)
+
+
+@router.get("/bandits/state")
+async def get_live_state():
+    """Live in-memory bandit_state on the primary PCNA core.
+
+    Task #112: this is the source of truth for the next bandit pull.
+    The append-only audit log is at GET /bandits/pulls. The legacy
+    bandit_arms table was retired and is dropped at lifespan startup.
+    """
+    from ..services.spawn_executor import _try_get_primary_pcna
+    pcna, err = _try_get_primary_pcna()
+    if pcna is None:
+        return {"available": False, "reason": err or "primary_pcna_unreachable", "domains": {}}
+    state = getattr(pcna, "bandit_state", {}) or {}
+    domains = {
+        domain: [
+            {
+                "arm_id": a.get("arm_id"),
+                "pulls": int(a.get("pulls", 0)),
+                "total_reward": float(a.get("total_reward", 0.0)),
+                "avg_reward": float(a.get("avg_reward", 0.0)),
+                "ema_reward": float(a.get("ema_reward", 0.0)),
+                "ucb_score": float(a.get("ucb_score", 0.0)),
+                "last_pulled": (
+                    a.get("last_pulled").isoformat()
+                    if a.get("last_pulled")
+                    else None
+                ),
+            }
+            for a in arms
+        ]
+        for domain, arms in state.items()
+    }
+    return {
+        "available": True,
+        "pcna_instance_id": getattr(pcna.theta, "instance_id", "unknown"),
+        "domains": domains,
+    }
+
+
+@router.get("/bandits/pulls")
+async def list_pulls(domain: Optional[str] = None, limit: int = 100):
+    """Append-only audit log of bandit decisions and their rewards.
+
+    Read-only. Newer rows first. Filterable by domain.
+    """
+    limit = max(1, min(int(limit), 1000))
+    from ..database import get_session
+    from sqlalchemy import text as _sa_text
+    sql = (
+        "SELECT id, spawn_id, parent_pcna_id, domain, arm_id, reward, "
+        "       reward_shape, cost_usd, ts "
+        "  FROM bandit_pulls "
+        + ("WHERE domain = :dom " if domain else "")
+        + "ORDER BY ts DESC LIMIT :lim"
+    )
+    params: dict = {"lim": limit}
+    if domain:
+        params["dom"] = domain
+    async with get_session() as s:
+        rows = (await s.execute(_sa_text(sql), params)).mappings().all()
+    return [dict(r) for r in rows]
 # 94:11

@@ -8,7 +8,7 @@ from ..database import get_session
 from ..models import (
     Conversation, Message, AutomationTask, CommandHistory,
     A0pEvent, HeartbeatLog, CostMetric, EdcmSnapshot,
-    BanditArm, CustomTool, ToolResult, MessageAttachment, GeneratedImage,
+    CustomTool, ToolResult, MessageAttachment, GeneratedImage,
 )
 
 
@@ -456,50 +456,9 @@ class _CoreStorage:
             )
             return [_row_to_dict(r) for r in result.scalars().all()]
 
-    async def get_bandit_arms(self, domain: Optional[str] = None) -> List[Dict[str, Any]]:
-        async with get_session() as session:
-            if domain:
-                q = select(BanditArm).where(BanditArm.domain == domain).order_by(desc(BanditArm.ucb_score))
-            else:
-                q = select(BanditArm).order_by(asc(BanditArm.domain), desc(BanditArm.ucb_score))
-            result = await session.execute(q)
-            return [_row_to_dict(r) for r in result.scalars().all()]
-
-    async def get_bandit_arm(self, id: int) -> Optional[Dict[str, Any]]:
-        async with get_session() as session:
-            result = await session.execute(select(BanditArm).where(BanditArm.id == id))
-            return _row_to_dict(result.scalar_one_or_none())
-
-    async def upsert_bandit_arm(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        async with get_session() as session:
-            from sqlalchemy import and_
-            result = await session.execute(
-                select(BanditArm).where(
-                    and_(BanditArm.domain == data["domain"], BanditArm.arm_name == data["arm_name"])
-                )
-            )
-            existing = result.scalar_one_or_none()
-            if existing:
-                await session.execute(update(BanditArm).where(BanditArm.id == existing.id).values(**data))
-                await session.flush()
-                r2 = await session.execute(select(BanditArm).where(BanditArm.id == existing.id))
-                return _row_to_dict(r2.scalar_one())
-            arm = BanditArm(**data)
-            session.add(arm)
-            await session.flush()
-            await session.refresh(arm)
-            return _row_to_dict(arm)
-
-    async def update_bandit_arm(self, id: int, updates: Dict[str, Any]) -> None:
-        async with get_session() as session:
-            await session.execute(update(BanditArm).where(BanditArm.id == id).values(**updates))
-
-    async def reset_bandit_domain(self, domain: str) -> None:
-        async with get_session() as session:
-            await session.execute(
-                update(BanditArm).where(BanditArm.domain == domain)
-                .values(pulls=0, total_reward=0, avg_reward=0, ema_reward=0, ucb_score=0)
-            )
+    # Task #112 — bandit_arms storage methods removed; the table is
+    # dropped at lifespan startup. Live bandit state lives on
+    # PCNAEngine.bandit_state and is read via GET /api/v1/bandits/state.
 
     async def get_custom_tools(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         async with get_session() as session:

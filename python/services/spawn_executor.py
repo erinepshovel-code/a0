@@ -78,6 +78,29 @@ Honest single-concern:
 #          masking it as success
 #   class: correctness
 #   call:  python.tests.contracts.spawn_executor.test_merge_helpers_tolerate_no_pcna
+#
+# id: spawn_executor_bandit_round_trip
+#   given: a parent PCNA with empty bandit_state and the 'bandit' sentinel
+#   then:  _resolve_provider picks an auto-selectable arm onto
+#          parent.bandit_state['provider'], and _record_bandit_reward
+#          increments pulls + shifts avg_reward — no bandit_arms touch
+#   class: correctness
+#   call:  python.tests.contracts.spawn_executor.test_bandit_round_trip
+#
+# id: spawn_executor_bandit_skips_human_only
+#   given: a candidate pool containing only a human-only provider id
+#   then:  _resolve_provider raises ValueError — the cost gate prevents
+#          UCB1's first-pass exploration from hitting the expensive tier
+#   class: security
+#   call:  python.tests.contracts.spawn_executor.test_bandit_skips_human_only
+#
+# id: spawn_executor_bandit_state_round_trips_through_checkpoint
+#   given: a bandit arm with a datetime last_pulled field
+#   then:  _arm_to_json / _arm_from_json round-trip cleanly so PCNA's
+#          save_checkpoint / load_checkpoint can persist bandit_state
+#          across restarts; missing fields default safely
+#   class: correctness
+#   call:  python.tests.contracts.spawn_executor.test_bandit_state_round_trips_through_checkpoint
 # === END CONTRACTS ===
 """
 from __future__ import annotations
@@ -89,6 +112,7 @@ from typing import Any, Optional
 
 from sqlalchemy import text as _sa_text
 
+from . import bandit as _bandit
 from .agent_instance import AgentInstance
 from .energy_registry import energy_registry
 from .run_context import bind_run, reset_run
@@ -141,6 +165,41 @@ async def _claim_one_pending() -> Optional[dict[str, Any]]:
         return dict(row)
 
 
+async def _persist_resolved_provider(
+    run_id: str,
+    provider_id: str,
+    *,
+    bandit_pull: Optional[dict] = None,
+) -> None:
+    """Persist the resolved provider AND, when present, the bandit pull
+    metadata onto the agent_runs row. A crash between fork and merge
+    leaves an unambiguous record of what arm was pulled, on which
+    domain, with what UCB score and pulls_before — so a recovery job
+    can reattribute the reward without guessing.
+    """
+    try:
+        from ..database import get_session
+        async with get_session() as s:
+            await s.execute(
+                _sa_text(
+                    "UPDATE agent_runs "
+                    "SET providers = CAST(:p AS jsonb), "
+                    "    bandit_pull = CAST(:bp AS jsonb) "
+                    "WHERE id = :id"
+                ),
+                {
+                    "p": json.dumps([provider_id]),
+                    "bp": json.dumps(bandit_pull) if bandit_pull else None,
+                    "id": run_id,
+                },
+            )
+    except Exception as exc:
+        _log.warning(
+            "[spawn_executor] could not persist resolved provider on %s: %s",
+            run_id, exc,
+        )
+
+
 async def _mark_terminal(run_id: str, status: str, usage: dict | None = None) -> None:
     from ..database import get_session
     tokens = int((usage or {}).get("total_tokens", 0) or 0)
@@ -157,13 +216,27 @@ async def _mark_terminal(run_id: str, status: str, usage: dict | None = None) ->
         )
 
 
-def _resolve_provider(providers: Any) -> str:
-    """Pick the provider id this row should bind to.
+# Both sentinels go through the bandit; explicit provider ids bypass it.
+_SENTINEL_ACTIVE = "active"
+_SENTINEL_BANDIT = "bandit"
+_AUTO_SENTINELS = frozenset({_SENTINEL_ACTIVE, _SENTINEL_BANDIT})
 
-    `providers` may arrive as a JSON-encoded string (older inserts) or
-    a list (newer). First entry wins for single-mode. 'active' resolves
-    to the system's currently active provider. Empty / malformed input
-    raises ValueError — the executor will mark the row failed.
+
+def _candidate_provider_ids() -> list[str]:
+    """Available providers for the bandit pool (env keys present)."""
+    return [s["id"] for s in energy_registry.list_providers() if s.get("available")]
+
+
+def _resolve_provider(
+    providers: Any,
+    *,
+    parent_pcna: Any = None,
+) -> tuple[str, Optional[dict]]:
+    """Resolve providers field → (provider_id, chosen_arm_or_None).
+
+    Sentinels "active" and "bandit" both run UCB1 over the cost-gated
+    candidate pool ("active" = single-arm over the active provider).
+    Explicit provider ids bypass the bandit. Malformed input raises.
     """
     if isinstance(providers, str):
         try:
@@ -175,23 +248,147 @@ def _resolve_provider(providers: Any) -> str:
     pid = str(providers[0]).strip()
     if not pid:
         raise ValueError("first provider entry is empty")
-    if pid == "active":
-        active = energy_registry.get_active_provider()
-        if not active:
-            raise ValueError("no active provider configured for 'active' binding")
-        # Cost gate: 'active' is an automated resolution path. Refuse to
-        # silently bind it to a provider flagged as human-only (i.e. any
-        # provider above the gpt-5.5 cost baseline). The caller must
-        # name the expensive provider explicitly if they truly want it.
-        if not energy_registry.is_auto_selectable(active):
+
+    if pid in _AUTO_SENTINELS:
+        # Both "active" and "bandit" are bandit-driven learning paths.
+        # "active" narrows the candidate pool to just the active
+        # provider (1-arm bandit — still records reward history);
+        # "bandit" considers every auto-selectable provider.
+        if parent_pcna is None:
             raise ValueError(
-                f"'active' resolved to {active!r} which requires human "
-                f"instantiation (cost above gpt-5.5 baseline). The active "
-                f"provider must be a non-flagged tier; pick this provider "
-                f"explicitly per-spawn instead of via 'active'."
+                f"{pid!r} selector requires a reachable parent PCNA "
+                f"(bandit_state lives on the PCNA core)"
             )
-        return active
-    return pid
+        if pid == _SENTINEL_ACTIVE:
+            active = energy_registry.get_active_provider()
+            if not active:
+                raise ValueError("no active provider configured for 'active' binding")
+            candidates = [active]
+        else:
+            candidates = _candidate_provider_ids()
+            if not candidates:
+                raise ValueError(
+                    "'bandit' selector found no available providers"
+                )
+        arms = parent_pcna.bandit_state.setdefault("provider", [])
+        chosen = _bandit.select_filtered(
+            arms,
+            candidates,
+            is_eligible=energy_registry.is_auto_selectable,
+        )
+        if chosen is None:
+            # Cost gate filtered everything out — surface the cause
+            # rather than mark the row failed with a generic error.
+            raise ValueError(
+                f"{pid!r} selector: every candidate is human-only "
+                f"(cost above gpt-5.5 baseline). Spawn explicitly "
+                f"with a non-flagged provider id."
+            )
+        return str(chosen["arm_id"]), chosen
+
+    # Explicit provider id — the caller's choice IS the human
+    # instantiation event; cost gate does not apply.
+    return pid, None
+
+
+def _compute_cost_usd(provider_id: str, usage: Optional[dict]) -> float:
+    """Real USD cost from a provider usage dict using pricing.json.
+
+    Returns 0.0 when usage is missing or pricing is unknown — the
+    bandit's cost floor (_MIN_COST_USD) handles the divide-by-zero;
+    callers can detect the gap by reading usage themselves.
+    """
+    if not usage:
+        return 0.0
+    try:
+        cb = energy_registry.cache_breakdown(usage)
+        return float(energy_registry.estimate_cost(
+            provider_id,
+            cb.get("fresh_input", 0),
+            cb.get("output", 0),
+            cb.get("cache_read", 0),
+            cb.get("cache_write", 0),
+        ))
+    except Exception as exc:
+        _log.warning("[spawn_executor] cost estimation failed: %s", exc)
+        return 0.0
+
+
+async def _record_bandit_reward(
+    parent_pcna: Any,
+    arm: Optional[dict],
+    *,
+    delta: dict,
+    cost_usd: float,
+    total_tokens: int,
+    spawn_id: str,
+    shape: str = _bandit.DEFAULT_REWARD_SHAPE,
+) -> Optional[dict]:
+    """Update chosen arm + AWAIT bandit_pulls audit insert + checkpoint PCNA."""
+    if arm is None or parent_pcna is None:
+        return None
+    try:
+        reward = _bandit.compute_reward(
+            delta, cost_usd=cost_usd, total_tokens=total_tokens, shape=shape,
+        )
+    except Exception as exc:
+        _log.warning("[spawn_executor] reward compute failed: %s", exc)
+        return None
+
+    arm = _bandit.update_arm_stats(arm, reward)
+    arm_id = str(arm.get("arm_id", ""))
+    payload = {
+        "domain": "provider",
+        "arm_id": arm_id,
+        "reward": reward,
+        "shape": shape,
+        "cost_usd": float(cost_usd),
+        "pulls_after": int(arm.get("pulls", 0)),
+        "avg_reward_after": float(arm.get("avg_reward", 0.0)),
+        "ema_reward_after": float(arm.get("ema_reward", 0.0)),
+    }
+    pcna_id = getattr(parent_pcna.theta, "instance_id", "unknown")
+    audit_ok = await _append_bandit_pull(
+        spawn_id=spawn_id, parent_pcna_id=pcna_id, domain="provider",
+        arm_id=arm_id, reward=reward, shape=shape, cost_usd=cost_usd,
+    )
+    payload["audit_persisted"] = audit_ok
+    # Persist updated bandit_state so a restart between merge and the
+    # next fork does not lose this learning event.
+    try:
+        await parent_pcna.save_checkpoint()
+        payload["checkpoint_persisted"] = True
+    except Exception as exc:
+        _log.error("[spawn_executor] PCNA checkpoint save failed: %s", exc)
+        payload["checkpoint_persisted"] = False
+    return payload
+
+
+async def _append_bandit_pull(
+    *, spawn_id: str, parent_pcna_id: str, domain: str,
+    arm_id: str, reward: float, shape: str, cost_usd: float,
+) -> bool:
+    """Awaited INSERT into bandit_pulls; True on success, False on failure
+    (logged). The merge still completes either way — the in-memory PCNA
+    update is the source of truth for the next pull."""
+    try:
+        from ..database import get_session
+        async with get_session() as s:
+            await s.execute(
+                _sa_text(
+                    "INSERT INTO bandit_pulls "
+                    "(spawn_id, parent_pcna_id, domain, arm_id, reward, "
+                    " reward_shape, cost_usd) "
+                    "VALUES (:sid, :pid, :dom, :aid, :rw, :sh, :cu)"
+                ),
+                {"sid": spawn_id, "pid": parent_pcna_id, "dom": domain,
+                 "aid": arm_id, "rw": float(reward), "sh": shape,
+                 "cu": float(cost_usd)},
+            )
+        return True
+    except Exception as exc:
+        _log.error("[spawn_executor] bandit_pulls INSERT failed: %s", exc)
+        return False
 
 
 def _snapshot_pcna(p) -> dict:
@@ -276,16 +473,42 @@ async def _execute_one(row: dict[str, Any]) -> None:
     sub_name: Optional[str] = None
     parent_pcna = None
     merge_payload: Optional[dict] = None
+    chosen_arm: Optional[dict] = None
     try:
         if mode not in _SUPPORTED_MODES:
             raise NotImplementedError(
                 f"orchestration_mode={mode!r} not implemented by spawn_executor; "
                 f"supported: {sorted(_SUPPORTED_MODES)}"
             )
-        provider_id = _resolve_provider(row.get("providers"))
 
         # ---- (2) fork child PCNA from primary -------------------------
+        # Parent PCNA must resolve first so the bandit sentinel can read
+        # parent.bandit_state. Resolution may raise (cost-gate failure);
+        # the row is then marked failed in the outer except.
         parent_pcna, pcna_err = _try_get_primary_pcna()
+        provider_id, chosen_arm = _resolve_provider(
+            row.get("providers"),
+            parent_pcna=parent_pcna,
+        )
+        if chosen_arm is not None:
+            # Capture the pull metadata (domain, arm, ucb, pulls_before,
+            # parent_pcna_id) so a crash before merge does not lose
+            # the attribution chain. Persisted on agent_runs.bandit_pull
+            # in the same UPDATE that resolves providers.
+            pull_meta = {
+                "domain": "provider",
+                "arm_id": chosen_arm.get("arm_id"),
+                "pulls_before": int(chosen_arm.get("pulls", 0)),
+                "ucb_score": chosen_arm.get("ucb_score"),
+                "parent_pcna_id": (
+                    getattr(parent_pcna.theta, "instance_id", "unknown")
+                    if parent_pcna is not None else None
+                ),
+            }
+            await _persist_resolved_provider(
+                run_id, provider_id, bandit_pull=pull_meta,
+            )
+            logger.emit("custom", {"phase": "bandit_pull", **pull_meta})
         if parent_pcna is not None:
             try:
                 from .agent_lifecycle import spawn_sub_agent
@@ -349,12 +572,27 @@ async def _execute_one(row: dict[str, Any]) -> None:
                         after["theta_circles"] - before["theta_circles"]
                     ),
                 }
+                # Task #112 — fork=pull, merge=reward. Cost is computed
+                # from provider pricing (not a missing usage["total_cost_usd"]
+                # field), so coherence_per_dollar is actually cost-aware.
+                cost_usd = _compute_cost_usd(provider_id, usage)
+                total_tokens = int((usage or {}).get("total_tokens", 0) or 0)
+                bandit_reward_payload = await _record_bandit_reward(
+                    parent_pcna,
+                    chosen_arm,
+                    delta=delta,
+                    cost_usd=cost_usd,
+                    total_tokens=total_tokens,
+                    spawn_id=run_id,
+                )
+
                 merge_payload = {
                     "sub_agent_name": sub_name,
                     "provider": provider_id,
                     "before": before,
                     "after": after,
                     "delta": delta,
+                    "bandit": bandit_reward_payload,
                     **absorb_result,
                 }
                 sub_name = None  # ownership transferred — fork retired by absorb

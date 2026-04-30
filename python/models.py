@@ -140,19 +140,9 @@ class EdcmSnapshot(Base):
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 
-class BanditArm(Base):
-    __tablename__ = "bandit_arms"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    domain = Column(Text, nullable=False)
-    arm_name = Column(Text, nullable=False)
-    pulls = Column(Integer, nullable=False, server_default="0")
-    total_reward = Column(Float, nullable=False, server_default="0")
-    avg_reward = Column(Float, nullable=False, server_default="0")
-    ema_reward = Column(Float, nullable=False, server_default="0")
-    ucb_score = Column(Float, nullable=False, server_default="0")
-    enabled = Column(Boolean, nullable=False, server_default="true")
-    last_pulled = Column(DateTime)
-    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+# Task #112 — BanditArm model removed; the bandit_arms table is dropped
+# at lifespan startup. Live arm state lives on PCNAEngine.bandit_state;
+# the audit log is the BanditPull model below.
 
 
 class CustomTool(Base):
@@ -258,6 +248,26 @@ class MemoryTensorSnapshot(Base):
     projection_out = Column(JSONB)
     request_count = Column(Integer, nullable=False, server_default="0")
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class BanditPull(Base):
+    """Append-only audit log of bandit decisions + their rewards.
+
+    Live arm state lives on the PCNA core (``PCNAEngine.bandit_state``)
+    as of Task #112; this table records each pull/reward event for
+    historical analysis. Never read on the hot path of selecting the
+    next arm — the live state is the source of truth there.
+    """
+    __tablename__ = "bandit_pulls"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    spawn_id = Column(Text, nullable=False)
+    parent_pcna_id = Column(Text, nullable=False)
+    domain = Column(Text, nullable=False)
+    arm_id = Column(Text, nullable=False)
+    reward = Column(Float, nullable=False)
+    reward_shape = Column(Text, nullable=False, server_default="coherence_per_dollar")
+    cost_usd = Column(Float, nullable=False, server_default=text("0"))
+    ts = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 
 class BanditCorrelation(Base):

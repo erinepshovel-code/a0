@@ -248,3 +248,153 @@ def test_merge_helpers_tolerate_no_pcna() -> None:
     _retire_fork_quietly(None, "nonexistent_sub_agent_name")
     _retire_fork_quietly(pri, "")
     _retire_fork_quietly(pri, "definitely_not_a_real_subagent_xyz")
+
+
+async def test_bandit_round_trip() -> None:
+    """Fork=pull, merge=reward — closed loop on PCNA.bandit_state.
+
+    Deterministic: stubs the candidate pool, the cost gate, and the
+    PCNA checkpoint+audit-insert sinks so the assertion runs without
+    needing a real DB or any provider API key.
+    """
+    from python.engine import PCNAEngine
+    from python.services import spawn_executor as _se
+    from python.services.energy_registry import energy_registry
+
+    parent = PCNAEngine()
+    assert parent.bandit_state == {}, f"fresh PCNA must start empty: {parent.bandit_state!r}"
+
+    fake_pool = ["fake-cheap", "fake-mid"]
+    orig_candidates = _se._candidate_provider_ids
+    orig_eligible = energy_registry.is_auto_selectable
+    orig_audit = _se._append_bandit_pull
+    orig_save = parent.save_checkpoint
+    _se._candidate_provider_ids = lambda: list(fake_pool)
+    energy_registry.is_auto_selectable = lambda pid: pid in fake_pool
+
+    audit_calls: list[dict] = []
+    async def _stub_audit(**kwargs):
+        audit_calls.append(kwargs)
+        return True
+    _se._append_bandit_pull = _stub_audit
+
+    save_calls: list[int] = []
+    async def _stub_save():
+        save_calls.append(1)
+    parent.save_checkpoint = _stub_save
+
+    try:
+        pid, chosen = _se._resolve_provider(["bandit"], parent_pcna=parent)
+        assert pid in fake_pool, f"picked {pid!r} not in {fake_pool}"
+        assert chosen and chosen.get("arm_id") == pid, f"bad arm shape: {chosen!r}"
+        assert any(a.get("arm_id") == pid for a in parent.bandit_state["provider"]), (
+            f"arm {pid!r} not on parent: {parent.bandit_state!r}"
+        )
+
+        pulls_before = int(chosen.get("pulls", 0))
+        payload = await _se._record_bandit_reward(
+            parent, chosen,
+            delta={"phi_delta": 0.05, "psi_delta": 0.04,
+                   "omega_delta": 0.03, "theta_circles_delta": 1},
+            cost_usd=0.01, total_tokens=500,
+            spawn_id="test-bandit-round-trip",
+        )
+        assert payload and payload["domain"] == "provider" and payload["arm_id"] == pid
+        assert payload["shape"] == "coherence_per_dollar"
+        assert payload["cost_usd"] == 0.01, f"cost not recorded: {payload!r}"
+        assert payload["audit_persisted"] is True, f"audit not awaited: {payload!r}"
+        assert payload["checkpoint_persisted"] is True, (
+            f"checkpoint not awaited: {payload!r}"
+        )
+        assert len(audit_calls) == 1, f"audit insert call count: {audit_calls!r}"
+        assert audit_calls[0]["arm_id"] == pid
+        assert audit_calls[0]["cost_usd"] == 0.01
+        assert len(save_calls) == 1, f"checkpoint not saved exactly once: {save_calls!r}"
+        assert int(chosen.get("pulls", 0)) == pulls_before + 1, (
+            f"pulls did not increment: {pulls_before} → {chosen.get('pulls')}"
+        )
+        assert float(chosen.get("avg_reward", 0.0)) > 0.0, (
+            f"avg_reward stuck at 0: {chosen!r}"
+        )
+    finally:
+        _se._candidate_provider_ids = orig_candidates
+        energy_registry.is_auto_selectable = orig_eligible
+        _se._append_bandit_pull = orig_audit
+        parent.save_checkpoint = orig_save
+
+
+def test_bandit_skips_human_only() -> None:
+    """Cost gate blocks UCB1 cold-start pick of a human-only-tier provider.
+
+    Deterministic: monkey-patches the candidate pool to a single fake
+    "human-only" id and stubs is_auto_selectable to reject it. No real
+    provider config is consulted.
+    """
+    from python.engine import PCNAEngine
+    from python.services import spawn_executor as _se
+    from python.services.energy_registry import energy_registry
+
+    parent = PCNAEngine()
+    fake_human_only = "fake-pro-human-only"
+    orig_candidates = _se._candidate_provider_ids
+    orig_eligible = energy_registry.is_auto_selectable
+    _se._candidate_provider_ids = lambda: [fake_human_only]
+    energy_registry.is_auto_selectable = lambda pid: pid != fake_human_only
+    try:
+        try:
+            _se._resolve_provider(["bandit"], parent_pcna=parent)
+        except ValueError as exc:
+            assert "human-only" in str(exc), f"wrong rejection message: {exc!r}"
+        else:
+            raise AssertionError("cost gate bypassed: bandit picked a human-only arm")
+    finally:
+        _se._candidate_provider_ids = orig_candidates
+        energy_registry.is_auto_selectable = orig_eligible
+
+
+def test_bandit_select_arm_handles_negative_rewards() -> None:
+    """select_arm must not silently return None when all rewards are negative.
+
+    A -1.0 best_score floor would have masked the regression on every
+    arm and left the selector disabled. We seed three pulled arms with
+    deeply negative avg_reward and assert the highest-scoring one is
+    still chosen.
+    """
+    from python.services.bandit import select_arm
+    arms = [
+        {"arm_id": "a", "pulls": 5, "avg_reward": -10.0,
+         "ucb_score": 0.0, "enabled": True},
+        {"arm_id": "b", "pulls": 5, "avg_reward": -1000.0,
+         "ucb_score": 0.0, "enabled": True},
+        {"arm_id": "c", "pulls": 5, "avg_reward": -50.0,
+         "ucb_score": 0.0, "enabled": True},
+    ]
+    chosen = select_arm(arms)
+    assert chosen is not None, (
+        "select_arm returned None despite enabled arms — -1.0 floor regression"
+    )
+    # Best avg_reward (least-negative) wins because exploration term is
+    # equal across arms with equal pulls.
+    assert chosen["arm_id"] == "a", (
+        f"expected highest avg_reward arm 'a', got {chosen.get('arm_id')!r}"
+    )
+
+
+def test_bandit_state_round_trips_through_checkpoint() -> None:
+    """Task #112 — bandit_state survives checkpoint save/load."""
+    from python.engine.pcna import _arm_to_json, _arm_from_json
+    from datetime import datetime
+    arm = {
+        "arm_id": "openai", "pulls": 5, "total_reward": 1.5, "avg_reward": 0.3,
+        "ema_reward": 0.4, "ucb_score": 1.2, "enabled": True,
+        "last_pulled": datetime(2026, 4, 30, 12, 0, 0),
+    }
+    j = _arm_to_json(arm)
+    assert isinstance(j["last_pulled"], str), "datetime must serialize to str"
+    back = _arm_from_json(j)
+    assert isinstance(back["last_pulled"], datetime), "string must round-trip to datetime"
+    assert back["pulls"] == 5 and back["arm_id"] == "openai"
+    # Old snapshots without bandit_state default to {} — handled by load_checkpoint
+    # via `data.get("bandit_state") or {}`. Empty/missing input here:
+    assert _arm_from_json({}).get("last_pulled") is None
+    assert _arm_to_json({"arm_id": "x"}).get("last_pulled") is None

@@ -42,6 +42,28 @@ def _tensor_to_b64(arr: np.ndarray) -> str:
 def _b64_to_tensor(s: str) -> np.ndarray:
     return np.load(io.BytesIO(base64.b64decode(s)))
 
+
+def _arm_to_json(arm: dict) -> dict:
+    """Bandit arm → JSON-safe dict (datetime → ISO str)."""
+    out = dict(arm)
+    lp = out.get("last_pulled")
+    if hasattr(lp, "isoformat"):
+        out["last_pulled"] = lp.isoformat()
+    return out
+
+
+def _arm_from_json(arm: dict) -> dict:
+    """Inverse of _arm_to_json. Tolerates missing fields from old snapshots."""
+    out = dict(arm or {})
+    lp = out.get("last_pulled")
+    if isinstance(lp, str) and lp:
+        try:
+            from datetime import datetime as _dt
+            out["last_pulled"] = _dt.fromisoformat(lp)
+        except Exception:
+            out["last_pulled"] = None
+    return out
+
 RING_WEIGHTS = {
     "phi": 0.30,
     "psi": 0.15,
@@ -74,6 +96,11 @@ class PCNAEngine:
         self.checkpoint_at: float | None = None
         self.checkpoint_ring_means: dict[str, float] = {}
         self._checkpoint_key = "pcna_tensor_checkpoint" if phases == 7 else f"pcna_tensor_checkpoint_p{phases}"
+
+        # Task #112 — bandit lives on PCNA core: fork=pull, merge=reward.
+        # Map of domain -> list[arm dict]. Empty by default; arms added
+        # lazily by spawn_executor via bandit.ensure_arm.
+        self.bandit_state: dict[str, list[dict]] = {}
 
     async def load_checkpoint(self):
         """
@@ -133,6 +160,14 @@ class PCNAEngine:
                 name: round(float(ring_map[name].tensor.mean()), 4)
                 for name in decoded
             }
+            # Task #112 — bandit_state round-trip. Old snapshots without
+            # the key default to {}, preserving back-compat.
+            bs = data.get("bandit_state") or {}
+            if isinstance(bs, dict):
+                self.bandit_state = {
+                    str(domain): [_arm_from_json(a) for a in (arms or [])]
+                    for domain, arms in bs.items()
+                }
             print(f"[pcna] checkpoint restored: {len(decoded)} rings, saved_at={ts}")
         except Exception as e:
             print(f"[pcna] checkpoint load failed (fresh start): {e}")
@@ -153,6 +188,12 @@ class PCNAEngine:
                 data[f"{name}_tensor"] = _tensor_to_b64(ring.tensor)
                 if hasattr(ring, "velocities"):
                     data[f"{name}_velocities"] = _tensor_to_b64(ring.velocities)
+            # Task #112 — persist bandit_state alongside ring tensors so
+            # learned preferences survive restart.
+            data["bandit_state"] = {
+                str(domain): [_arm_to_json(a) for a in arms]
+                for domain, arms in (self.bandit_state or {}).items()
+            }
             await storage.upsert_system_toggle(self._checkpoint_key, True, data)
             self.checkpoint_at = data["saved_at"]
             self.checkpoint_ring_means = {
@@ -359,5 +400,10 @@ class PCNAEngine:
             "checkpoint_at": self.checkpoint_at,
             "checkpoint_ring_means": self.checkpoint_ring_means,
             "echo_history": echo_history[-20:],
+            # Task #112 — surface live bandit state in PCNA snapshot
+            "bandit_state": {
+                d: [_arm_to_json(a) for a in arms]
+                for d, arms in (self.bandit_state or {}).items()
+            },
         }
 # 295:27
