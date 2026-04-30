@@ -462,6 +462,57 @@ async def lifespan(app: FastAPI):
             except Exception as _e:
                 print(f"[transcript_*] FK skipped ({_fk[0]}): {_e}")
     print("[transcript_*] tables/columns ensured")
+    # --- EDCMbone explainer tables ---
+    async with get_session() as _sess:
+        await _sess.execute(_sa_text("""
+            CREATE TABLE IF NOT EXISTS transcript_explanations (
+                id SERIAL PRIMARY KEY,
+                report_id INTEGER NOT NULL UNIQUE,
+                user_id VARCHAR(120) NOT NULL,
+                model_id VARCHAR(80) NOT NULL,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                cost_cents INTEGER NOT NULL DEFAULT 0,
+                body TEXT NOT NULL,
+                citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+                paid_with VARCHAR(8) NOT NULL DEFAULT 'free',
+                paid_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        # Idempotent column add for existing deploys created before paid_at
+        # was part of the schema. Safe to run on a fresh deploy too.
+        await _sess.execute(_sa_text(
+            "ALTER TABLE transcript_explanations "
+            "ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ))
+        await _sess.execute(_sa_text("""
+            CREATE TABLE IF NOT EXISTS explanation_credits (
+                user_id VARCHAR(120) PRIMARY KEY,
+                free_remaining INTEGER NOT NULL DEFAULT 3,
+                paid_remaining INTEGER NOT NULL DEFAULT 0,
+                lifetime_purchased INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        await _sess.execute(_sa_text(
+            "CREATE INDEX IF NOT EXISTS idx_transcript_explanations_user "
+            "ON transcript_explanations(user_id, created_at DESC)"
+        ))
+        # FK to transcript_reports — cascade so a report deletion (rare,
+        # operator-initiated) cleans up its paid explanation row too.
+        try:
+            exists = await _sess.execute(_sa_text(
+                "SELECT 1 FROM pg_constraint WHERE conname = 'fk_explanations_report'"
+            ))
+            if exists.scalar_one_or_none() is None:
+                await _sess.execute(_sa_text(
+                    "ALTER TABLE transcript_explanations ADD CONSTRAINT fk_explanations_report "
+                    "FOREIGN KEY (report_id) REFERENCES transcript_reports(id) ON DELETE CASCADE"
+                ))
+        except Exception as _e:
+            print(f"[transcript_explanations] FK skipped: {_e}")
+    print("[transcript_explanations/explanation_credits] tables ensured")
     print("[agent_runs/agent_logs/settings] tables ensured")
     await _seed_system_shadow_modules()
     print("[ws_modules] system shadows seeded")

@@ -487,6 +487,12 @@ async def _dispatch_webhook(event: dict) -> None:
                     """),
                     {"cid": cid},
                 )
+    elif etype == "charge.refunded":
+        # Refund of an explainer pack purchase reverses the paid credit
+        # grant. Resolve the original user via PaymentIntent → Checkout
+        # Session so a refund issued from the Stripe dashboard (which
+        # lacks our metadata) still routes back to the right user.
+        await _handle_charge_refunded(event["data"]["object"])
 
 
 async def _handle_checkout_completed(sess: dict) -> None:
@@ -525,6 +531,27 @@ async def _handle_checkout_completed(sess: dict) -> None:
             safe["uid"] = uid
             async with engine.begin() as conn:
                 await conn.execute(text(f"UPDATE users SET {set_clause} WHERE id = :uid"), safe)
+
+    # Explainer pack: $50 = 3 explanations. We re-derive pack count from
+    # the session amount as defense-in-depth so a metadata edit in the
+    # Stripe dashboard can't mint free credits.
+    if product_key == "explainer_pack":
+        try:
+            packs_meta = int(sess.get("metadata", {}).get("packs", 1) or 1)
+        except (TypeError, ValueError):
+            packs_meta = 1
+        amount_total = int(sess.get("amount_total") or 0)
+        # Reject mismatched amounts to defeat metadata tampering.
+        expected_cents = packs_meta * 5000
+        if amount_total and amount_total != expected_cents:
+            print(
+                f"[billing] explainer_pack amount mismatch: "
+                f"got {amount_total}c, expected {expected_cents}c (packs={packs_meta}). "
+                f"Trusting amount over metadata."
+            )
+            packs_meta = max(1, amount_total // 5000)
+        from ..storage import storage as _storage
+        await _storage.add_explanation_credits(uid, packs=packs_meta)
 
 
 async def _handle_subscription_updated(sub: dict) -> None:
@@ -575,6 +602,117 @@ async def _handle_subscription_deleted(sub: dict) -> None:
             """),
             {"cid": customer_id},
         )
+
+
+async def _handle_charge_refunded(charge: dict) -> None:
+    """Reverse paid credits when an explainer-pack charge is refunded.
+
+    Stripe's `charge.refunded` event arrives whenever a charge transitions
+    to refunded — full or partial. We compute pack-equivalents from the
+    refunded amount (rounded down: a partial refund of <$50 yields zero
+    pack reversal so users keep the credits they were already debited for).
+
+    Resolution path: charge → payment_intent → checkout.session via
+    Stripe API lookup. The session's metadata.user_id + metadata.product_key
+    is what we trust — never the charge's customer alone, since charges
+    don't carry our app-side metadata.
+    """
+    if not STRIPE_SECRET_KEY:
+        return
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    pi_id = charge.get("payment_intent")
+    if not pi_id:
+        return
+    try:
+        sessions = stripe.checkout.Session.list(payment_intent=pi_id, limit=1)
+    except Exception as exc:
+        print(f"[billing] charge.refunded: lookup failed for pi={pi_id}: {exc}")
+        return
+    if not sessions.data:
+        return
+    sess = sessions.data[0]
+    metadata = sess.get("metadata") or {}
+    if metadata.get("product_key") != "explainer_pack":
+        # Refund of a donation or supporter charge — no credit reversal.
+        return
+    uid = metadata.get("user_id")
+    if not uid:
+        return
+
+    refunded = int(charge.get("amount_refunded") or 0)
+    packs = refunded // 5000
+    if packs <= 0:
+        return
+    from ..storage import storage as _storage
+    await _storage.remove_explanation_credits(uid, packs=packs)
+
+
+@router.post("/explainer-checkout")
+async def explainer_checkout(request: Request):
+    """Create an embedded Stripe Checkout session for one explainer pack.
+
+    Owner-only (any signed-in user). Returns ``{client_secret}`` for the
+    embedded checkout flow — the same pattern the donation endpoint uses,
+    so the frontend renders it via @stripe/stripe-js's
+    EmbeddedCheckoutProvider.
+    """
+    uid = _user_id(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    return_url = body.get("return_url") if isinstance(body, dict) else None
+    origin = request.headers.get("origin") or "https://a0p.replit.app"
+    if not return_url:
+        return_url = f"{origin}/transcripts?explainer_checkout=success"
+
+    async with engine.connect() as conn:
+        row = await conn.execute(
+            text("SELECT email, stripe_customer_id FROM users WHERE id = :id"),
+            {"id": uid},
+        )
+        rec = row.mappings().first()
+
+    customer_id = rec["stripe_customer_id"] if rec else None
+    user_email = rec["email"] if rec else None
+
+    session_kwargs: dict = {
+        "ui_mode": "embedded",
+        "return_url": return_url,
+        "mode": "payment",
+        "line_items": [
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": "EDCMbone explanation pack",
+                        "description": (
+                            "3 model-written EDCMbone explanations "
+                            "(~$16.67 each, ~1 minute of Erin's time per shot)."
+                        ),
+                    },
+                    "unit_amount": 5000,
+                },
+                "quantity": 1,
+            }
+        ],
+        "metadata": {
+            "user_id": uid,
+            "product_key": "explainer_pack",
+            "packs": "1",
+        },
+    }
+    if customer_id:
+        session_kwargs["customer"] = customer_id
+    elif user_email:
+        session_kwargs["customer_email"] = user_email
+
+    session = stripe.checkout.Session.create(**session_kwargs)
+    return {"client_secret": session.client_secret}
 
 
 # === CONTRACTS ===

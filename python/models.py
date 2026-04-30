@@ -357,6 +357,44 @@ class TranscriptMessage(Base):
     directives_fired = Column(JSONB)
 
 
+class TranscriptExplanation(Base):
+    """Owner-billed model-written explanation of a transcript_reports row.
+
+    UNIQUE(report_id) enforces one explanation per report so a refresh on the
+    report screen is free — re-fetch returns the cached row instead of
+    re-billing. user_id is denormalized from the upload chain at insert time
+    so the credit decrement (which happens before the explainer runs) and the
+    explanation row stay coherent if the underlying upload is later deleted.
+    """
+    __tablename__ = "transcript_explanations"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(Integer, nullable=False, unique=True)
+    user_id = Column(String(120), nullable=False)
+    model_id = Column(String(80), nullable=False)
+    prompt_tokens = Column(Integer, nullable=False, server_default="0")
+    completion_tokens = Column(Integer, nullable=False, server_default="0")
+    cost_cents = Column(Integer, nullable=False, server_default="0")
+    body = Column(Text, nullable=False)
+    citations = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    paid_with = Column(String(8), nullable=False, server_default="free")
+    paid_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class ExplanationCredits(Base):
+    """Per-user explainer credit balance.
+
+    Free credits are seeded on first request (3 lifetime). Paid credits arrive
+    in packs of 3 via Stripe webhook. Decrement order: free first, then paid.
+    """
+    __tablename__ = "explanation_credits"
+    user_id = Column(String(120), primary_key=True)
+    free_remaining = Column(Integer, nullable=False, server_default="3")
+    paid_remaining = Column(Integer, nullable=False, server_default="0")
+    lifetime_purchased = Column(Integer, nullable=False, server_default="0")
+    updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
 class Founder(Base):
     __tablename__ = "founders"
     id = Column(Integer, primary_key=True, autoincrement=True)

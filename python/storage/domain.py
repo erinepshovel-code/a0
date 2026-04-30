@@ -8,6 +8,7 @@ from ..models import (
     HeartbeatTask, EdcmMetricSnapshot, MemorySeed, MemoryProjection,
     MemoryTensorSnapshot, BanditCorrelation, SystemToggle, DiscoveryDraft,
     TranscriptSource, TranscriptReport, TranscriptUpload, TranscriptMessage,
+    TranscriptExplanation, ExplanationCredits,
     Deal, HeartbeatLog,
     Conversation, A0pEvent, Message, ApprovalScope, WsModule,
 )
@@ -227,6 +228,165 @@ class DatabaseStorage(_CoreStorage):
                 .order_by(asc(TranscriptMessage.idx)).limit(limit).offset(offset)
             )
             return [_row_to_dict(r) for r in result.scalars().all()]
+
+    # ---------- transcript explainer ----------
+
+    async def get_transcript_explanation(
+        self, report_id: int, user_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Owner-scoped fetch. Returns None if no explanation exists yet
+        OR if it does exist but doesn't belong to the caller (treated as
+        404 by callers — never leak existence cross-user)."""
+        async with get_session() as session:
+            q = select(TranscriptExplanation).where(
+                TranscriptExplanation.report_id == report_id
+            )
+            if user_id is not None:
+                q = q.where(TranscriptExplanation.user_id == user_id)
+            result = await session.execute(q)
+            return _row_to_dict(result.scalar_one_or_none())
+
+    async def create_transcript_explanation(
+        self, *, report_id: int, user_id: str, model_id: str,
+        prompt_tokens: int, completion_tokens: int, cost_cents: int,
+        body: str, citations: List[Dict[str, Any]], paid_with: str,
+    ) -> Dict[str, Any]:
+        """Insert one explanation row. UNIQUE(report_id) makes a duplicate
+        insert raise IntegrityError — callers must check existence first."""
+        async with get_session() as session:
+            row = TranscriptExplanation(
+                report_id=report_id, user_id=user_id, model_id=model_id,
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                cost_cents=cost_cents, body=body, citations=citations,
+                paid_with=paid_with,
+            )
+            session.add(row)
+            await session.flush()
+            await session.refresh(row)
+            return _row_to_dict(row)
+
+    async def get_or_seed_explanation_credits(self, user_id: str) -> Dict[str, Any]:
+        """Return the user's credit row, seeding with 3 free on first read.
+        Idempotent via INSERT ... ON CONFLICT DO NOTHING — concurrent first
+        reads can't both seed and double the free count."""
+        async with get_session() as session:
+            await session.execute(
+                _sa_text(
+                    "INSERT INTO explanation_credits "
+                    "(user_id, free_remaining, paid_remaining, lifetime_purchased) "
+                    "VALUES (:uid, 3, 0, 0) ON CONFLICT (user_id) DO NOTHING"
+                ),
+                {"uid": user_id},
+            )
+            result = await session.execute(
+                select(ExplanationCredits).where(ExplanationCredits.user_id == user_id)
+            )
+            return _row_to_dict(result.scalar_one())
+
+    async def consume_explanation_credit(self, user_id: str) -> Optional[str]:
+        """Decrement one credit free-then-paid; returns the bucket consumed
+        ('free' | 'paid') or None if both balances are zero.
+
+        Concurrency: SELECT ... FOR UPDATE inside the same session locks
+        the row for the duration of the txn so two parallel /explain calls
+        from the same user can't both decrement past zero.
+        """
+        await self.get_or_seed_explanation_credits(user_id)
+        async with get_session() as session:
+            row = await session.execute(
+                _sa_text(
+                    "SELECT free_remaining, paid_remaining FROM explanation_credits "
+                    "WHERE user_id = :uid FOR UPDATE"
+                ),
+                {"uid": user_id},
+            )
+            rec = row.mappings().first()
+            if not rec:
+                return None
+            free = int(rec["free_remaining"] or 0)
+            paid = int(rec["paid_remaining"] or 0)
+            if free > 0:
+                await session.execute(
+                    _sa_text(
+                        "UPDATE explanation_credits SET free_remaining = free_remaining - 1, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE user_id = :uid"
+                    ),
+                    {"uid": user_id},
+                )
+                return "free"
+            if paid > 0:
+                await session.execute(
+                    _sa_text(
+                        "UPDATE explanation_credits SET paid_remaining = paid_remaining - 1, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE user_id = :uid"
+                    ),
+                    {"uid": user_id},
+                )
+                return "paid"
+            return None
+
+    async def refund_explanation_credit(self, user_id: str, bucket: str) -> None:
+        """Restore one credit to the named bucket. Used when the explainer
+        call fails after the credit has been decremented — the user must
+        not be charged for a model failure they never received output for.
+        """
+        if bucket not in ("free", "paid"):
+            return
+        col = "free_remaining" if bucket == "free" else "paid_remaining"
+        async with get_session() as session:
+            await session.execute(
+                _sa_text(
+                    f"UPDATE explanation_credits SET {col} = {col} + 1, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE user_id = :uid"
+                ),
+                {"uid": user_id},
+            )
+
+    async def add_explanation_credits(self, user_id: str, packs: int) -> Dict[str, Any]:
+        """Stripe webhook entry point — add `packs * 3` paid credits and
+        bump lifetime_purchased. Idempotency is enforced upstream by
+        processed_stripe_events; this method just does the math."""
+        if packs <= 0:
+            return await self.get_or_seed_explanation_credits(user_id)
+        await self.get_or_seed_explanation_credits(user_id)
+        async with get_session() as session:
+            await session.execute(
+                _sa_text(
+                    "UPDATE explanation_credits SET "
+                    " paid_remaining = paid_remaining + :n, "
+                    " lifetime_purchased = lifetime_purchased + :n, "
+                    " updated_at = CURRENT_TIMESTAMP "
+                    "WHERE user_id = :uid"
+                ),
+                {"uid": user_id, "n": packs * 3},
+            )
+            result = await session.execute(
+                select(ExplanationCredits).where(ExplanationCredits.user_id == user_id)
+            )
+            return _row_to_dict(result.scalar_one())
+
+    async def remove_explanation_credits(self, user_id: str, packs: int) -> Dict[str, Any]:
+        """Stripe charge.refunded entry point — subtract `packs * 3` paid
+        credits, clamping at zero. Lifetime counter is NOT decremented (it
+        is a record of how many packs were ever sold, not a current balance).
+        """
+        if packs <= 0:
+            return await self.get_or_seed_explanation_credits(user_id)
+        await self.get_or_seed_explanation_credits(user_id)
+        async with get_session() as session:
+            await session.execute(
+                _sa_text(
+                    "UPDATE explanation_credits SET "
+                    " paid_remaining = GREATEST(0, paid_remaining - :n), "
+                    " updated_at = CURRENT_TIMESTAMP "
+                    "WHERE user_id = :uid"
+                ),
+                {"uid": user_id, "n": packs * 3},
+            )
+            result = await session.execute(
+                select(ExplanationCredits).where(ExplanationCredits.user_id == user_id)
+            )
+            return _row_to_dict(result.scalar_one())
 
     async def get_memory_seeds(self) -> List[Dict[str, Any]]:
         async with get_session() as session:

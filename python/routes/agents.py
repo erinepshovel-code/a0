@@ -216,9 +216,10 @@ async def learning_summary(limit: int = 200):
       * the live primary-PCNA snapshot so the user can compare
         "alpha echo right now" against the cumulative gain it absorbed
 
-    This is the surface that lets you SEE alpha echo getting smarter from
-    spawned work — not just trust that it does. No schema change; pure
-    aggregation over agent_logs.event = 'merge' rows.
+    Also surfaces a separate `paid_explainer` rollup of recent
+    'explainer_call' events — these are paid one-shot model calls, not
+    pcna merges, and are kept in their own section so the merge counter
+    stays honest. No schema change; pure aggregation over agent_logs rows.
     """
     from sqlalchemy import text as _sa_text
     from ..database import get_session
@@ -226,12 +227,18 @@ async def learning_summary(limit: int = 200):
     if limit < 1 or limit > 1000:
         raise HTTPException(status_code=400, detail="limit must be 1..1000")
     rows = []
+    explainer_rows = []
     async with get_session() as s:
         r = await s.execute(_sa_text(
             "SELECT payload, ts FROM agent_logs "
             "WHERE event = 'merge' ORDER BY ts DESC LIMIT :lim"
         ), {"lim": limit})
         rows = r.mappings().all()
+        r2 = await s.execute(_sa_text(
+            "SELECT payload, ts FROM agent_logs "
+            "WHERE event = 'explainer_call' ORDER BY ts DESC LIMIT :lim"
+        ), {"lim": limit})
+        explainer_rows = r2.mappings().all()
     def _num(v, caster):
         """Coerce v to int/float defensively; return 0 for malformed input."""
         try:
@@ -298,6 +305,40 @@ async def learning_summary(limit: int = 200):
         }
     except Exception as exc:
         primary_error = f"{type(exc).__name__}: {exc}"[:200]
+    # Paid-explainer rollup — separate from `cumulative` and `by_provider`
+    # above so the merge counter isn't inflated by paid one-shot calls.
+    paid = {
+        "calls": 0,
+        "total_prompt_tokens": 0,
+        "total_completion_tokens": 0,
+        "total_cost_cents": 0,
+        "by_provider": {},
+        "most_recent": None,
+    }
+    for row in explainer_rows:
+        p = row["payload"]
+        if not isinstance(p, dict):
+            continue
+        paid["calls"] += 1
+        pt = _num(p.get("prompt_tokens"), int)
+        ct = _num(p.get("completion_tokens"), int)
+        cc = _num(p.get("cost_cents"), int)
+        paid["total_prompt_tokens"] += pt
+        paid["total_completion_tokens"] += ct
+        paid["total_cost_cents"] += cc
+        prov = str(p.get("provider") or "unknown")
+        bp = paid["by_provider"].setdefault(prov, {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_cents": 0,
+        })
+        bp["calls"] += 1
+        bp["prompt_tokens"] += pt
+        bp["completion_tokens"] += ct
+        bp["cost_cents"] += cc
+        if paid["most_recent"] is None:
+            paid["most_recent"] = {"ts": str(row["ts"]), **p}
     return {
         "window_size": len(rows),
         "malformed_skipped": malformed_skipped,
@@ -306,6 +347,7 @@ async def learning_summary(limit: int = 200):
         "primary_pcna_now": primary,
         "primary_pcna_error": primary_error,
         "most_recent_merge": most_recent,
+        "paid_explainer": paid,
     }
 
 

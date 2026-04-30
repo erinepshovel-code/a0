@@ -135,6 +135,19 @@ a0p is a research instrument, not a product. It is supported entirely by donatio
 
 The single productized service is the **EDCMbone transcript explainer** — a one-off paid analysis priced against the operator's $1,000/hr benchmark. Donations and the explainer are the only two ways money enters the project. There is no recurring subscription tier.
 
+### Explainer pricing (LOCKED, Task #111)
+
+- 3 free explanations per user, lifetime (seeded on first read of `/api/v1/transcripts/explainer/credits`).
+- $50 = pack of 3 explanations (~$16.67 each, ~1 minute of operator time per shot).
+- Decrement order: free first, then paid.
+- Stripe Checkout (embedded) created via `POST /api/v1/billing/explainer-checkout`; `checkout.session.completed` webhook (product_key=`explainer_pack`) calls `storage.add_explanation_credits(uid, packs)`. Amount is re-derived from `amount_total` to defeat metadata tampering.
+- `charge.refunded` webhook reverses paid credits (rounded down by $50 increments).
+- One explanation per report (UNIQUE on `transcript_explanations.report_id` + FK CASCADE on report delete) — refresh on the report page returns the cached row, no re-billing.
+- Model: `openai-5.5` (gpt-5.5) via `call_energy_provider`. Strict-JSON output (body + citations); parse failure refunds the credit and surfaces the error.
+- **Citation integrity**: every quoted span is verified to actually appear in the transcript (whitespace/case-normalized substring match). Fabricated quotes are dropped; if none survive, the call is rejected and the credit refunded.
+- Observability: each call emits an `agent_logs.event = 'explainer_call'` row that `/api/v1/agents/learning_summary` rolls up into a separate `paid_explainer` section (kept out of `cum.merges` so the sub-agent merge counter stays honest).
+- Frontend: `client/src/components/ExplainerCard.tsx`, mounted in `client/src/pages/transcripts.tsx` under the report stat grid.
+
 The previous Free / Seeker / Operator / Patron / Founder pricing language has been retired; it never matched what the code actually enforced. The runtime tiers that still exist are operational only:
 
 - `free` — default tier for any signed-in user; full read access to the console.

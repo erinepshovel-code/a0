@@ -19,6 +19,7 @@ import {
   Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ExplainerCard } from "@/components/ExplainerCard";
 
 type QuotaState = {
   unlimited: boolean;
@@ -546,6 +547,8 @@ export default function TranscriptsPage() {
                 hint={report.peak_metric_name ?? undefined}
               />
             </Card>
+
+            <ExplainerCard reportId={report.id} />
 
             {/* Sparklines */}
             {messages.length > 1 && (

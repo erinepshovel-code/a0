@@ -267,4 +267,98 @@ async def get_report_messages(request: Request, report_id: int, limit: int = 200
         raise HTTPException(status_code=404, detail="report not found")
     msgs = await storage.get_transcript_messages(report_id, user_id=uid, limit=limit, offset=offset)
     return {"items": msgs, "report_id": report_id, "limit": limit, "offset": offset}
+
+
+# --- EDCMbone explainer ---
+
+@router.get("/explainer/credits")
+async def get_explainer_credits(request: Request):
+    """Return the caller's explainer credit balance (free + paid + lifetime).
+
+    Seeds the row with 3 free on first read — this is also where the trial
+    grant becomes visible to the UI before the user ever clicks Explain.
+    """
+    uid = _require_uid(request)
+    row = await storage.get_or_seed_explanation_credits(uid)
+    return {
+        "free_remaining": int(row.get("free_remaining", 0)),
+        "paid_remaining": int(row.get("paid_remaining", 0)),
+        "lifetime_purchased": int(row.get("lifetime_purchased", 0)),
+        "total_remaining": int(row.get("free_remaining", 0)) + int(row.get("paid_remaining", 0)),
+        "pack_price_cents": 5000,
+        "pack_size": 3,
+    }
+
+
+@router.get("/reports/{report_id}/explanation")
+async def get_report_explanation(request: Request, report_id: int):
+    """Owner-only fetch of the cached explanation, if any. Returns 404
+    when no explanation has been generated yet — distinct from the 200
+    + cached:true response from POST /explain so the UI can render an
+    empty-state without first paying a credit."""
+    uid = _require_uid(request)
+    # Confirm ownership of the report first so a non-owner can't probe
+    # for the existence of someone else's explanation.
+    parent = await storage.get_transcript_report(report_id, user_id=uid)
+    if not parent:
+        raise HTTPException(status_code=404, detail="report not found")
+    row = await storage.get_transcript_explanation(report_id, user_id=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="no explanation yet")
+    return row
+
+
+@router.post("/reports/{report_id}/explain")
+async def explain_report_endpoint(request: Request, report_id: int):
+    """Generate (or fetch the cached) EDCMbone explanation.
+
+    Owner-only. Decrements one credit (free first, then paid) on first
+    generation; subsequent calls are cached and free. 402 when no credits
+    remain — the response body carries a checkout-link payload so the UI
+    can open the embedded Stripe checkout for the $50 pack.
+    """
+    uid = _require_uid(request)
+    # Ownership check before billing.
+    parent = await storage.get_transcript_report(report_id, user_id=uid)
+    if not parent:
+        raise HTTPException(status_code=404, detail="report not found")
+
+    from ..services.edcmbone_explainer import (
+        explain_report, InsufficientCredits, PromptTooLarge,
+    )
+    try:
+        return await explain_report(report_id=report_id, user_id=uid)
+    except InsufficientCredits as exc:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "no_explainer_credits",
+                "message": (
+                    "You're out of explanation credits. A $50 pack adds 3 "
+                    "explanations (~1 minute of Erin's time per shot)."
+                ),
+                "credits": exc.credits,
+                "checkout_url": "/api/v1/billing/explainer-checkout",
+                "pack_price_cents": 5000,
+                "pack_size": 3,
+            },
+        )
+    except PromptTooLarge as exc:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "code": "prompt_too_large",
+                "message": str(exc),
+            },
+        )
+    except PermissionError:
+        # Defense-in-depth — should be unreachable since we owner-checked above.
+        raise HTTPException(status_code=404, detail="report not found")
+    except Exception as exc:
+        # Real failure — credit already refunded inside explain_report.
+        # Surface the error class+message so the UI shows something useful.
+        raise HTTPException(
+            status_code=502,
+            detail=f"explainer failed: {type(exc).__name__}: {exc}",
+        )
 # 202:22

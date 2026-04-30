@@ -68,6 +68,8 @@ OWNER_OR_PUBLIC_WRITES: list[AllowEntry] = [
     AllowEntry("focus.py", "POST", "/conversations/{conv_id}/focus", "Owner-of-conv check via _assert_conv_owner"),
     AllowEntry("focus.py", "POST", "/subagent", "Caller spawns sub-agent for their own conv; ownership checked via _assert_conv_owner"),
     AllowEntry("transcripts.py", "POST", "/upload", "Caller uploads to their own quota; uid from header + quota check"),
+    AllowEntry("transcripts.py", "POST", "/reports/{report_id}/explain", "Owner-only EDCMbone explainer; ownership checked via get_transcript_report join, billed against caller's own credits"),
+    AllowEntry("billing.py", "POST", "/explainer-checkout", "Caller buys their own explainer pack; uid from header"),
     AllowEntry("openai_api.py", "POST", "/hmmm", "Per-user uncertainty signal recorded against caller uid"),
     AllowEntry("billing.py", "POST", "/portal", "Caller opens their own Stripe customer portal"),
     AllowEntry("forge.py", "POST", "/duel", "Stub returning 501 — caller-initiated; no shared state"),

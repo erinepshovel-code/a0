@@ -38,6 +38,7 @@ _FLUSHER_TASK: Optional[asyncio.Task] = None
 _VALID_EVENTS = {
     "spawn_start", "spawn_complete", "tool_call", "tool_result",
     "merge", "cap_hit", "provider_response", "error", "custom",
+    "explainer_call",
 }
 
 
