@@ -53,11 +53,17 @@ async def _quota_state(uid: str) -> dict:
     Returns a dict shaped like:
       {
         "unlimited": bool,
-        "reason": "tier" | "donation" | "free",
+        "reason": "tier" | "grandfathered" | "free",
         "tier": str,
         "used_this_month": int,
         "limit": int | None,   # None when unlimited
       }
+
+    Note on `transcripts_unlocked`: legacy column from the old "donate to
+    unlock" paywall. Donations no longer flip this bit (see Task #110:
+    research-instrument reframe). Existing users with the bit already set
+    keep their unlimited access — labeled "grandfathered" — but no new
+    user can acquire it via donation.
     """
     async with engine.connect() as conn:
         row = await conn.execute(
@@ -78,8 +84,9 @@ async def _quota_state(uid: str) -> dict:
             "used_this_month": 0, "limit": None,
         }
     if unlocked:
+        # Grandfathered from the retired paywall; preserved as-is.
         return {
-            "unlimited": True, "reason": "donation", "tier": tier,
+            "unlimited": True, "reason": "grandfathered", "tier": tier,
             "used_this_month": 0, "limit": None,
         }
 
@@ -119,19 +126,21 @@ async def _user_upload_lock(uid: str):
 
 
 def _quota_blocked_payload(state: dict) -> dict:
-    """Shape the JSON body returned with a 402 when the user is over quota."""
+    """Shape the JSON body returned with a 402 when the user is over quota.
+
+    Donations do not unlock anything — the limit is a capacity constraint
+    on the instrument's processing, not a paywall. The body explains the
+    limit honestly and points the user at the donation page only as a way
+    to support the instrument, not as a bypass.
+    """
     return {
         "error": "quota_exceeded",
         "detail": (
-            f"Free tier limit reached: {state['used_this_month']} of "
-            f"{state['limit']} upload(s) this month. Donate or subscribe "
-            "to unlock unlimited uploads."
+            f"Monthly upload capacity reached: {state['used_this_month']} of "
+            f"{state['limit']} this month. The limit will reset at the start "
+            "of next month."
         ),
         "quota": state,
-        "unlock_options": {
-            "donate": "/api/v1/billing/donate",
-            "subscribe": "/pricing",
-        },
     }
 
 

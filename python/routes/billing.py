@@ -1,6 +1,5 @@
 # 371:80
 import os
-import math
 import stripe
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -11,13 +10,14 @@ from ..services.stripe_service import STRIPE_SECRET_KEY
 from .billing_helpers import is_supporter_subscription
 
 # DOC module: billing
-# DOC label: Billing
-# DOC description: Stripe-backed billing. Free tier always on. Supporter tier uses user-chosen weekly donation billed weekly, monthly, quarterly, bi-annually, or annually. ws tier auto-assigned to @interdependentway.org accounts.
+# DOC label: Funding
+# DOC description: a0p is a research instrument funded by donations. Free tier is the only tier ordinary users see; the legacy Supporter recurring tier is retired (existing subscribers grandfathered). ws tier auto-assigned to @interdependentway.org accounts.
 # DOC tier: free
 # DOC endpoint: GET /api/v1/billing/status | Get current user billing status and tier
-# DOC endpoint: GET /api/v1/billing/plans | List available tiers and intervals
-# DOC endpoint: POST /api/v1/billing/checkout | Create embedded Stripe checkout session for supporter tier
-# DOC endpoint: POST /api/v1/billing/portal | Open Stripe customer portal for subscribers
+# DOC endpoint: GET /api/v1/billing/plans | List available tiers (free + donation only)
+# DOC endpoint: GET /api/v1/billing/funding-statement | Return the verbatim donation legal/tax copy
+# DOC endpoint: POST /api/v1/billing/donate | Create one-off Stripe checkout session for a donation
+# DOC endpoint: POST /api/v1/billing/portal | Open Stripe customer portal (legacy supporter management only)
 # DOC endpoint: POST /api/v1/billing/webhook | Stripe webhook receiver
 # DOC endpoint: PATCH /api/v1/billing/admin/users/tier | (admin) Set a user tier directly
 
@@ -43,7 +43,8 @@ DATA_SCHEMA = {
     "endpoints": [
         {"method": "GET", "path": "/api/v1/billing/status"},
         {"method": "GET", "path": "/api/v1/billing/plans"},
-        {"method": "POST", "path": "/api/v1/billing/checkout"},
+        {"method": "GET", "path": "/api/v1/billing/funding-statement"},
+        {"method": "POST", "path": "/api/v1/billing/donate"},
         {"method": "POST", "path": "/api/v1/billing/portal"},
         {"method": "POST", "path": "/api/v1/billing/webhook"},
     ],
@@ -51,34 +52,25 @@ DATA_SCHEMA = {
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
-# Interval config — weeks_per_period defines the effective weekly rate for the period.
-# Longer commitments charge fewer effective weeks per month (discount).
-INTERVAL_CONFIG: dict[str, dict] = {
-    "week":     {"stripe_interval": "week",  "interval_count": 1, "weeks_per_period": 1.0},
-    "month":    {"stripe_interval": "month", "interval_count": 1, "weeks_per_period": 4.0},
-    "quarter":  {"stripe_interval": "month", "interval_count": 3, "weeks_per_period": 11.25},
-    "biannual": {"stripe_interval": "month", "interval_count": 6, "weeks_per_period": 21.0},
-    "annual":   {"stripe_interval": "year",  "interval_count": 1, "weeks_per_period": 39.0},
-}
+# Verbatim funding statement — owner-authored legal/tax copy. DO NOT paraphrase.
+# This block is the source of truth surfaced by GET /funding-statement and embedded
+# in replit.md and README.md. If the owner edits the wording, edit it here.
+FUNDING_STATEMENT = (
+    "I don't have the cash required for 501c3 status, so I have to report it for "
+    "taxes, but every tax payer is allowed to claim up to five hundred dollars in "
+    "charitable donations per year without receipts required."
+)
 
-INTERVAL_LABELS: dict[str, str] = {
-    "week":     "Weekly",
-    "month":    "Monthly",
-    "quarter":  "Quarterly",
-    "biannual": "Bi-annually",
-    "annual":   "Annually",
-}
-
-_DEFAULT_RETURN_PATH = "/pricing?billing=success"
-_DONATION_RETURN_PATH = "/transcripts?donation=success"
+_DONATION_RETURN_PATH = "/pricing?donation=success"
 _WS_DOMAIN = "interdependentway.org"
 _ALLOWED_USER_COLS = {
     "stripe_customer_id", "stripe_subscription_id", "subscription_tier",
     "subscription_status", "transcripts_unlocked",
 }
 
+# `supporter` is grandfathered — existing rows remain valid, but no path creates new ones.
 VALID_TIERS = ("free", "supporter", "ws", "admin")
-DONATION_MIN_CENTS = 500  # $5.00 minimum one-off donation that unlocks transcripts
+DONATION_MIN_CENTS = 500  # $5.00 minimum donation amount
 
 
 def _user_id(request: Request) -> Optional[str]:
@@ -175,43 +167,39 @@ async def get_billing_config():
     pk = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
     return {
         "stripe_publishable_key": pk,
-        "intervals": [
-            {
-                "interval_key": key,
-                "label": INTERVAL_LABELS[key],
-                "weeks_per_period": cfg["weeks_per_period"],
-            }
-            for key, cfg in INTERVAL_CONFIG.items()
-        ],
+        "donation_min_cents": DONATION_MIN_CENTS,
     }
 
 
 @router.get("/plans")
 async def list_plans():
-    intervals = [
-        {
-            "interval_key": key,
-            "label": INTERVAL_LABELS[key],
-            "weeks_per_period": cfg["weeks_per_period"],
-        }
-        for key, cfg in INTERVAL_CONFIG.items()
-    ]
+    """Return the (small) catalog: free tier + donation. The legacy Supporter
+    recurring tier is retired — existing subscribers manage via /portal."""
     return {
         "tiers": [
             {
                 "name": "Free",
                 "product_key": "free",
                 "amount": 0,
-                "description": "Full console access — every tab unlocked",
+                "description": "Full console access — every tab unlocked. This is the only tier ordinary users see.",
             },
-            {
-                "name": "Supporter",
-                "product_key": "supporter",
-                "description": "Choose your own weekly contribution. Cancel anytime.",
-                "intervals": intervals,
-            },
-        ]
+        ],
+        "donation": {
+            "min_cents": DONATION_MIN_CENTS,
+            "description": "One-off donation in any amount you choose. Donations fund the research instrument; they do not unlock features.",
+        },
     }
+
+
+@router.get("/funding-statement")
+async def funding_statement():
+    """Return the verbatim, owner-authored donation legal/tax copy.
+
+    This is the source of truth for the wording surfaced on /pricing and in
+    the public README. It is intentionally a server endpoint (not hardcoded
+    in the client) so future edits to the wording happen in exactly one place.
+    """
+    return {"statement": FUNDING_STATEMENT}
 
 
 class SetTierBody(BaseModel):
@@ -241,77 +229,6 @@ async def set_user_tier(body: SetTierBody, request: Request):
     return {"ok": True, "user_id": updated["id"], "email": updated["email"], "tier": updated["subscription_tier"]}
 
 
-class CheckoutBody(BaseModel):
-    weekly_amount_cents: int
-    interval: str
-    return_url: Optional[str] = None
-
-
-@router.post("/checkout")
-async def create_checkout(body: CheckoutBody, request: Request):
-    uid = _user_id(request)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    if not STRIPE_SECRET_KEY:
-        raise HTTPException(status_code=503, detail="Stripe not configured")
-    if body.interval not in INTERVAL_CONFIG:
-        raise HTTPException(status_code=400, detail=f"Invalid interval. Valid: {list(INTERVAL_CONFIG)}")
-    if body.weekly_amount_cents < 100:
-        raise HTTPException(status_code=400, detail="Minimum weekly amount is $1.00")
-
-    cfg = INTERVAL_CONFIG[body.interval]
-    total_cents = math.ceil(body.weekly_amount_cents * cfg["weeks_per_period"])
-
-    stripe.api_key = STRIPE_SECRET_KEY
-    origin = request.headers.get("origin") or "https://a0p.replit.app"
-    return_url = body.return_url or f"{origin}{_DEFAULT_RETURN_PATH}"
-
-    async with engine.connect() as conn:
-        row = await conn.execute(
-            text("SELECT email, stripe_customer_id FROM users WHERE id = :id"), {"id": uid}
-        )
-        rec = row.mappings().first()
-
-    customer_id = rec["stripe_customer_id"] if rec else None
-    user_email = rec["email"] if rec else None
-
-    session_kwargs: dict = {
-        "ui_mode": "embedded",
-        "return_url": return_url,
-        "mode": "subscription",
-        "line_items": [
-            {
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {
-                        "name": "a0p Supporter",
-                        "description": f"{INTERVAL_LABELS[body.interval]} supporter subscription",
-                    },
-                    "unit_amount": total_cents,
-                    "recurring": {
-                        "interval": cfg["stripe_interval"],
-                        "interval_count": cfg["interval_count"],
-                    },
-                },
-                "quantity": 1,
-            }
-        ],
-        "metadata": {
-            "user_id": uid,
-            "product_key": "supporter",
-            "interval": body.interval,
-            "weekly_amount_cents": str(body.weekly_amount_cents),
-        },
-    }
-    if customer_id:
-        session_kwargs["customer"] = customer_id
-    elif user_email:
-        session_kwargs["customer_email"] = user_email
-
-    session = stripe.checkout.Session.create(**session_kwargs)
-    return {"client_secret": session.client_secret}
-
-
 class DonateBody(BaseModel):
     amount_cents: int
     return_url: Optional[str] = None
@@ -319,15 +236,15 @@ class DonateBody(BaseModel):
 
 @router.post("/donate")
 async def create_donation(body: DonateBody, request: Request):
-    """One-off donation that unlocks unlimited transcript uploads.
+    """One-off donation to fund the research instrument.
 
-    Subscribers (supporter/ws/admin) already have unlimited uploads via tier;
-    this endpoint exists for free-tier users who want to unlock without
-    committing to a recurring subscription.
+    Donations do NOT unlock features — every tab is already free for everyone.
+    The only thing donations buy is the continued existence of the instrument.
+    Therefore: anonymous donors are accepted. The whole point of the reframe
+    is that anyone, logged in or not, can support the instrument.
+
+    Tax handling for donors is described verbatim by GET /funding-statement.
     """
-    uid = _user_id(request)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=503, detail="Stripe not configured")
     if body.amount_cents < DONATION_MIN_CENTS:
@@ -336,22 +253,27 @@ async def create_donation(body: DonateBody, request: Request):
             detail=f"Minimum donation is ${DONATION_MIN_CENTS / 100:.2f}",
         )
 
+    uid = _user_id(request)  # may be None — anonymous donations are allowed.
+
     stripe.api_key = STRIPE_SECRET_KEY
     origin = request.headers.get("origin") or "https://a0p.replit.app"
     return_url = body.return_url or f"{origin}{_DONATION_RETURN_PATH}"
 
-    async with engine.connect() as conn:
-        row = await conn.execute(
-            text("SELECT email, stripe_customer_id FROM users WHERE id = :id"),
-            {"id": uid},
-        )
-        rec = row.mappings().first()
-
-    customer_id = rec["stripe_customer_id"] if rec else None
-    user_email = rec["email"] if rec else None
+    customer_id: str | None = None
+    user_email: str | None = None
+    if uid:
+        async with engine.connect() as conn:
+            row = await conn.execute(
+                text("SELECT email, stripe_customer_id FROM users WHERE id = :id"),
+                {"id": uid},
+            )
+            rec = row.mappings().first()
+        if rec:
+            customer_id = rec["stripe_customer_id"]
+            user_email = rec["email"]
 
     session_kwargs: dict = {
-        "ui_mode": "embedded",
+        "ui_mode": "embedded_page",
         "return_url": return_url,
         "mode": "payment",
         "line_items": [
@@ -359,8 +281,8 @@ async def create_donation(body: DonateBody, request: Request):
                 "price_data": {
                     "currency": "usd",
                     "product_data": {
-                        "name": "a0p Transcript Unlock",
-                        "description": "One-off donation — unlocks unlimited transcript uploads.",
+                        "name": "a0p — Donation",
+                        "description": "Donation to fund the a0p research instrument. Does not unlock features (everything is already free).",
                     },
                     "unit_amount": body.amount_cents,
                 },
@@ -368,7 +290,9 @@ async def create_donation(body: DonateBody, request: Request):
             }
         ],
         "metadata": {
-            "user_id": uid,
+            # `user_id` is "anonymous" for un-logged-in donors so the webhook
+            # handler can short-circuit before trying to update a user row.
+            "user_id": uid or "anonymous",
             "product_key": "donation",
             "amount_cents": str(body.amount_cents),
         },
@@ -572,12 +496,23 @@ async def _dispatch_webhook(event: dict) -> None:
 
 
 async def _handle_checkout_completed(sess: dict) -> None:
+    """Persist Stripe identifiers from a completed checkout.
+
+    Doctrine post-reframe: donations DO NOT side-effect anything except
+    storing the customer_id (so the user can manage refunds via the
+    portal). They no longer flip transcripts_unlocked or any tier.
+    The legacy 'supporter' product_key branch is kept ONLY to honor
+    in-flight subscriptions started before the reframe — no new path
+    creates supporter checkouts.
+    """
     uid = sess.get("metadata", {}).get("user_id")
     product_key = sess.get("metadata", {}).get("product_key", "")
     customer_id = sess.get("customer")
     subscription_id = sess.get("subscription")
 
-    if not uid:
+    # Anonymous donors carry uid == "anonymous" (set in /donate). There is no
+    # user row to update — accept the donation in Stripe, no DB side effect.
+    if not uid or uid == "anonymous":
         return
 
     updates: dict = {}
@@ -586,12 +521,12 @@ async def _handle_checkout_completed(sess: dict) -> None:
     if subscription_id:
         updates["stripe_subscription_id"] = subscription_id
     if product_key == "supporter":
+        # Grandfathered: only fires for in-flight subscriptions that
+        # predate the reframe. New checkouts never carry this key.
         updates["subscription_tier"] = "supporter"
         updates["subscription_status"] = "active"
-    elif product_key == "donation":
-        # One-off donation grants permanent transcript-uploads unlock without
-        # changing tier (subscriber state stays tier-driven).
-        updates["transcripts_unlocked"] = True
+    # product_key == "donation" intentionally has no side effect — donations
+    # fund the instrument; they do not unlock features.
 
     if updates:
         safe = {k: v for k, v in updates.items() if k in _ALLOWED_USER_COLS}
@@ -603,6 +538,7 @@ async def _handle_checkout_completed(sess: dict) -> None:
 
 
 async def _handle_subscription_updated(sub: dict) -> None:
+    """Maintain status on grandfathered Supporter subscriptions only."""
     customer_id = sub.get("customer")
     status = sub.get("status", "active")
     if not customer_id:

@@ -10,8 +10,9 @@
 # DOC endpoint: DELETE /api/v1/sigma/content-watch | Remove a file from the content-watch list
 # DOC endpoint: PATCH /api/v1/sigma/intervals | Update structural/content poll intervals
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from ..services.gating import require_admin
 
 router = APIRouter(prefix="/api/v1", tags=["sigma"])
 
@@ -72,7 +73,8 @@ async def sigma_state():
 
 
 @router.patch("/sigma/resolution")
-async def sigma_resolution(req: ResolutionRequest):
+async def sigma_resolution(req: ResolutionRequest, request: Request):
+    require_admin(request)
     if req.resolution < 1 or req.resolution > 5:
         raise HTTPException(status_code=400, detail="resolution must be 1–5")
     _sigma().set_resolution(req.resolution)
@@ -80,13 +82,15 @@ async def sigma_resolution(req: ResolutionRequest):
 
 
 @router.post("/sigma/rescan")
-async def sigma_rescan():
+async def sigma_rescan(request: Request):
+    require_admin(request)
     _sigma().rescan()
     return _sigma().state()
 
 
 @router.post("/sigma/content-watch")
-async def sigma_add_watch(req: WatchRequest):
+async def sigma_add_watch(req: WatchRequest, request: Request):
+    require_admin(request)
     if not req.path.strip():
         raise HTTPException(status_code=400, detail="path is required")
     _sigma().add_content_watch(req.path.strip())
@@ -94,7 +98,8 @@ async def sigma_add_watch(req: WatchRequest):
 
 
 @router.delete("/sigma/content-watch")
-async def sigma_remove_watch(req: WatchRequest):
+async def sigma_remove_watch(req: WatchRequest, request: Request):
+    require_admin(request)
     if not req.path.strip():
         raise HTTPException(status_code=400, detail="path is required")
     _sigma().remove_content_watch(req.path.strip())
@@ -102,7 +107,8 @@ async def sigma_remove_watch(req: WatchRequest):
 
 
 @router.patch("/sigma/intervals")
-async def sigma_intervals(req: IntervalsRequest):
+async def sigma_intervals(req: IntervalsRequest, request: Request):
+    require_admin(request)
     sig = _sigma()
     if req.structural_interval is not None:
         if req.structural_interval < 1:

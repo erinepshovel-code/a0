@@ -1,14 +1,10 @@
 // 736:5
-import { useState, useRef, useMemo, Fragment, useCallback } from "react";
+import { useState, useRef, useMemo, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
-import { loadStripe } from "@stripe/stripe-js";
-import { EmbeddedCheckout, EmbeddedCheckoutProvider } from "@stripe/react-stripe-js";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   Loader2,
@@ -20,7 +16,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  Heart,
   Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -31,10 +26,6 @@ type QuotaState = {
   tier: string;
   used_this_month: number;
   limit: number | null;
-};
-
-type BillingConfig = {
-  stripe_publishable_key: string;
 };
 
 type UploadRow = {
@@ -170,62 +161,16 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 
 export default function TranscriptsPage() {
   const { toast } = useToast();
-  const [, navigate] = useLocation();
   const fileRef = useRef<HTMLInputElement>(null);
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
 
-  // Donation flow state — opens an embedded Stripe checkout on quota lockout
-  // or when the user clicks the explicit "Donate to unlock" button.
-  const [donateOpen, setDonateOpen] = useState(false);
-  const [donateClientSecret, setDonateClientSecret] = useState<string | null>(null);
-  const [stripePromise, setStripePromise] = useState<ReturnType<typeof loadStripe> | null>(null);
-  const [donateAmount, setDonateAmount] = useState("5");
-
-  const { data: quota, refetch: refetchQuota } = useQuery<QuotaState>({
+  // a0p is a research instrument — donations don't unlock additional uploads.
+  // The free monthly cap is a compute-cost guardrail, not a paywall, and
+  // resets on the 1st of each calendar month.
+  const { data: quota } = useQuery<QuotaState>({
     queryKey: ["/api/v1/transcripts/quota"],
-    refetchInterval: (query) => {
-      const q = query.state.data as QuotaState | undefined;
-      // While a donation flow is open, poll faster so unlock reflects on return.
-      return donateOpen && q?.unlimited === false ? 3000 : false;
-    },
   });
-
-  const { data: billingConfig } = useQuery<BillingConfig>({
-    queryKey: ["/api/v1/billing/config"],
-    staleTime: Infinity,
-  });
-
-  const openDonate = useCallback(async () => {
-    try {
-      const cents = Math.max(500, Math.round(parseFloat(donateAmount || "5") * 100));
-      if (!billingConfig?.stripe_publishable_key) {
-        throw new Error("Stripe is not configured on this server.");
-      }
-      const r = await apiRequest("POST", "/api/v1/billing/donate", {
-        amount_cents: cents,
-        return_url: `${window.location.origin}/transcripts?donation=success`,
-      });
-      const j = await r.json() as { client_secret: string };
-      setStripePromise(loadStripe(billingConfig.stripe_publishable_key));
-      setDonateClientSecret(j.client_secret);
-      setDonateOpen(true);
-    } catch (err) {
-      toast({
-        title: "Donation failed",
-        description: (err as Error).message,
-        variant: "destructive",
-      });
-    }
-  }, [donateAmount, billingConfig, toast]);
-
-  const closeDonate = useCallback(() => {
-    setDonateOpen(false);
-    setDonateClientSecret(null);
-    setStripePromise(null);
-    refetchQuota();
-    queryClient.invalidateQueries({ queryKey: ["/api/v1/billing/status"] });
-  }, [refetchQuota]);
 
   const { data: uploadsData, isLoading: uploadsLoading } = useQuery<{ items: UploadRow[] }>({
     queryKey: ["/api/v1/transcripts/uploads"],
@@ -322,8 +267,8 @@ export default function TranscriptsPage() {
     },
     onError: (err: any) => {
       if (err?.code === "quota_exceeded") {
-        // Don't toast — the quota panel renders the unlock CTA inline.
-        refetchQuota();
+        // Don't toast — the quota panel renders the inline message.
+        queryClient.invalidateQueries({ queryKey: ["/api/v1/transcripts/quota"] });
         return;
       }
       toast({ title: "Upload failed", description: err.message, variant: "destructive" });
@@ -423,26 +368,15 @@ export default function TranscriptsPage() {
                       </div>
                     )}
                     {blocked && (
-                      <div className="space-y-1.5 pt-1">
-                        <Button
-                          size="sm"
-                          variant="default"
-                          className="w-full h-7 text-[11px]"
-                          onClick={openDonate}
-                          data-testid="button-donate-unlock"
-                        >
-                          <Heart className="w-3 h-3 mr-1" />
-                          Donate $5 to unlock
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full h-7 text-[11px]"
-                          onClick={() => navigate("/pricing")}
-                          data-testid="button-subscribe-monthly"
-                        >
-                          Or subscribe monthly
-                        </Button>
+                      <div
+                        className="space-y-1.5 pt-1 text-[10px] text-muted-foreground leading-snug"
+                        data-testid="text-quota-exhausted"
+                      >
+                        <p>
+                          Free monthly cap reached. Resets on the 1st. a0p is a
+                          research instrument — donations fund it but do not
+                          unlock additional uploads.
+                        </p>
                       </div>
                     )}
                   </div>
@@ -910,36 +844,6 @@ export default function TranscriptsPage() {
           </div>
         )}
       </main>
-
-      <Dialog
-        open={donateOpen}
-        onOpenChange={(open) => {
-          if (!open) closeDonate();
-        }}
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Heart className="w-4 h-4 text-rose-400" />
-              Donate to unlock unlimited transcript uploads
-            </DialogTitle>
-          </DialogHeader>
-          {donateClientSecret && stripePromise ? (
-            <div data-testid="container-donate-checkout">
-              <EmbeddedCheckoutProvider
-                stripe={stripePromise}
-                options={{ clientSecret: donateClientSecret }}
-              >
-                <EmbeddedCheckout />
-              </EmbeddedCheckoutProvider>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center py-8 text-muted-foreground">
-              <Loader2 className="w-5 h-5 animate-spin" />
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

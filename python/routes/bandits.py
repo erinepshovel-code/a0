@@ -1,9 +1,10 @@
 # 91:10
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
 from ..storage import storage
+from ..services.gating import require_admin
 
 # DOC module: bandits
 # DOC label: Bandits
@@ -93,7 +94,8 @@ async def list_arms(domain: Optional[str] = None):
 
 
 @router.post("/bandits/arms")
-async def upsert_arm(body: UpsertArm):
+async def upsert_arm(body: UpsertArm, request: Request):
+    require_admin(request)
     return await storage.upsert_bandit_arm(body.model_dump())
 
 
@@ -106,7 +108,8 @@ async def get_arm(arm_id: int):
 
 
 @router.patch("/bandits/arms/{arm_id}")
-async def update_arm(arm_id: int, body: UpdateArm):
+async def update_arm(arm_id: int, body: UpdateArm, request: Request):
+    require_admin(request)
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="no updates provided")
@@ -115,7 +118,8 @@ async def update_arm(arm_id: int, body: UpdateArm):
 
 
 @router.post("/bandits/arms/reset")
-async def reset_domain(body: ResetDomain):
+async def reset_domain(body: ResetDomain, request: Request):
+    require_admin(request)
     await storage.reset_bandit_domain(body.domain)
     return {"ok": True, "domain": body.domain}
 

@@ -1,11 +1,12 @@
 # 299:10
 import math
 import random
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, Any, List
 
 from ..storage import storage
+from ..services.gating import require_admin
 
 # DOC module: memory
 # DOC label: Memory
@@ -192,14 +193,16 @@ async def get_seed(seed_index: int):
 
 
 @router.put("/memory/seeds/{seed_index}")
-async def upsert_seed(seed_index: int, body: UpsertSeed):
+async def upsert_seed(seed_index: int, body: UpsertSeed, request: Request):
+    require_admin(request)
     data = body.model_dump()
     data["seed_index"] = seed_index
     return await storage.upsert_memory_seed(data)
 
 
 @router.patch("/memory/seeds/{seed_index}")
-async def patch_seed(seed_index: int, body: PatchSeed):
+async def patch_seed(seed_index: int, body: PatchSeed, request: Request):
+    require_admin(request)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -211,7 +214,8 @@ async def patch_seed(seed_index: int, body: PatchSeed):
 
 
 @router.post("/memory/seeds/{seed_index}/clear")
-async def clear_seed(seed_index: int):
+async def clear_seed(seed_index: int, request: Request):
+    require_admin(request)
     seed = await storage.get_memory_seed(seed_index)
     if not seed:
         raise HTTPException(status_code=404, detail="seed not found")
@@ -228,7 +232,8 @@ async def clear_seed(seed_index: int):
 
 
 @router.post("/memory/seeds/{seed_index}/import")
-async def import_seed_text(seed_index: int, body: ImportSeedText):
+async def import_seed_text(seed_index: int, body: ImportSeedText, request: Request):
+    require_admin(request)
     seed = await storage.get_memory_seed(seed_index)
     if not seed:
         raise HTTPException(status_code=404, detail="seed not found")
@@ -254,7 +259,8 @@ async def list_snapshots(limit: int = 20):
 
 
 @router.post("/memory/snapshots")
-async def create_snapshot():
+async def create_snapshot(request: Request):
+    require_admin(request)
     seeds = await storage.get_memory_seeds()
     proj = await storage.get_memory_projection()
     snap = {
@@ -317,7 +323,8 @@ async def export_memory():
 
 
 @router.post("/memory/import")
-async def import_memory(body: ImportMemory):
+async def import_memory(body: ImportMemory, request: Request):
+    require_admin(request)
     imported = 0
     for seed_data in body.seeds:
         idx = seed_data.get("seed_index")

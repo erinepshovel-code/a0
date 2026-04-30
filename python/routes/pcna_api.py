@@ -1,6 +1,7 @@
 # 277:11
 import time
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from ..services.gating import require_admin
 from pydantic import BaseModel
 
 # DOC module: pcna
@@ -139,14 +140,16 @@ async def pcna_state():
 
 
 @router.post("/pcna/infer")
-async def pcna_infer(req: InferRequest):
+async def pcna_infer(req: InferRequest, request: Request):
+    require_admin(request)
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="text is required")
     return _get_pcna().infer(req.text)
 
 
 @router.post("/pcna/reward")
-async def pcna_reward(req: RewardRequest):
+async def pcna_reward(req: RewardRequest, request: Request):
+    require_admin(request)
     if req.outcome < -1.0 or req.outcome > 1.0:
         raise HTTPException(status_code=400, detail="outcome must be in [-1, 1]")
     return _get_pcna().reward(req.winner, req.outcome)
@@ -163,13 +166,15 @@ async def phi_audit():
 
 
 @router.post("/pcna/phi/propagate")
-async def phi_propagate(req: PropagateRequest):
+async def phi_propagate(req: PropagateRequest, request: Request):
+    require_admin(request)
     _get_pcna().phi.propagate(steps=req.steps)
     return _get_pcna().phi.state()
 
 
 @router.post("/pcna/phi/nudge")
-async def phi_nudge(req: NudgeRequest):
+async def phi_nudge(req: NudgeRequest, request: Request):
+    require_admin(request)
     _get_pcna().phi.nudge(req.reward, lr=req.lr)
     return _get_pcna().phi.state()
 
@@ -185,13 +190,15 @@ async def psi_audit():
 
 
 @router.post("/pcna/psi/propagate")
-async def psi_propagate(req: PropagateRequest):
+async def psi_propagate(req: PropagateRequest, request: Request):
+    require_admin(request)
     _get_pcna().psi.propagate(steps=req.steps)
     return _get_pcna().psi.state()
 
 
 @router.post("/pcna/psi/nudge")
-async def psi_nudge(req: NudgeRequest):
+async def psi_nudge(req: NudgeRequest, request: Request):
+    require_admin(request)
     _get_pcna().psi.nudge(req.reward, lr=req.lr)
     return _get_pcna().psi.state()
 
@@ -207,13 +214,15 @@ async def omega_audit():
 
 
 @router.post("/pcna/omega/propagate")
-async def omega_propagate(req: PropagateRequest):
+async def omega_propagate(req: PropagateRequest, request: Request):
+    require_admin(request)
     _get_pcna().omega.propagate(steps=req.steps)
     return _get_pcna().omega.state()
 
 
 @router.post("/pcna/omega/nudge")
-async def omega_nudge(req: NudgeRequest):
+async def omega_nudge(req: NudgeRequest, request: Request):
+    require_admin(request)
     _get_pcna().omega.nudge(req.reward, lr=req.lr)
     return _get_pcna().omega.state()
 
@@ -239,13 +248,15 @@ async def theta_crypto():
 
 
 @router.post("/pcna/theta/propagate")
-async def theta_propagate(req: PropagateRequest):
+async def theta_propagate(req: PropagateRequest, request: Request):
+    require_admin(request)
     _get_pcna().theta.propagate(steps=req.theta_steps)
     return _get_pcna().theta.state()
 
 
 @router.post("/pcna/theta/reward")
-async def theta_reward(req: NudgeRequest):
+async def theta_reward(req: NudgeRequest, request: Request):
+    require_admin(request)
     _get_pcna().theta.apply_reward(req.reward)
     return _get_pcna().theta.state()
 
@@ -261,7 +272,8 @@ async def memory_s_state():
 
 
 @router.post("/pcna/memory/flush")
-async def memory_flush(req: RewardRequest):
+async def memory_flush(req: RewardRequest, request: Request):
+    require_admin(request)
     pcna = _get_pcna()
     flushed = pcna.memory_s.flush_to(pcna.memory_l, req.outcome)
     return {
@@ -292,7 +304,8 @@ async def list_instances():
 
 
 @router.post("/pcna/instances/spawn")
-async def spawn_instance():
+async def spawn_instance(request: Request):
+    require_admin(request)
     from ..engine import InstanceMerge
     child, result = InstanceMerge.fork(_get_pcna())
     _get_instances()[child.theta.instance_id] = child
@@ -300,7 +313,8 @@ async def spawn_instance():
 
 
 @router.post("/pcna/instances/merge")
-async def merge_instances(req: MergeRequest):
+async def merge_instances(req: MergeRequest, request: Request):
+    require_admin(request)
     from ..engine import InstanceMerge
     primary = _get_pcna()
     instances = _get_instances()
