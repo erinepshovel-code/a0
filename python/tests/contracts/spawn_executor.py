@@ -27,6 +27,12 @@ from ...services.spawn_executor import (
     _snapshot_pcna,
     _try_get_primary_pcna,
     _retire_fork_quietly,
+    _heartbeat_loop,
+    _reap_stale_claims,
+    _maybe_schedule_retry,
+    check_no_orphan_invariant,
+    HEARTBEAT_INTERVAL_S,
+    WORKER_ID,
 )
 
 
@@ -398,3 +404,360 @@ def test_bandit_state_round_trips_through_checkpoint() -> None:
     # via `data.get("bandit_state") or {}`. Empty/missing input here:
     assert _arm_from_json({}).get("last_pulled") is None
     assert _arm_to_json({"arm_id": "x"}).get("last_pulled") is None
+
+
+# ====================================================================
+# Task #122 — sub-agent supervision hardening contracts
+# ====================================================================
+
+
+def test_registry_is_singleton() -> None:
+    """routes.agents._sub_agents MUST be the same object as
+    services.agent_lifecycle._sub_agents. Two registries means split
+    state — concurrent-live caps and the no-orphan invariant would
+    silently disagree depending on which spawn path was used."""
+    from python.services import agent_lifecycle as _life
+    from python.routes import agents as _routes
+    assert _routes._sub_agents is _life._sub_agents, (
+        "routes.agents._sub_agents drifted from agent_lifecycle._sub_agents — "
+        "the consolidation in Task #122 has been undone"
+    )
+
+
+def test_count_live_for_parent_filters() -> None:
+    """count_live_for_parent must scope its count by parent_run_id; an
+    unrelated parent must see 0 even when the registry has live entries
+    under other parents. Mutates the canonical registry directly with
+    minimal placeholder PCNA stand-ins so this test does not depend on
+    a real primary."""
+    from python.services import agent_lifecycle as _life
+    from python.engine import PCNAEngine
+
+    parent_a = f"test-cap-parent-A-{uuid.uuid4().hex[:8]}"
+    parent_b = f"test-cap-parent-B-{uuid.uuid4().hex[:8]}"
+    parent_z = f"test-cap-parent-Z-{uuid.uuid4().hex[:8]}"
+    name_a = f"test-cap-child-A-{uuid.uuid4().hex[:8]}"
+    name_b = f"test-cap-child-B-{uuid.uuid4().hex[:8]}"
+    e_a, e_b = PCNAEngine(), PCNAEngine()
+    import time as _t
+    with _life._lock:
+        _life._sub_agents[name_a] = (e_a, {
+            "name": name_a, "provider": "test",
+            "spawned_at": _t.time(),
+            "parent_id": "x", "parent_run_id": parent_a, "run_id": "r-a",
+        })
+        _life._sub_agents[name_b] = (e_b, {
+            "name": name_b, "provider": "test",
+            "spawned_at": _t.time(),
+            "parent_id": "x", "parent_run_id": parent_b, "run_id": "r-b",
+        })
+    try:
+        assert _life.count_live_for_parent(parent_a) == 1
+        assert _life.count_live_for_parent(parent_b) == 1
+        assert _life.count_live_for_parent(parent_z) == 0
+        assert _life.count_live_for_parent(None) == 0
+    finally:
+        with _life._lock:
+            _life._sub_agents.pop(name_a, None)
+            _life._sub_agents.pop(name_b, None)
+
+
+async def test_heartbeat_advances() -> None:
+    """The heartbeat task must advance last_heartbeat_at while a row is
+    'executing'. Drives _heartbeat_loop with a 0.1s interval against a
+    seeded executing row and asserts the timestamp moved."""
+    rid = f"test-hb-{uuid.uuid4()}"
+    async with get_session() as s:
+        await s.execute(
+            _sa_text(
+                "INSERT INTO agent_runs "
+                "(id, parent_run_id, root_run_id, depth, status, "
+                " orchestration_mode, cut_mode, providers, "
+                " spawned_by_tool, task_summary, last_heartbeat_at, "
+                " worker_id) "
+                "VALUES (:id, NULL, :id, 0, 'executing', 'single', 'soft', "
+                "        '[\"x\"]'::jsonb, 'sub_agent_spawn', 'hb test', "
+                "        CURRENT_TIMESTAMP - INTERVAL '5 minutes', :wid)"
+            ),
+            {"id": rid, "wid": WORKER_ID},
+        )
+    try:
+        async with get_session() as s:
+            r = await s.execute(
+                _sa_text("SELECT last_heartbeat_at FROM agent_runs WHERE id = :id"),
+                {"id": rid},
+            )
+            before = r.scalar_one()
+        task = asyncio.create_task(_heartbeat_loop(rid, interval_s=0.1))
+        await asyncio.sleep(0.35)  # ~3 ticks
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        async with get_session() as s:
+            r = await s.execute(
+                _sa_text("SELECT last_heartbeat_at FROM agent_runs WHERE id = :id"),
+                {"id": rid},
+            )
+            after = r.scalar_one()
+        assert after is not None and before is not None, (
+            f"missing timestamps: before={before!r} after={after!r}"
+        )
+        assert after > before, (
+            f"last_heartbeat_at did not advance: before={before} after={after}"
+        )
+    finally:
+        await _delete_run(rid)
+
+
+async def test_stale_sweep_marks_worker_lost() -> None:
+    """An 'executing' row whose last_heartbeat_at is older than 2× the
+    heartbeat interval must be reaped: status='failed',
+    failure_reason='worker_lost'. Fresh rows must be left alone."""
+    rid_stale = f"test-sweep-stale-{uuid.uuid4()}"
+    rid_fresh = f"test-sweep-fresh-{uuid.uuid4()}"
+    async with get_session() as s:
+        await s.execute(
+            _sa_text(
+                "INSERT INTO agent_runs "
+                "(id, parent_run_id, root_run_id, depth, status, "
+                " orchestration_mode, cut_mode, providers, "
+                " spawned_by_tool, task_summary, last_heartbeat_at, "
+                " worker_id) "
+                "VALUES (:id, NULL, :id, 0, 'executing', 'single', 'soft', "
+                "        '[\"x\"]'::jsonb, 'sub_agent_spawn', 'stale', "
+                "        CURRENT_TIMESTAMP - INTERVAL '1 hour', :wid)"
+            ),
+            {"id": rid_stale, "wid": "test-dead-worker"},
+        )
+        await s.execute(
+            _sa_text(
+                "INSERT INTO agent_runs "
+                "(id, parent_run_id, root_run_id, depth, status, "
+                " orchestration_mode, cut_mode, providers, "
+                " spawned_by_tool, task_summary, last_heartbeat_at, "
+                " worker_id) "
+                "VALUES (:id, NULL, :id, 0, 'executing', 'single', 'soft', "
+                "        '[\"x\"]'::jsonb, 'sub_agent_spawn', 'fresh', "
+                "        CURRENT_TIMESTAMP, :wid)"
+            ),
+            {"id": rid_fresh, "wid": WORKER_ID},
+        )
+    try:
+        reaped = await _reap_stale_claims(heartbeat_interval_s=HEARTBEAT_INTERVAL_S)
+        reaped_ids = {r["id"] for r in reaped}
+        assert rid_stale in reaped_ids, (
+            f"stale row {rid_stale} was not reaped; reaped={reaped_ids}"
+        )
+        assert rid_fresh not in reaped_ids, (
+            f"fresh row {rid_fresh} was reaped (false positive)"
+        )
+        async with get_session() as s:
+            r = await s.execute(
+                _sa_text(
+                    "SELECT status, failure_reason FROM agent_runs WHERE id = :id"
+                ),
+                {"id": rid_stale},
+            )
+            row = r.first()
+        assert row is not None, f"stale row {rid_stale} disappeared"
+        assert row[0] == "failed", f"stale row status: {row[0]!r}"
+        assert row[1] == "worker_lost", f"stale row failure_reason: {row[1]!r}"
+        async with get_session() as s:
+            r = await s.execute(
+                _sa_text("SELECT status FROM agent_runs WHERE id = :id"),
+                {"id": rid_fresh},
+            )
+            assert r.scalar_one() == "executing", "fresh row was incorrectly modified"
+    finally:
+        await _delete_run(rid_stale)
+        await _delete_run(rid_fresh)
+
+
+async def test_retry_once_on_transient() -> None:
+    """A row with retry_policy='once_on_transient' and retry_count=0,
+    failing with a transient-looking exception, MUST be re-marked
+    'running' (retry_count→1) instead of 'failed'. A second failure
+    on the same row MUST NOT retry again (one-shot cap)."""
+    rid = f"test-retry-{uuid.uuid4()}"
+    async with get_session() as s:
+        await s.execute(
+            _sa_text(
+                "INSERT INTO agent_runs "
+                "(id, parent_run_id, root_run_id, depth, status, "
+                " orchestration_mode, cut_mode, providers, "
+                " spawned_by_tool, task_summary, retry_policy, "
+                " retry_count, last_heartbeat_at, worker_id) "
+                "VALUES (:id, NULL, :id, 0, 'executing', 'single', 'soft', "
+                "        '[\"x\"]'::jsonb, 'sub_agent_spawn', 'retry me', "
+                "        'once_on_transient', 0, CURRENT_TIMESTAMP, :wid)"
+            ),
+            {"id": rid, "wid": WORKER_ID},
+        )
+    try:
+        transient = TimeoutError("upstream provider timed out after 60s")
+        scheduled = await _maybe_schedule_retry(rid, "once_on_transient", 0, transient)
+        assert scheduled is True, "first transient failure should schedule a retry"
+        async with get_session() as s:
+            r = await s.execute(
+                _sa_text(
+                    "SELECT status, retry_count FROM agent_runs WHERE id = :id"
+                ),
+                {"id": rid},
+            )
+            row = r.first()
+        assert row is not None
+        assert row[0] == "running", f"expected 'running' after retry, got {row[0]!r}"
+        assert int(row[1]) == 1, f"retry_count should be 1, got {row[1]!r}"
+
+        # Second attempt — must NOT retry again
+        again = await _maybe_schedule_retry(rid, "once_on_transient", 1, transient)
+        assert again is False, "second failure must not retry (one-shot cap)"
+    finally:
+        await _delete_run(rid)
+
+
+async def test_retry_default_none() -> None:
+    """retry_policy='none' (or missing) MUST never schedule a retry,
+    even on a transient exception. retry_policy=once_on_transient with
+    a NON-transient exception (e.g. ValueError) MUST also not retry."""
+    rid = f"test-retry-none-{uuid.uuid4()}"
+    async with get_session() as s:
+        await s.execute(
+            _sa_text(
+                "INSERT INTO agent_runs "
+                "(id, parent_run_id, root_run_id, depth, status, "
+                " orchestration_mode, cut_mode, providers, "
+                " spawned_by_tool, task_summary, retry_policy, "
+                " retry_count, last_heartbeat_at, worker_id) "
+                "VALUES (:id, NULL, :id, 0, 'executing', 'single', 'soft', "
+                "        '[\"x\"]'::jsonb, 'sub_agent_spawn', 'no retry', "
+                "        'none', 0, CURRENT_TIMESTAMP, :wid)"
+            ),
+            {"id": rid, "wid": WORKER_ID},
+        )
+    try:
+        transient = TimeoutError("network unreachable")
+        scheduled = await _maybe_schedule_retry(rid, "none", 0, transient)
+        assert scheduled is False, "policy='none' must never retry"
+
+        non_transient = ValueError("malformed task payload — caller bug")
+        scheduled2 = await _maybe_schedule_retry(
+            rid, "once_on_transient", 0, non_transient,
+        )
+        assert scheduled2 is False, "non-transient exception must not retry"
+    finally:
+        await _delete_run(rid)
+
+
+async def test_concurrent_live_cap() -> None:
+    """check_can_spawn must raise SpawnCapExceeded with cap='concurrent_live'
+    when count_live_for_parent reaches max_concurrent_live for the tier.
+    Drives the check by seeding registry entries directly (no DB siblings)
+    and overriding tier cap via env."""
+    import os as _os
+    from python.services import agent_lifecycle as _life
+    from python.services.spawn_caps import (
+        check_can_spawn, SpawnCapExceeded, _DEFAULT_CONCURRENT_LIVE,
+    )
+    from python.engine import PCNAEngine
+    import time as _t
+
+    parent_run_id = f"test-cl-cap-{uuid.uuid4().hex[:8]}"
+    # admin tier: default concurrent_live=20. Seed 20 entries so the
+    # 21st spawn must fail. We add 20 entries then expect the cap to
+    # raise; cleanup pops them all in finally.
+    seeded: list[str] = []
+    try:
+        for i in range(20):
+            n = f"test-cl-{i}-{uuid.uuid4().hex[:6]}"
+            with _life._lock:
+                _life._sub_agents[n] = (PCNAEngine(), {
+                    "name": n, "provider": "test",
+                    "spawned_at": _t.time(),
+                    "parent_id": "x",
+                    "parent_run_id": parent_run_id,
+                    "run_id": f"r-{i}",
+                })
+            seeded.append(n)
+        # depth and fanout are well within admin tier limits; only
+        # concurrent_live should be the trip wire here.
+        try:
+            await check_can_spawn(
+                parent_run_id=parent_run_id,
+                current_depth=0,
+                tier="admin",
+            )
+        except SpawnCapExceeded as exc:
+            assert exc.cap == "concurrent_live", (
+                f"expected concurrent_live cap, tripped {exc.cap!r}"
+            )
+            assert exc.tier == "admin"
+            assert exc.current == 21, f"current count off: {exc.current}"
+        else:
+            raise AssertionError(
+                "concurrent_live cap did not trigger at 21 live registry entries"
+            )
+    finally:
+        with _life._lock:
+            for n in seeded:
+                _life._sub_agents.pop(n, None)
+
+
+async def test_no_orphan_invariant() -> None:
+    """check_no_orphan_invariant flags both directions of leak:
+       (a) a registry entry whose run_id has no DB row
+       (b) a DB 'executing' row owned by THIS worker with no registry entry
+    Clean state (no test rows) reports ok=True."""
+    from python.services import agent_lifecycle as _life
+    from python.engine import PCNAEngine
+    import time as _t
+
+    # (a) registry-orphan: registry entry with a run_id that has no row
+    orphan_run_id = f"test-orphan-{uuid.uuid4()}"
+    orphan_name = f"test-orphan-name-{uuid.uuid4().hex[:8]}"
+    with _life._lock:
+        _life._sub_agents[orphan_name] = (PCNAEngine(), {
+            "name": orphan_name, "provider": "test",
+            "spawned_at": _t.time(),
+            "parent_id": "x",
+            "parent_run_id": None,
+            "run_id": orphan_run_id,
+        })
+
+    # (b) worker-orphan: DB row owned by THIS WORKER_ID but not in registry
+    worker_orphan_id = f"test-worker-orphan-{uuid.uuid4()}"
+    async with get_session() as s:
+        await s.execute(
+            _sa_text(
+                "INSERT INTO agent_runs "
+                "(id, parent_run_id, root_run_id, depth, status, "
+                " orchestration_mode, cut_mode, providers, "
+                " spawned_by_tool, task_summary, last_heartbeat_at, "
+                " worker_id) "
+                "VALUES (:id, NULL, :id, 0, 'executing', 'single', 'soft', "
+                "        '[\"x\"]'::jsonb, 'sub_agent_spawn', 'worker orphan', "
+                "        CURRENT_TIMESTAMP, :wid)"
+            ),
+            {"id": worker_orphan_id, "wid": WORKER_ID},
+        )
+
+    try:
+        report = await check_no_orphan_invariant()
+        reg_ids = {o["run_id"] for o in report["registry_orphans"]}
+        wkr_ids = {o["id"] for o in report["worker_orphans"]}
+        assert orphan_run_id in reg_ids, (
+            f"registry orphan {orphan_run_id} not detected; "
+            f"registry_orphans={report['registry_orphans']}"
+        )
+        assert worker_orphan_id in wkr_ids, (
+            f"worker orphan {worker_orphan_id} not detected; "
+            f"worker_orphans={report['worker_orphans']}"
+        )
+        assert report["ok"] is False, "ok must be False with orphans present"
+        assert report["worker_id"] == WORKER_ID
+    finally:
+        with _life._lock:
+            _life._sub_agents.pop(orphan_name, None)
+        await _delete_run(worker_orphan_id)

@@ -21,9 +21,18 @@ from sqlalchemy import text as _sa_text
 
 _DEFAULT_DEPTH = int(os.environ.get("A0P_MAX_SPAWN_DEPTH", "3"))
 _DEFAULT_FANOUT = int(os.environ.get("A0P_MAX_SPAWN_FANOUT", "5"))
+# Task #122 — concurrent-live cap. Per-call depth+fanout already exists;
+# this third dimension bounds how many sub-agents a single parent can
+# have *alive at the same time*, regardless of how many spawn calls it
+# made. Counted from the in-memory _sub_agents registry, so it tracks
+# real PCNA forks, not bookkeeping rows.
+_DEFAULT_CONCURRENT_LIVE = int(os.environ.get("A0P_MAX_SPAWN_CONCURRENT_LIVE", "10"))
 
 _TIER_FALLBACKS = {
     "free": 2, "seeker": 3, "operator": 4, "patron": 5, "admin": 5,
+}
+_TIER_CONCURRENT_LIVE = {
+    "free": 2, "seeker": 4, "operator": 8, "patron": 12, "admin": 20,
 }
 
 
@@ -72,7 +81,15 @@ async def get_caps_for_tier(tier: str) -> dict:
     fanout = overrides.get(f"{tier}_fanout")
     if fanout is None:
         fanout = _DEFAULT_FANOUT
-    return {"max_depth": int(depth), "max_fanout": int(fanout), "tier": tier}
+    concurrent_live = overrides.get(f"{tier}_concurrent_live")
+    if concurrent_live is None:
+        concurrent_live = _TIER_CONCURRENT_LIVE.get(tier, _DEFAULT_CONCURRENT_LIVE)
+    return {
+        "max_depth": int(depth),
+        "max_fanout": int(fanout),
+        "max_concurrent_live": int(concurrent_live),
+        "tier": tier,
+    }
 
 
 async def sibling_count(parent_run_id: Optional[str]) -> int:
@@ -93,12 +110,30 @@ async def sibling_count(parent_run_id: Optional[str]) -> int:
         return 0
 
 
+def _count_concurrent_live(parent_run_id: Optional[str]) -> int:
+    """Lazy import — agent_lifecycle owns the canonical registry. The
+    import is local so this module stays usable in cold-start tests
+    that don't initialize the lifecycle module."""
+    try:
+        from .agent_lifecycle import count_live_for_parent
+        return int(count_live_for_parent(parent_run_id))
+    except Exception:
+        return 0
+
+
 async def check_can_spawn(
     parent_run_id: Optional[str],
     current_depth: int,
     tier: str,
 ) -> dict:
-    """Raise SpawnCapExceeded if the caps would be violated. Returns caps dict."""
+    """Raise SpawnCapExceeded if the caps would be violated. Returns caps dict.
+
+    Three dimensions are enforced:
+      * depth — how many spawn frames we're nested under
+      * fanout — how many DB rows already exist for this parent (per-call)
+      * concurrent_live — how many in-memory PCNA forks the parent has
+        right now (Task #122 — bounds spawn-spawn-merge-spawn loops)
+    """
     caps = await get_caps_for_tier(tier)
     if current_depth + 1 > caps["max_depth"]:
         raise SpawnCapExceeded(
@@ -109,6 +144,11 @@ async def check_can_spawn(
         raise SpawnCapExceeded(
             "fanout", siblings + 1, caps["max_fanout"], tier,
         )
+    live = _count_concurrent_live(parent_run_id)
+    if live + 1 > caps["max_concurrent_live"]:
+        raise SpawnCapExceeded(
+            "concurrent_live", live + 1, caps["max_concurrent_live"], tier,
+        )
     return caps
 
 
@@ -116,9 +156,11 @@ def caps_description_tail() -> str:
     """One-line summary appended to sub_agent_spawn SCHEMA description."""
     return (
         f"\n\nRecursion caps: depth ≤ {_DEFAULT_DEPTH}, "
-        f"fanout ≤ {_DEFAULT_FANOUT} (tier overrides via "
+        f"fanout ≤ {_DEFAULT_FANOUT}, concurrent_live ≤ "
+        f"{_DEFAULT_CONCURRENT_LIVE} (tier overrides via "
         f"settings.spawn_caps_by_tier; env "
-        f"A0P_MAX_SPAWN_DEPTH / A0P_MAX_SPAWN_FANOUT)."
+        f"A0P_MAX_SPAWN_DEPTH / A0P_MAX_SPAWN_FANOUT / "
+        f"A0P_MAX_SPAWN_CONCURRENT_LIVE)."
     )
 # N:M
 # 86:16

@@ -292,6 +292,27 @@ async def lifespan(app: FastAPI):
         await _sess.execute(_sa_text(
             "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS bandit_pull JSONB"
         ))
+        # Task #122 — sub-agent supervision hardening. Worker liveness,
+        # crash reaping, and explicit retry policy. last_heartbeat_at is
+        # advanced by the per-run heartbeat task; the stale-sweep loop
+        # uses (status, last_heartbeat_at) to find dead claims. worker_id
+        # records *which* process owns the claim so the no-orphan
+        # contract can match registry entries to DB rows. retry_policy
+        # is per-row and defaults to 'none' (current behavior).
+        for _alter in (
+            "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMP",
+            "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS retry_policy VARCHAR(40) NOT NULL DEFAULT 'none'",
+            "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS failure_reason VARCHAR(120)",
+            "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(120)",
+        ):
+            await _sess.execute(_sa_text(_alter))
+        # Backfill heartbeat for existing rows so the sweep doesn't reap
+        # them on first boot. NULL stays NULL where started_at is NULL.
+        await _sess.execute(_sa_text(
+            "UPDATE agent_runs SET last_heartbeat_at = started_at "
+            "WHERE last_heartbeat_at IS NULL AND started_at IS NOT NULL"
+        ))
         await _sess.execute(_sa_text("""
             CREATE TABLE IF NOT EXISTS agent_logs (
                 id VARCHAR PRIMARY KEY,
@@ -318,6 +339,8 @@ async def lifespan(app: FastAPI):
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_parent ON agent_runs(parent_run_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_root_started ON agent_runs(root_run_id, started_at)",
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_status_started ON agent_runs(status, started_at DESC)",
+            # Task #122 — feeds the stale-claim sweep without scanning.
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_status_heartbeat ON agent_runs(status, last_heartbeat_at)",
             "CREATE INDEX IF NOT EXISTS idx_agent_logs_run_ts ON agent_logs(run_id, ts)",
             "CREATE INDEX IF NOT EXISTS idx_agent_logs_parent_depth_ts ON agent_logs(parent_run_id, depth, ts)",
             "CREATE INDEX IF NOT EXISTS idx_agent_logs_event_ts ON agent_logs(event, ts DESC)",
@@ -605,9 +628,23 @@ async def lifespan(app: FastAPI):
     from .services.bg_tasks import spawn as _spawn_bg
     _spawn_bg(pending_gate_sweep_loop(), name="pending_gate_sweep")
     print("[chat] pending-gate sweep loop started")
-    from .services.spawn_executor import _poll_loop as _spawn_exec_loop
+    from .services.spawn_executor import (
+        _poll_loop as _spawn_exec_loop,
+        _stale_sweep_loop as _spawn_sweep_loop,
+        HEARTBEAT_INTERVAL_S as _hb_s,
+        STALE_SWEEP_INTERVAL_S as _sweep_s,
+        WORKER_ID as _worker_id,
+    )
     _spawn_bg(_spawn_exec_loop(), name="spawn_executor_poll")
     print("[spawn_executor] poll loop started — pending agent_runs will be executed")
+    # Task #122 — supervision sweep. Reaps 'executing' rows whose
+    # heartbeat is stale past 2× the interval. Owned by the same
+    # bg_tasks lifespan as the poller so cancel_all takes both down.
+    _spawn_bg(_spawn_sweep_loop(), name="spawn_executor_sweep")
+    print(
+        f"[spawn_executor] stale-sweep started (heartbeat={_hb_s:.0f}s, "
+        f"sweep={_sweep_s:.0f}s, worker_id={_worker_id})"
+    )
     yield
     await heartbeat_service.stop()
     try:

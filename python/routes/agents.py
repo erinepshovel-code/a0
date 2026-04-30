@@ -11,6 +11,16 @@ from ..agents.zfae import (
 )
 from ..services.energy_registry import energy_registry
 from ..engine import PCNAEngine, InstanceMerge
+from ..services.agent_lifecycle import (
+    # Task #122 — re-export the canonical registry from agent_lifecycle so
+    # there is exactly one in-memory `_sub_agents` per process. The dict
+    # used to live here too; we keep the name as a shim for one release
+    # in case anything outside the repo imports it.
+    _sub_agents,
+    spawn_sub_agent as _lifecycle_spawn,
+    merge_sub_agent as _lifecycle_merge,
+    list_sub_agents as _lifecycle_list,
+)
 from ._admin_gate import require_admin
 
 # DOC module: agents
@@ -66,8 +76,8 @@ DATA_SCHEMA = {
 
 router = APIRouter(prefix="/api/v1", tags=["agents"])
 
-_sub_agents: dict[str, PCNAEngine] = {}
-_sub_counter = 0
+# Note: `_sub_agents` is imported above from agent_lifecycle. Local
+# `_sub_counter` is no longer needed — the lifecycle module owns naming.
 
 
 class SpawnRequest(BaseModel):
@@ -136,14 +146,14 @@ async def list_agents():
             "energy_provider": active_provider,
         }
     ]
-    for idx, (sa_name, sa_engine) in enumerate(_sub_agents.items()):
+    for idx, sa in enumerate(_lifecycle_list()):
         agents.append({
-            "name": sa_name,
+            "name": sa["name"],
             "slot": f"zeta{idx}",
             "status": "active",
             "is_persistent": False,
-            "energy_provider": active_provider,
-            "uptime_s": round(time.time() - sa_engine.created_at, 1),
+            "energy_provider": sa.get("provider") or active_provider,
+            "uptime_s": sa["uptime_s"],
         })
     return agents
 
@@ -180,28 +190,21 @@ async def set_active_provider(request: Request, body: SetProviderRequest):
 
 @router.post("/agents/spawn")
 async def spawn_sub_agent(request: Request, body: SpawnRequest):
+    """Admin-only manual spawn — has no run row, so no parent_run_id."""
     await require_admin(request)
     from ..main import get_pcna
-    global _sub_counter
     parent = get_pcna()
-    child, result = InstanceMerge.fork(parent)
-    _sub_counter += 1
     provider = body.provider or energy_registry.get_active_provider()
-    name = sub_agent_name(_sub_counter, provider)
-    _sub_agents[name] = child
-    result["sub_agent_name"] = name
-    return result
+    return _lifecycle_spawn(parent, provider=provider)
 
 
 @router.post("/agents/{agent_name}/merge")
 async def merge_sub_agent(agent_name: str, request: Request):
     await require_admin(request)
     from ..main import get_pcna
-    if agent_name not in _sub_agents:
+    result = _lifecycle_merge(get_pcna(), agent_name)
+    if isinstance(result, dict) and result.get("error") == "sub-agent not found":
         raise HTTPException(status_code=404, detail="sub-agent not found")
-    child = _sub_agents.pop(agent_name)
-    result = InstanceMerge.absorb(get_pcna(), child)
-    result["retired_agent"] = agent_name
     return result
 
 
