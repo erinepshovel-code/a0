@@ -148,6 +148,23 @@ class EnergyRegistry:
         self._active = provider_id
         return True
 
+    def is_auto_selectable(self, provider_id: str) -> bool:
+        """True if this provider may be picked by an automated path
+        (active-default resolution, future bandit selector, etc.).
+
+        Providers with `requires_human_instantiation: true` in
+        providers.json are gated behind explicit caller selection — the
+        directive being that any provider more expensive than the
+        gpt-5.5 baseline ($5/$30 per 1M tokens) only spends real money
+        when a human deliberately reaches for it. Auto-paths must call
+        this and skip flagged providers; explicit per-call provider
+        selection bypasses the gate (a human IS the instantiator).
+        """
+        spec = self._providers.get(provider_id)
+        if not spec:
+            return False
+        return not spec.get("requires_human_instantiation", False)
+
     async def set_active_provider_persistent(self, provider_id: str) -> bool:
         """Set the active provider in memory AND persist it to model_registry so
         the choice survives uvicorn restarts. Falls back to in-memory-only on DB

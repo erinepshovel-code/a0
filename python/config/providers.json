@@ -127,7 +127,8 @@
       "api_family": "responses",
       "pricing_url": "https://openai.com/api/pricing/",
       "note": "GPT-5.5 Pro highest-accuracy variant; 1M context; FrontierMath Tier 4 SOTA at release; reserve for PCNA-critical merges and hardest reasoning.",
-      "min_reasoning_effort": "medium"
+      "min_reasoning_effort": "high",
+      "requires_human_instantiation": true
     }
   },
   "presets": {

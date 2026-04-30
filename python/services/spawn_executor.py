@@ -179,6 +179,17 @@ def _resolve_provider(providers: Any) -> str:
         active = energy_registry.get_active_provider()
         if not active:
             raise ValueError("no active provider configured for 'active' binding")
+        # Cost gate: 'active' is an automated resolution path. Refuse to
+        # silently bind it to a provider flagged as human-only (i.e. any
+        # provider above the gpt-5.5 cost baseline). The caller must
+        # name the expensive provider explicitly if they truly want it.
+        if not energy_registry.is_auto_selectable(active):
+            raise ValueError(
+                f"'active' resolved to {active!r} which requires human "
+                f"instantiation (cost above gpt-5.5 baseline). The active "
+                f"provider must be a non-flagged tier; pick this provider "
+                f"explicitly per-spawn instead of via 'active'."
+            )
         return active
     return pid
 
