@@ -145,6 +145,12 @@ This dovetails with interdependency-based governance, not control-based governan
 
 ---
 
+## Repository Workflow Note
+
+Changes produced by the coding agent are committed to the active working branch first (for example, `work`) and are **not** on `main` until merged through your PR workflow.
+
+---
+
 # Prime Circular Neural Architecture — Three-Tier Stack
 
 *GPT generated; context, prompt Erin Spencer*
