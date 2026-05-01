@@ -77,4 +77,4 @@ OPENAI_STORE = "false"
 
 [postMerge]
 path = "scripts/post-merge.sh"
-timeoutMs = 20000
+timeoutMs = 90000
