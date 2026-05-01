@@ -226,6 +226,7 @@ export default function AdminContextsPage() {
   }
 
   return (
+    <div className="h-full overflow-y-auto">
     <div className="max-w-2xl mx-auto px-4 pt-6 pb-16">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-foreground mb-1">Prompt Contexts</h1>
@@ -249,6 +250,7 @@ export default function AdminContextsPage() {
       )}
 
       <AdminEmailsSection currentEmail={user?.email} />
+    </div>
     </div>
   );
 }
