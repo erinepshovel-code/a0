@@ -533,7 +533,7 @@ export function agentLabel(model: string | null | undefined, slot: string): stri
   return `a0(${model ?? "?"})${slot}`;
 }
 
-export function MessageBubble({ message, onSend, instanceSlot }: { message: Message; onSend: (cmd: string) => void; instanceSlot?: string }) {
+export function MessageBubble({ message, onSend }: { message: Message; onSend: (cmd: string) => void }) {
   const isUser = message.role === "user";
   const isError = !isUser && message.metadata?.error === true;
   const isFocusRegain = message.metadata?.focus_regain === true;
@@ -612,8 +612,8 @@ export function MessageBubble({ message, onSend, instanceSlot }: { message: Mess
         )}
         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
           {message.model && !isUser && (
-            <Badge variant="outline" className="text-[9px] h-4 px-1 font-mono" data-testid={`agent-label-${message.id}`}>
-              {instanceSlot ? agentLabel(message.model, instanceSlot) : message.model}
+            <Badge variant="outline" className="text-[9px] h-4 px-1" data-testid={`agent-label-${message.id}`}>
+              {message.model}
             </Badge>
           )}
           {tokCount !== null && !isUser && (

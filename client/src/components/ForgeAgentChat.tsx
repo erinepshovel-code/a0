@@ -192,7 +192,7 @@ export default function ForgeAgentChat({ agentId, agentName, onClose }: Props) {
         ) : (
           <div className="flex flex-col gap-2">
             {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate(c)} instanceSlot={agentName} />
+              <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate(c)} />
             ))}
           </div>
         )}

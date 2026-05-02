@@ -192,7 +192,7 @@ def _scan_module(path: Path) -> list[dict]:
     return out
 
 
-async def test_every_write_route_is_gated() -> None:
+def test_every_write_route_is_gated() -> None:
     """Walk python/routes/, collect every POST/PATCH/DELETE/PUT, assert
     each calls an auth helper (or has a Depends() parameter), or appears
     in the deliberately-public ALLOWLIST."""

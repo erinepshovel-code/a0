@@ -37,7 +37,8 @@
 - `python/database.py` — Async SQLAlchemy (asyncpg), sync engine for migrations
 - `python/models.py` — SQLAlchemy ORM models for all tables
 - `python/pcna.py` — PCNA engine (53-node ring topology)
-- `python/logger.py` — JSONL append logger
+- `python/logger.py` — JSONL append logger (core stream primitives + re-exports)
+- `python/logger_ai.py` — AI-transcript and OpenAI-event helpers (split from logger.py per 400-line doctrine)
 - `python/agents/zfae.py` — ZFAE agent definition, compose_name(), sub_agent_name()
 - `python/services/energy_registry.py` — LLM provider registry (loads `python/config/providers.json`)
 - `python/services/inference.py` — Dispatcher + orchestration (`_call_openai_routed` policy/role/gate); delegates outbound API calls to `providers/<name>.py`
@@ -192,7 +193,7 @@ The authoritative reference for all module conventions (file annotation, naming,
 - SQL column names in dynamic UPDATE queries must use an explicit allowlist
 
 ## The Forge (Apr 2026)
-Character-sheet style agent creation. `python/routes/forge.py` + `client/src/components/ForgeTab.tsx`.
+Character-sheet style agent creation. `python/routes/forge.py` + `python/routes/forge_archetypes.py` (archetype/tool-category data, split per 400-line doctrine) + `client/src/components/ForgeTab.tsx`.
 
 - 8 archetypes (Sage, Trickster, Paladin, Druid, Engineer, Diplomat, Hacker, Captain) with personality (D&D alignment, traits, verbosity 1–10), stats (D20 6-stat block: reasoning/speed/resilience/creativity/memory/charisma), and suggested tools.
 - Self-updating registries: `GET /api/v1/forge/tools` introspects `TOOL_SCHEMAS_CHAT`; `GET /api/v1/forge/models` introspects `energy_registry`. No hand-maintained catalog.

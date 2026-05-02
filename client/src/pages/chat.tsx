@@ -388,7 +388,7 @@ export default function ChatPage() {
                       <p className="text-sm">No messages yet</p>
                     </div>
                   )}
-                  {messages.map((m) => <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate({ content: c })} instanceSlot="zfae" />)}
+                  {messages.map((m) => <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate({ content: c })} />)}
                   {/* Mounted for any in-flight multi-model send, including the first turn. */}
                   {sendMessage.isPending && liveSend && (
                     <LiveOrchProgress
