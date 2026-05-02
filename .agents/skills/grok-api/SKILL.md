@@ -28,54 +28,57 @@ If the user mentions GPT-5, OpenAI, or Responses API, load `gpt-5-api` skill ins
 
 **a0p default policy:** keep `grok-4-fast-reasoning` as the working model, escalate to `grok-4` for sub-agent merges and PCNA-critical decisions, route to `grok-code-fast-1` when the prompt is clearly code (heuristic: contains a fenced block or filename).
 
-## API: OpenAI-Compatible Chat Completions
+## API: Native xai-sdk (gRPC)
 
-xAI exposes an OpenAI-compatible endpoint at `https://api.x.ai/v1`. You can use the official `openai` Python SDK by overriding `base_url`. This is what a0p does in `xai_provider.py`.
+a0p uses the **official `xai-sdk` Python library** (v1.12+, gRPC-based) via `AsyncClient`.
+This gives built-in OpenTelemetry tracing, streaming, tool calling, and live search — all in one surface.
 
 ### Minimal call
 
 ```python
-from openai import AsyncOpenAI
+from xai_sdk import AsyncClient
+from xai_sdk.chat import system, user
 import os
 
-client = AsyncOpenAI(
-    api_key=os.environ["XAI_API_KEY"],
-    base_url="https://api.x.ai/v1",
-)
-
-resp = await client.chat.completions.create(
+client = AsyncClient(api_key=os.environ["XAI_API_KEY"])
+chat = client.chat.create(
     model="grok-4-fast-reasoning",
-    messages=[{"role": "user", "content": "Summarize PCNA in two sentences."}],
+    messages=[system("You are a helpful assistant."), user("Summarize PCNA in two sentences.")],
 )
-print(resp.choices[0].message.content)
+response = await chat.sample()
+print(response.content)
 ```
+
+xAI also exposes an OpenAI-compatible endpoint (`https://api.x.ai/v1`) for quick migration, but
+the native SDK is preferred inside a0p for metrics and agentic features.
 
 ### Tool calling (matches a0p pattern)
 
-Grok uses the **Chat Completions** tool schema (nested `function`), NOT the Responses flat form. Use `TOOL_SCHEMAS_CHAT` from `python/services/tool_executor.py` directly.
+Use `xai_sdk.chat.tool()` to declare tools and `tool_result()` to send results back. Wrap
+schemas from `TOOL_SCHEMAS_CHAT` (nested `function` form) via the helper `_to_xai_tools()` in
+`xai_provider.py`, or build them directly:
 
 ```python
-resp = await client.chat.completions.create(
-    model="grok-4-fast-reasoning",
-    messages=conversation_messages,
-    tools=TOOL_SCHEMAS_CHAT,           # nested {"type":"function","function":{...}}
-    tool_choice="auto",
-)
+from xai_sdk import AsyncClient
+from xai_sdk.chat import system, user, tool as xai_tool, tool_result
+import json
 
-msg = resp.choices[0].message
-if msg.tool_calls:
-    for call in msg.tool_calls:
-        args = json.loads(call.function.arguments)
-        result = await execute_tool(call.function.name, args)
-        conversation_messages.append({
-            "role": "tool",
-            "tool_call_id": call.id,
-            "content": result,
-        })
-    # then re-send for the model's final answer
+client = AsyncClient()
+tools = [xai_tool("get_weather", "Return current weather.", {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]})]
+chat = client.chat.create(model="grok-4-fast-reasoning", messages=[user("Weather in Paris?")], tools=tools)
+
+response = await chat.sample()
+if response.tool_calls:
+    for tc in response.tool_calls:
+        args = json.loads(tc.function.arguments)
+        result = get_weather(args["city"])          # your function
+        chat.append(response)                        # append assistant turn first
+        chat.append(tool_result(result, tool_call_id=tc.id))
+    final = await chat.sample()
+    print(final.content)
 ```
 
-Grok handles parallel tool calls — multiple `tool_calls` may come back in one response. Process them all before re-calling the model.
+Grok handles parallel tool calls — multiple `tool_calls` may arrive in one response. Process all before re-sampling.
 
 ### Structured outputs (JSON schema)
 
@@ -109,64 +112,73 @@ data = json.loads(resp.choices[0].message.content)
 ### Streaming
 
 ```python
-stream = await client.chat.completions.create(
-    model="grok-4-fast-reasoning",
-    messages=conversation_messages,
-    stream=True,
-    stream_options={"include_usage": True},
-)
-async for chunk in stream:
-    if chunk.choices and chunk.choices[0].delta.content:
-        yield chunk.choices[0].delta.content
-    if chunk.usage:
-        # final chunk carries usage when include_usage=True
-        record_cost(chunk.usage)
+from xai_sdk import AsyncClient
+from xai_sdk.chat import user
+
+client = AsyncClient()
+chat = client.chat.create(model="grok-4-fast-reasoning", messages=[user("Explain PCNA.")])
+
+async for response, chunk in chat.stream():
+    if chunk.content:
+        print(chunk.content, end="", flush=True)
+
+# `response` after the loop holds the final accumulated response with full usage
+print(f"\nTokens: {response.usage.prompt_tokens} in / {response.usage.completion_tokens} out")
 ```
 
 ## Reasoning Controls
 
-`grok-4` and `grok-4-fast-reasoning` accept `reasoning_effort`:
+`grok-4` and `grok-4-fast-reasoning` accept `reasoning_effort` via xai-sdk's `ReasoningEffort`:
 
 ```python
-resp = await client.chat.completions.create(
+from xai_sdk import AsyncClient
+from xai_sdk.chat import user, ReasoningEffort
+
+client = AsyncClient()
+chat = client.chat.create(
     model="grok-4-fast-reasoning",
-    messages=...,
-    reasoning_effort="low",   # "low" | "medium" | "high"
+    messages=[user("Solve this step by step...")],
+    reasoning_effort=ReasoningEffort.LOW,   # LOW | MEDIUM | HIGH
 )
+response = await chat.sample()
 ```
 
 Notes:
-- `grok-4` does NOT accept `reasoning_effort=minimal` (unlike GPT-5).
-- `grok-4-fast-non-reasoning` ignores `reasoning_effort` entirely — use it when you don't want reasoning at all.
-- Reasoning tokens are exposed in `resp.usage.completion_tokens_details.reasoning_tokens`.
+- `grok-4` does NOT accept `MINIMAL` effort (unlike GPT-5).
+- `grok-4-fast-non-reasoning` ignores `reasoning_effort` entirely — use it when you don't want reasoning.
+- Reasoning tokens are in `response.usage.reasoning_tokens`.
 
-Map a0p `gate` to effort the same as GPT-5: `<0.6` → low, `0.6–1.0` → medium, `>1.0` → high.
+Map a0p `gate` to effort: `<0.6` → LOW, `0.6–1.0` → MEDIUM, `>1.0` → HIGH.
 
 ## Live Search (xAI's hosted web search)
 
-Grok ships a hosted retrieval feature called Live Search. Enable per-request:
+Grok ships a hosted retrieval feature called Live Search. Enable via `SearchParameters`:
 
 ```python
-resp = await client.chat.completions.create(
+from xai_sdk import AsyncClient
+from xai_sdk.chat import user, SearchParameters
+
+client = AsyncClient()
+chat = client.chat.create(
     model="grok-4-fast-reasoning",
-    messages=...,
-    extra_body={
-        "search_parameters": {
-            "mode": "auto",           # "off" | "auto" | "on"
-            "sources": [
-                {"type": "web"},
-                {"type": "x"},        # X.com/Twitter
-                {"type": "news"},
-            ],
-            "max_search_results": 10,
-            "return_citations": True,
-        }
-    },
+    messages=[user("What's happening with PCNA today?")],
+    search_parameters=SearchParameters(
+        mode="auto",               # "off" | "auto" | "on"
+        return_citations=True,
+        max_search_results=10,
+    ),
 )
-citations = resp.citations  # list of URLs
+response = await chat.sample()
+print(response.content)
+print("Citations:", list(response.citations))   # list of URLs
 ```
 
-Use Live Search when the provider is xAI — it replaces the custom `web_search` function and is faster than the Tavily-backed fallback. Strip `web_search` from the tool list when Live Search is enabled to avoid redundant calls.
+Use `sources=[web_source(), x_source(), news_source()]` from `xai_sdk.chat` to restrict which
+sources are queried. Default: web + X.
+
+Use Live Search when the provider is xAI — it replaces the custom `web_search` function and is
+faster than the Tavily-backed fallback. Strip `web_search` from the tool list when Live Search is
+enabled to avoid redundant calls.
 
 ## Pricing Cheatsheet (as of Apr 2026)
 
@@ -184,22 +196,23 @@ Live Search adds **$0.025 per source returned** (billed separately from tokens).
 
 ## a0p Integration Notes
 
-- **Provider module:** `python/services/providers/xai_provider.py` — uses `AsyncOpenAI(base_url="https://api.x.ai/v1")`. Do NOT swap to a custom HTTP client; the SDK handles retries, streaming, and tool-call parsing.
-- **Tool schemas:** Grok uses `TOOL_SCHEMAS_CHAT` (nested form). Never pass `TOOL_SCHEMAS_RESPONSES` to xAI — it'll 400.
-- **Web search:** when provider is xAI, prefer Live Search via `extra_body.search_parameters` over the custom `web_search` function. The custom function still works as a fallback.
-- **Energy / cost tracking:** parse `resp.usage` (Chat Completions shape) — `prompt_tokens`, `completion_tokens`, `completion_tokens_details.reasoning_tokens`, `prompt_tokens_details.cached_tokens`. Write to `system_costs` via `storage.record_cost()`.
+- **Provider module:** `python/services/providers/xai_provider.py` — uses native `xai-sdk` `AsyncClient`. Do NOT revert to httpx or the OpenAI-compat endpoint; the SDK gives gRPC retries, OpenTelemetry tracing, and first-class tool support.
+- **Tool schemas:** Build tools with `xai_tool(name, description, parameters)` from TOOL_SCHEMAS_CHAT. The `_to_xai_tools()` helper in `xai_provider.py` does this conversion. Never pass `TOOL_SCHEMAS_RESPONSES` (OpenAI flat form) to xai-sdk — it expects the `tool()` proto.
+- **Web search:** when provider is xAI, use `SearchParameters(mode="auto")` in `client.chat.create()`. Cannot mix with function tools in the same call — xai_provider.py routes to the search path when `supports_live_search=True`.
+- **Energy / cost tracking:** parse `response.usage` — fields are `prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `total_tokens`. Write to `system_costs` via `storage.record_cost()`.
 - **Tier gating:** `grok-4` should require `tier in ("ws","admin")`. `grok-4-fast-reasoning` is the supporter default. `grok-4-fast-non-reasoning` can be free-tier safe.
-- **Image inputs (grok-2-vision):** pass as `{"type":"image_url","image_url":{"url": "data:image/png;base64,..."}}` inside the user message content array.
-- **Rate limits:** xAI is stricter than OpenAI on burst. The SDK auto-retries on 429 with backoff — don't add a second retry layer.
+- **Image inputs (grok-2-vision):** pass via `xai_sdk.chat.image("https://...")` inside the `user()` message.
+- **Rate limits / retries:** xai-sdk auto-retries on `UNAVAILABLE` gRPC status with exponential backoff (5 attempts). Do not add a second retry layer.
 
 ## Common Pitfalls
 
-- **Sending Responses-API schemas to xAI** → 400 "unknown parameter". Use Chat Completions form.
-- **Setting `reasoning_effort` on `grok-4-fast-non-reasoning`** → silently ignored, no error. If you want reasoning, pick the `-reasoning` variant.
-- **Leaving `web_search` tool active alongside Live Search** → model may double-fetch and burn budget. Strip one.
-- **Forgetting `stream_options={"include_usage": True}`** when streaming → no usage data, can't bill accurately.
+- **Passing raw dicts to `tools=`** → xai-sdk expects `chat_pb2.Tool` proto objects; use `xai_tool(name, description, params)`. Raw dicts will fail at the gRPC layer.
+- **Appending `tool_result` before `chat.append(response)`** → the assistant's tool-call turn must be in history before its results; the order matters.
+- **Setting `reasoning_effort` on `grok-4-fast-non-reasoning`** → silently ignored. Use the `-reasoning` variant when effort control is needed.
+- **Leaving `web_search` function tool active alongside `SearchParameters`** → model may double-fetch and burn budget. Strip `web_search` from the tool list when search parameters are set.
 - **Hardcoding `XAI_API_KEY`** → always read from `os.environ`. Replit secret is already set.
-- **Treating xAI as fully OpenAI-compatible** → it's ~95%. Notable gaps: no `response_format=json_object` (must use `json_schema`), no `logprobs`, no native `web_search_preview` (use Live Search instead), no `previous_response_id`.
+- **Creating `AsyncClient` inside a sync function** → xai-sdk gRPC transport is async; always `await` in an `async def`. Use `Client` (blocking) only for scripts or sync test code.
+- **Expecting OpenAI `response_format=json_object`** → use `response_format=SomeModel` (Pydantic) or `ResponseFormat.JSON_SCHEMA` instead.
 
 ## Quick Decision Tree
 

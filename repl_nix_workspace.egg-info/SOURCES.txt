@@ -4,6 +4,7 @@ python/__init__.py
 python/auth.py
 python/database.py
 python/logger.py
+python/logger_ai.py
 python/main.py
 python/models.py
 repl_nix_workspace.egg-info/PKG-INFO

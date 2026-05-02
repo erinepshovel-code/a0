@@ -44,8 +44,8 @@
 - `python/services/inference.py` — Dispatcher + orchestration (`_call_openai_routed` policy/role/gate); delegates outbound API calls to `providers/<name>.py`
 - `python/services/providers/` — One file per provider (P3 of energy-model-task-overhaul):
   - `_resolver.py` — env > seed `route_config.model_assignments[role]` > spec model lookup; raises on unresolvable
-  - `openai_provider.py` — OpenAI Responses API + tool loop
-  - `grok_provider.py` — xAI Responses-with-search + Chat-Completions tool loop + SSE streaming
+  - `openai_provider.py` — OpenAI Responses API + tool loop via `openai` SDK v2 (`AsyncOpenAI.responses.create()`)
+  - `xai_provider.py` — xAI Grok via native `xai-sdk` (`AsyncClient`): search path (`SearchParameters`) + function-tool loop + streaming (`chat.stream()`)
   - `gemini_provider.py` — google-genai SDK (thin wrapper over `gemini_native.py`)
   - `claude_provider.py` — Anthropic SDK + prompt caching
   - All four expose `async def call(messages, *, role, model_override, api_key, max_tokens, use_tools, reasoning_effort, ...) -> (text, usage)` and lazy-import shared helpers from inference.py to avoid circular imports

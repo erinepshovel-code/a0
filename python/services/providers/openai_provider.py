@@ -1,27 +1,17 @@
-# 132:27
-"""openai_provider — OpenAI GPT-5 family via the Responses API (/v1/responses).
+# 129:19
+"""openai_provider — OpenAI GPT-5 family via the Responses API.
 
-This module owns the actual outbound API call. The role-decision /
-approval-gate / audit-logging orchestration around it stays in
-inference._call_openai_routed because that's a meta-orchestrator
-shared with the openai_router policy and the approval gate plumbing —
-it is not itself a "provider call".
-
-Contract harmonized with grok/gemini/claude providers so the dispatcher
-treats all four uniformly:
+Migrated from raw httpx to the `openai` Python SDK (v2). The contract is
+unchanged; the httpx block is replaced by `AsyncOpenAI.responses.create()`,
+which gives us built-in retries, proper error typing, and OpenAI tracing.
 
     call(messages, *, role, model_override, api_key,
          max_tokens, use_tools, reasoning_effort, ...)
         -> (content, usage)
 
-OpenAI-specific kwargs (temperature, store, max_output_tokens) are
-threaded through with sensible defaults that match what
-_call_openai_routed used to pass directly.
-
-Currently httpx-based — lifted verbatim from inference.py so no
-outbound openai HTTP traffic originates in inference.py anymore.
-SDK migration to the openai Python SDK is a follow-up that swaps
-the httpx block without changing this contract or any caller.
+The tool loop structure is identical to the pre-SDK version; only the outbound
+HTTP call changes. `response.model_dump()` converts the SDK object to the same
+dict shape the tool-loop code already understood, so zero churn downstream.
 """
 from __future__ import annotations
 
@@ -30,12 +20,9 @@ import json
 import os
 from typing import Optional
 
-import httpx
+from openai import AsyncOpenAI
 
 from ._resolver import resolve_model_for_role
-
-
-_OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 
 async def call(
@@ -78,16 +65,18 @@ async def _call_responses(
     store: bool,
     use_tools: bool,
 ) -> tuple[str, dict]:
-    """Lifted from inference._call_openai_responses — same tool loop semantics:
-    up to _MAX_TOOL_ROUNDS rounds, repeat-call short-circuit, function_call
-    items only (not message/reasoning/web_search_call) appended to next
-    round's input per Responses API multi-turn rules."""
+    """Tool loop over the OpenAI Responses API via the native SDK.
+
+    The SDK replaces the raw httpx POST; `response.model_dump()` converts the
+    typed response to a plain dict so the rest of the loop is unchanged.
+    Up to _MAX_TOOL_ROUNDS rounds; repeat-call short-circuit prevents infinite
+    loops; only `function_call` items are echoed back per Responses API rules.
+    """
     from ..tool_distill import set_caller_provider
     from ..tool_executor import TOOL_SCHEMAS_RESPONSES, execute_tool
     from ..inference import (
         _MAX_TOOL_ROUNDS,
         _canonical_tool_calls,
-        _post_with_retry,
         _sanitize_provider_error,
     )
 
@@ -113,12 +102,12 @@ async def _call_responses(
         return out
 
     openai_input = _fmt_messages(copy.deepcopy(input_messages))
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    oai_client = AsyncOpenAI(api_key=api_key)
     accumulated_usage: dict = {}
     prev_call_fingerprint: Optional[str] = None
 
     for _round in range(_MAX_TOOL_ROUNDS + 1):
-        payload: dict = {
+        kwargs: dict = {
             "model": model,
             "input": openai_input,
             "store": store,
@@ -127,14 +116,13 @@ async def _call_responses(
             "text": {"format": {"type": "text"}},
         }
         if reasoning_effort and reasoning_effort != "none":
-            payload["reasoning"] = {"effort": reasoning_effort}
+            kwargs["reasoning"] = {"effort": reasoning_effort}
         if use_tools:
-            payload["tools"] = TOOL_SCHEMAS_RESPONSES
+            kwargs["tools"] = TOOL_SCHEMAS_RESPONSES
 
         try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
-                resp = await _post_with_retry(client, _OPENAI_RESPONSES_URL, json_payload=payload, headers=headers)
-                data = resp.json()
+            response = await oai_client.responses.create(**kwargs)
+            data = response.model_dump()
         except Exception as exc:
             return _sanitize_provider_error("openai", exc), accumulated_usage
 
@@ -163,9 +151,7 @@ async def _call_responses(
                     break
             return content or "[openai: empty response]", accumulated_usage
 
-        # Multi-turn rule: only function_call items belong in next round's input
-        # alongside their function_call_output results. Other item types (message,
-        # reasoning, web_search_call) cause 400/404s if echoed back.
+        # Multi-turn rule: only function_call items in next round's input
         for item in output_items:
             if item.get("type") == "function_call":
                 openai_input.append(item)
@@ -185,4 +171,4 @@ async def _call_responses(
             })
 
     return "[openai: tool loop exhausted]", accumulated_usage
-# 132:27
+# 129:19

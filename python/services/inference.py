@@ -597,7 +597,7 @@ async def call_energy_provider(
         )
 
     if provider_id == "grok":
-        from .providers.grok_provider import call as grok_call
+        from .providers.xai_provider import call as grok_call
         return await grok_call(
             payload_messages,
             api_key=api_key,
