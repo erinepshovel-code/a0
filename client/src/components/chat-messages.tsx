@@ -1,4 +1,4 @@
-// 581:5
+// 588:5
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -529,7 +529,11 @@ export function OrchestrationResponses({ usage }: { usage?: UsageData | null }) 
   );
 }
 
-export function MessageBubble({ message, onSend }: { message: Message; onSend: (cmd: string) => void }) {
+export function agentLabel(model: string | null | undefined, slot: string): string {
+  return `a0(${model ?? "?"})${slot}`;
+}
+
+export function MessageBubble({ message, onSend, instanceSlot }: { message: Message; onSend: (cmd: string) => void; instanceSlot?: string }) {
   const isUser = message.role === "user";
   const isError = !isUser && message.metadata?.error === true;
   const isFocusRegain = message.metadata?.focus_regain === true;
@@ -607,7 +611,11 @@ export function MessageBubble({ message, onSend }: { message: Message; onSend: (
           <pre className="mt-2 text-[10px] bg-black/10 rounded p-2 overflow-x-auto whitespace-pre-wrap opacity-80" data-testid={`error-detail-${message.id}`}>{message.metadata.error_detail}</pre>
         )}
         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-          {message.model && !isUser && <Badge variant="outline" className="text-[9px] h-4 px-1">{message.model}</Badge>}
+          {message.model && !isUser && (
+            <Badge variant="outline" className="text-[9px] h-4 px-1 font-mono" data-testid={`agent-label-${message.id}`}>
+              {instanceSlot ? agentLabel(message.model, instanceSlot) : message.model}
+            </Badge>
+          )}
           {tokCount !== null && !isUser && (
             <Badge variant="outline" className="text-[9px] h-4 px-1 text-muted-foreground" data-testid={`tokens-msg-${message.id}`}>{fmtTokens(tokCount)} tok</Badge>
           )}
@@ -616,4 +624,4 @@ export function MessageBubble({ message, onSend }: { message: Message; onSend: (
     </div>
   );
 }
-// 581:5
+// 588:5

@@ -1,4 +1,4 @@
-# 292:41
+# 299:41
 import time
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -92,7 +92,10 @@ async def ensure_primary_agent(pcna: PCNAEngine):
     from ..database import get_session
     from sqlalchemy import text
 
-    agent_name = compose_name(energy_registry.get_active_provider())
+    _provider = energy_registry.get_active_provider()
+    _pinfo = energy_registry.get_provider(_provider) if _provider else None
+    _model_id = _pinfo.get("spec_model") if _pinfo else None
+    agent_name = compose_name(_provider, model_id=_model_id)
 
     try:
         async with get_session() as session:
@@ -134,7 +137,9 @@ async def ensure_primary_agent(pcna: PCNAEngine):
 @router.get("/agents")
 async def list_agents():
     active_provider = energy_registry.get_active_provider()
-    primary_name = compose_name(active_provider)
+    _ap_info = energy_registry.get_provider(active_provider) if active_provider else None
+    _ap_model = _ap_info.get("spec_model") if _ap_info else None
+    primary_name = compose_name(active_provider, model_id=_ap_model)
     agents = [
         {
             "name": primary_name,
@@ -185,7 +190,9 @@ async def set_active_provider(request: Request, body: SetProviderRequest):
     await require_admin(request)
     if not await energy_registry.set_active_provider_persistent(body.provider_id):
         raise HTTPException(status_code=400, detail="unknown provider")
-    return {"active": body.provider_id, "agent_name": compose_name(body.provider_id)}
+    _new_pinfo = energy_registry.get_provider(body.provider_id)
+    _new_model = _new_pinfo.get("spec_model") if _new_pinfo else None
+    return {"active": body.provider_id, "agent_name": compose_name(body.provider_id, model_id=_new_model)}
 
 
 @router.post("/agents/spawn")
@@ -366,4 +373,4 @@ editable_registry.register(EditableField(
     query_key="/api/v1/agents/energy-providers",
     options=["grok", "gemini", "claude"],
 ))
-# 292:41
+# 299:41

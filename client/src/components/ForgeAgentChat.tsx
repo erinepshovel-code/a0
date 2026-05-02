@@ -1,4 +1,4 @@
-// 183:4
+// 187:4
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Plus, Loader2, MessageSquare, Trash2, X } from "lucide-react";
@@ -114,13 +114,17 @@ export default function ForgeAgentChat({ agentId, agentName, onClose }: Props) {
 
   const conversations = convsQ.data || [];
   const messages = messagesQ.data || [];
+  const activeConv = conversations.find((c) => c.id === activeConvId);
+  const headerLabel = activeConv?.model
+    ? `a0(${activeConv.model})${agentName}`
+    : `a0(?)${agentName}`;
 
   return (
     <div className="border rounded-lg bg-card flex flex-col h-[60vh] sm:h-[70vh] overflow-hidden"
          data-testid={`forge-chat-${agentId}`}>
       <div className="flex items-center gap-2 px-3 py-2 border-b">
         <MessageSquare className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold truncate">Chat with {agentName}</span>
+        <span className="text-sm font-semibold font-mono truncate" data-testid={`forge-agent-label-${agentId}`}>{headerLabel}</span>
         <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs"
           onClick={() => newChat.mutate()}
           disabled={newChat.isPending}
@@ -188,7 +192,7 @@ export default function ForgeAgentChat({ agentId, agentName, onClose }: Props) {
         ) : (
           <div className="flex flex-col gap-2">
             {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate(c)} />
+              <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate(c)} instanceSlot={agentName} />
             ))}
           </div>
         )}
@@ -204,4 +208,4 @@ export default function ForgeAgentChat({ agentId, agentName, onClose }: Props) {
     </div>
   );
 }
-// 183:4
+// 187:4

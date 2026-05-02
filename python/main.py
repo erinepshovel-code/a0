@@ -1,4 +1,4 @@
-# 349:367
+# 350:373
 import os
 import time
 from contextlib import asynccontextmanager
@@ -195,7 +195,8 @@ async def lifespan(app: FastAPI):
     print(f"[python] PCNA p8 online — blueprint {pcna_8.blueprint_hash[:12]}...")
     await energy_registry.load_from_db()
     provider = energy_registry.get_active_provider()
-    agent_name = compose_name(provider)
+    _pinfo = energy_registry.get_provider(provider) if provider else None
+    agent_name = compose_name(provider, model_id=(_pinfo.get("spec_model") if _pinfo else None))
     print(f"[python] Agent: {agent_name}")
     from .routes.agents import ensure_primary_agent
     await ensure_primary_agent(pcna)
@@ -723,12 +724,13 @@ for r in ALL_ROUTERS:
 async def health():
     pcna = get_pcna()
     provider = energy_registry.get_active_provider()
+    _hp = energy_registry.get_provider(provider) if provider else None
     return {
         "status": "ok",
         "service": "python-backend",
         "pcna": "online",
         "instance_id": pcna.theta.instance_id,
-        "agent": compose_name(provider),
+        "agent": compose_name(provider, model_id=(_hp.get("spec_model") if _hp else None)),
         "energy_provider": provider,
         "uptime_s": round(time.time() - pcna.created_at, 1),
         "heartbeat": heartbeat_service.status(),
@@ -744,7 +746,12 @@ async def ui_structure():
     all_tabs.sort(key=lambda t: t.get("order", 99))
     return {
         "tabs": all_tabs,
-        "agent": compose_name(energy_registry.get_active_provider()),
+        "agent": compose_name(
+            energy_registry.get_active_provider(),
+            model_id=(
+                (energy_registry.get_provider(energy_registry.get_active_provider()) or {}).get("spec_model")
+            ),
+        ),
         "version": "2.0.0",
     }
 
@@ -757,4 +764,4 @@ if IS_PROD and os.path.isdir(STATIC_DIR):
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-# 349:367
+# 350:373
