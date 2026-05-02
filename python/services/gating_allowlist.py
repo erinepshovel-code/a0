@@ -58,7 +58,6 @@ OWNER_OR_PUBLIC_WRITES: list[AllowEntry] = [
     # === Public / unauthenticated entrypoints ===
     AllowEntry("guest.py", "POST", "/chat", "Guest preview chat — explicitly anonymous"),
     AllowEntry("cli.py", "POST", "/chat", "CLI chat entrypoint — owner-of-resource check on conv_id inside handler"),
-    AllowEntry("billing.py", "POST", "/donate", "Anonymous donations are explicitly accepted — the reframe says anyone, logged in or not, can support the instrument"),
 
     # === Per-user CRUD on caller's own data (uid header + ownership check) ===
     AllowEntry("approval_scopes.py", "POST", "/approval-scopes", "User grants scope to themselves; uid from header"),
@@ -71,6 +70,7 @@ OWNER_OR_PUBLIC_WRITES: list[AllowEntry] = [
     AllowEntry("transcripts.py", "POST", "/reports/{report_id}/explain", "Owner-only EDCMbone explainer; ownership checked via get_transcript_report join, billed against caller's own credits"),
     AllowEntry("billing.py", "POST", "/explainer-checkout", "Caller buys their own explainer pack; uid from header"),
     AllowEntry("openai_api.py", "POST", "/hmmm", "Per-user uncertainty signal recorded against caller uid"),
+    AllowEntry("billing.py", "POST", "/donate", "Per-user: authenticated user initiates their own donation checkout; uid enforced by handler (401 if missing). No shared instrument state mutated — Stripe session scoped to caller's customer record."),
     AllowEntry("billing.py", "POST", "/portal", "Caller opens their own Stripe customer portal"),
     AllowEntry("forge.py", "POST", "/duel", "Stub returning 501 — caller-initiated; no shared state"),
     AllowEntry("forge.py", "POST", "/instantiate", "Forge agent INSERT binds owner_id = uid; per-user"),

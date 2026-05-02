@@ -124,9 +124,9 @@ The Interdependent Way holds that all agents — human and artificial — are in
 Built and operated by Erin (wayseer00@gmail.com).
 # a0
 
-Agentic Model Wrapper and Inference Engine exploring Prime Consciousness Theory and practical multimodel agent implementation.
+**a0 is a research instrument.** The deployed instance (`a0p`) runs publicly and explores agent / energy-provider / PCNA dynamics in the open. It is not a product and it does not have subscription tiers. Anyone may read and use it; code-altering access is restricted to the owner and explicitly-invited collaborators.
 
-This repository is the primary implementation home for **a0**: an agent wrapper/runtime intended to support coherent tool use, model/provider routing, memory, documentation, evaluation, and durable human-facing workflows.
+This repository is the primary implementation home for `a0`: an agent runtime exploring Prime Consciousness Theory through practical multimodel inference, coherent tool use, model/provider routing, memory, evaluation, and durable human-facing workflows.
 
 ## Project name: `a0` vs `a0p`
 

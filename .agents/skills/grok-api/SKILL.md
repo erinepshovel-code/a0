@@ -132,23 +132,25 @@ print(f"\nTokens: {response.usage.prompt_tokens} in / {response.usage.completion
 
 ```python
 from xai_sdk import AsyncClient
-from xai_sdk.chat import user, ReasoningEffort
+from xai_sdk.chat import user
+from xai_sdk.proto.v6 import chat_pb2
 
 client = AsyncClient()
 chat = client.chat.create(
     model="grok-4-fast-reasoning",
     messages=[user("Solve this step by step...")],
-    reasoning_effort=ReasoningEffort.LOW,   # LOW | MEDIUM | HIGH
+    reasoning_effort=chat_pb2.ReasoningEffort.EFFORT_LOW,   # EFFORT_LOW | EFFORT_MEDIUM | EFFORT_HIGH
 )
 response = await chat.sample()
 ```
 
 Notes:
-- `grok-4` does NOT accept `MINIMAL` effort (unlike GPT-5).
+- Reasoning effort enum values: `chat_pb2.ReasoningEffort.EFFORT_LOW / EFFORT_MEDIUM / EFFORT_HIGH`.
+- `grok-4` does NOT accept minimal effort (unlike GPT-5).
 - `grok-4-fast-non-reasoning` ignores `reasoning_effort` entirely — use it when you don't want reasoning.
 - Reasoning tokens are in `response.usage.reasoning_tokens`.
 
-Map a0p `gate` to effort: `<0.6` → LOW, `0.6–1.0` → MEDIUM, `>1.0` → HIGH.
+Map a0p `gate` to effort: `<0.6` → EFFORT_LOW, `0.6–1.0` → EFFORT_MEDIUM, `>1.0` → EFFORT_HIGH.
 
 ## Live Search (xAI's hosted web search)
 
@@ -212,7 +214,7 @@ Live Search adds **$0.025 per source returned** (billed separately from tokens).
 - **Leaving `web_search` function tool active alongside `SearchParameters`** → model may double-fetch and burn budget. Strip `web_search` from the tool list when search parameters are set.
 - **Hardcoding `XAI_API_KEY`** → always read from `os.environ`. Replit secret is already set.
 - **Creating `AsyncClient` inside a sync function** → xai-sdk gRPC transport is async; always `await` in an `async def`. Use `Client` (blocking) only for scripts or sync test code.
-- **Expecting OpenAI `response_format=json_object`** → use `response_format=SomeModel` (Pydantic) or `ResponseFormat.JSON_SCHEMA` instead.
+- **Expecting OpenAI `response_format=json_object`** → use `response_format=SomePydanticModel` (pass a Pydantic class directly) or `response_format=chat_pb2.ResponseFormat(type=chat_pb2.ResponseFormat.JSON_OBJECT)` for raw JSON mode.
 
 ## Quick Decision Tree
 
