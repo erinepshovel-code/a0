@@ -1,4 +1,4 @@
-// 57:0
+// 64:4
 import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, timestamp, varchar, boolean, integer, text } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -77,4 +77,4 @@ export const recoveryAttempts = pgTable("recovery_attempts", {
 });
 
 export type RecoveryAttempt = typeof recoveryAttempts.$inferSelect;
-// 57:0
+// 64:4

@@ -1,4 +1,4 @@
-// 14:0
+// 18:0
 import "express-session";
 
 declare module "express-session" {
@@ -19,4 +19,4 @@ declare module "express-session" {
 }
 
 export {};
-// 14:0
+// 18:0

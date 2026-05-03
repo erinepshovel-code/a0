@@ -1,4 +1,4 @@
-// 226:16
+// 356:44
 import crypto from "crypto";
 import type { Express, Request, Response } from "express";
 import { authStorage } from "./storage";
@@ -434,4 +434,4 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 }
-// 226:16
+// 356:44
