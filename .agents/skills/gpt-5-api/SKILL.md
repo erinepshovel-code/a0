@@ -122,7 +122,7 @@ async with client.responses.stream(
     final = await stream.get_final_response()
 ```
 
-In a0p, the streaming endpoint lives in `python/routes/conversations.py::stream_message`. Forward `output_text.delta` events as SSE and emit a final `done` event with token usage from `final.usage`.
+In a0p, the streaming endpoint lives in `python/routes/chat.py::send_message` (which publishes SSE via the orch_progress bus). Forward `output_text.delta` events as SSE and emit a final `done` event with token usage from `final.usage`.
 
 ## reasoning_effort Guidance
 

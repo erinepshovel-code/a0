@@ -214,7 +214,7 @@ Live Search adds **$0.025 per source returned** (billed separately from tokens).
 - **Leaving `web_search` function tool active alongside `SearchParameters`** → model may double-fetch and burn budget. Strip `web_search` from the tool list when search parameters are set.
 - **Hardcoding `XAI_API_KEY`** → always read from `os.environ`. Replit secret is already set.
 - **Creating `AsyncClient` inside a sync function** → xai-sdk gRPC transport is async; always `await` in an `async def`. Use `Client` (blocking) only for scripts or sync test code.
-- **Expecting OpenAI `response_format=json_object`** → use `response_format=SomePydanticModel` (pass a Pydantic class directly) or `response_format=chat_pb2.ResponseFormat(type=chat_pb2.ResponseFormat.JSON_OBJECT)` for raw JSON mode.
+- **Expecting OpenAI `response_format=json_object`** → use `response_format=chat_pb2.ResponseFormat(format_type=chat_pb2.FORMAT_TYPE_JSON_OBJECT)` for raw JSON mode; for schema-constrained JSON use `format_type=chat_pb2.FORMAT_TYPE_JSON_SCHEMA`. `ResponseFormat` has no `.type` field and no `JSON_OBJECT` class attribute — those do not exist on the proto message.
 
 ## Quick Decision Tree
 
