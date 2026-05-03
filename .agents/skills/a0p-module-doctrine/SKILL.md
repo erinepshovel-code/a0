@@ -193,7 +193,19 @@ Handler code for a user-deployed hot-swap module must:
 
 ---
 
-## 9. Annotation Script Reference
+## 9. File Naming — PCEA Doctrine (new files only)
+
+All **new** files created in the a0p codebase must follow the PCEA four-letter-set naming convention. See `.agents/skills/a0p-pcea-naming/SKILL.md` for the full specification.
+
+Quick summary:
+- Filename = `{4chr}_{4chr}_{4chr}_v{major}.{minor}.{patch}{word}.{ext}`
+- Every chunk is exactly 4 lowercase letters, abbreviating the file's conceptual role
+- New files always start at `v0.0.0alpha` until the word-encoding scheme is published
+- Existing files are **never renamed** as a side effect of an unrelated edit
+
+---
+
+## 10. Annotation Script Reference
 
 ```bash
 # Re-stamp all Python + TypeScript/TSX files in the project

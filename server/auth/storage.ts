@@ -1,9 +1,12 @@
 // 150:0
-import { db } from "../db";
+import { db, pool } from "../db";
 import { users, challengeResponses, guestTokenUsage } from "@shared/models/auth";
 import { eq, and, gte } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { verifyPassphrase } from "./password";
+
+const MAX_RECOVERY_ATTEMPTS = 5;
+const RECOVERY_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 export const authStorage = {
   async getUser(id: string) {
@@ -108,6 +111,76 @@ export const authStorage = {
       );
     if (!row) return false;
     return verifyPassphrase(answer.trim().toLowerCase(), row.answerHash);
+  },
+
+  /**
+   * Returns true if the account is currently locked out of recovery attempts.
+   */
+  async isRecoveryLocked(userId: string): Promise<boolean> {
+    const result = await pool.query<{ locked_until: Date | null }>(
+      "SELECT locked_until FROM recovery_attempts WHERE user_id = $1",
+      [userId]
+    );
+    const row = result.rows[0];
+    if (!row || !row.locked_until) return false;
+    return new Date() < row.locked_until;
+  },
+
+  /**
+   * Records a failed recovery attempt for the account.
+   * On reaching MAX_RECOVERY_ATTEMPTS the account is locked for RECOVERY_LOCKOUT_MS.
+   * Returns locked=true when the lockout threshold was just crossed.
+   */
+  async recordRecoveryFailure(userId: string): Promise<{ locked: boolean }> {
+    const lockedUntilExpr = `CASE
+      WHEN fail_count + 1 >= ${MAX_RECOVERY_ATTEMPTS}
+      THEN NOW() + INTERVAL '${RECOVERY_LOCKOUT_MS} milliseconds'
+      ELSE NULL
+    END`;
+    const result = await pool.query<{ fail_count: number; locked_until: Date | null }>(
+      `INSERT INTO recovery_attempts (user_id, fail_count, locked_until, updated_at)
+       VALUES ($1, 1, ${MAX_RECOVERY_ATTEMPTS <= 1 ? `NOW() + INTERVAL '${RECOVERY_LOCKOUT_MS} milliseconds'` : "NULL"}, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+         SET fail_count   = recovery_attempts.fail_count + 1,
+             locked_until = ${lockedUntilExpr},
+             updated_at   = NOW()
+       RETURNING fail_count, locked_until`,
+      [userId]
+    );
+    const row = result.rows[0];
+    return { locked: !!(row?.locked_until && new Date() < row.locked_until) };
+  },
+
+  /**
+   * Clears the recovery attempt record for an account after a successful recovery.
+   */
+  async clearRecoveryAttempts(userId: string): Promise<void> {
+    await pool.query(
+      "DELETE FROM recovery_attempts WHERE user_id = $1",
+      [userId]
+    );
+  },
+
+  /**
+   * Logs a security probe event to the intelligence table.
+   * Fire-and-forget safe — callers should not await this for latency-sensitive paths.
+   *
+   * @param probeType  - categorises the event (e.g. 'recovery_probe', 'honeypot_trigger', 'honeypot_passphrase')
+   * @param ipHash     - sha256 of the source IP (never raw IP)
+   * @param accountHash - sha256 of the targeted userId or email
+   * @param detail     - arbitrary structured intelligence payload
+   */
+  async logSecurityProbe(
+    probeType: string,
+    ipHash: string | null,
+    accountHash: string | null,
+    detail: Record<string, unknown>
+  ): Promise<void> {
+    await pool.query(
+      `INSERT INTO security_probes (probe_type, ip_hash, account_hash, detail)
+       VALUES ($1, $2, $3, $4)`,
+      [probeType, ipHash, accountHash, JSON.stringify(detail)]
+    );
   },
 };
 

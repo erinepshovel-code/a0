@@ -9,6 +9,36 @@ function sha256Hex(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
+/** sha256 of an attacker-supplied value — hashed before storage so we never keep plaintext credentials. */
+function probeHash(value: string): string {
+  return sha256Hex(value);
+}
+
+/** Returns a stable hash of the request IP for storage, never the raw address. */
+function ipHash(req: Request): string {
+  return sha256Hex(String(req.ip ?? req.socket?.remoteAddress ?? "unknown"));
+}
+
+/**
+ * Fire-and-forget probe logger.  Never awaited on the hot path.
+ */
+function logProbe(
+  probeType: string,
+  req: Request,
+  accountKey: string | null,
+  detail: Record<string, unknown>
+): void {
+  const ih = ipHash(req);
+  const ah = accountKey ? probeHash(accountKey) : null;
+  const ua = String(req.headers["user-agent"] ?? "");
+  authStorage
+    .logSecurityProbe(probeType, ih, ah, {
+      ua_hash: probeHash(ua),
+      ...detail,
+    })
+    .catch((err) => console.warn("[probe] log failed:", err));
+}
+
 /**
  * Fire-and-forget call to the FastAPI internal endpoint that promotes
  * recognized work-email accounts to the WS tier. Failures are logged
@@ -18,8 +48,6 @@ async function tryPromoteWs(userId: string, email: string | null | undefined): P
   try {
     const secret = process.env.INTERNAL_API_SECRET;
     if (!secret) {
-      // start-dev.sh exports a per-run secret in dev; if it's missing,
-      // skip the call rather than 401-ing the user.
       return;
     }
     const port = process.env.PYTHON_PORT || "8001";
@@ -82,12 +110,10 @@ export function registerAuthRoutes(app: Express) {
         return res.status(401).json({ message: "Invalid username or passphrase" });
       }
       await authStorage.updateLastLogin(user.id);
-      // Regenerate session to prevent session-fixation attacks across the auth boundary.
       await regenerateSession(req);
       req.session.userId = user.id;
       req.session.userEmail = user.email ?? undefined;
       req.session.userRole = user.role;
-      // Fire-and-forget: promote work-email accounts to WS tier on every login.
       void tryPromoteWs(user.id, user.email);
       const { passphraseHash: _, ...safe } = user;
       res.json({ user: safe });
@@ -134,12 +160,10 @@ export function registerAuthRoutes(app: Express) {
         }
       }
 
-      // Regenerate session before establishing the new authenticated identity.
       await regenerateSession(req);
       req.session.userId = user.id;
       req.session.userEmail = user.email ?? undefined;
       req.session.userRole = user.role;
-      // Fire-and-forget: promote work-email accounts to WS tier on registration.
       void tryPromoteWs(user.id, user.email);
 
       const { passphraseHash: _, ...safe } = user;
@@ -164,22 +188,88 @@ export function registerAuthRoutes(app: Express) {
     });
   });
 
+  // ─── Password-recovery flow ────────────────────────────────────────────────
+
+  // Pool of plausible recovery questions used to build per-email decoys.
+  // Derived deterministically from sha256(email) — same address always gets the
+  // same question (repeated probes are consistent), different addresses get
+  // different ones (no fixed fingerprint to detect as fake).
+  const DECOY_POOL = [
+    "What is the name of your childhood best friend?",
+    "What was the make and model of your first car?",
+    "In what city were you born?",
+    "What is your mother's maiden name?",
+    "What was the name of your first school?",
+    "What is the name of your oldest sibling?",
+    "What was your childhood nickname?",
+    "What is the name of the street you grew up on?",
+    "What was the name of your first pet?",
+    "What is your paternal grandmother's first name?",
+    "What was the mascot of your high school?",
+    "What is the first concert you attended?",
+    "What was the name of your favourite teacher?",
+    "In what city did your parents meet?",
+    "What was the name of the hospital where you were born?",
+    "What was your childhood hero's name?",
+  ];
+
+  function decoyQuestionFor(email: string): { id: number; question: string; sortOrder: number } {
+    const hash = crypto.createHash("sha256").update(email.toLowerCase().trim()).digest();
+    const idx = hash.readUInt32BE(0) % DECOY_POOL.length;
+    return { id: 0, question: DECOY_POOL[idx], sortOrder: 0 };
+  }
+
+  /**
+   * Issues a honeypot reset token indistinguishable from a real one.
+   * The attacker believes they have succeeded; the session is flagged so
+   * /reset/passphrase will log their chosen credentials and return fake 200.
+   */
+  function issueHoneypotToken(req: Request, res: Response): void {
+    const fakeToken = crypto.randomBytes(32).toString("hex");
+    const FIFTEEN_MIN = 15 * 60 * 1000;
+    // Store the hash identically to the real flow so the passphrase endpoint's
+    // token-validation logic still passes — we just check resetIsHoneypot first.
+    req.session.resetTokenHash = sha256Hex(fakeToken);
+    req.session.resetTokenExpiry = Date.now() + FIFTEEN_MIN;
+    req.session.resetIsHoneypot = true;
+    delete req.session.pendingResetUserId;
+    delete req.session.pendingResetExpiry;
+    delete req.session.pendingResetIsDecoy;
+    res.json({ resetToken: fakeToken });
+  }
+
   app.get("/api/auth/reset/questions", async (req: Request, res: Response) => {
     const { email } = req.query as { email?: string };
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
     }
+    const FIFTEEN_MIN = 15 * 60 * 1000;
     try {
       const user = await authStorage.getUserByEmail(email);
       if (!user) {
-        return res.status(404).json({ message: "No account found with that email" });
+        // Return 200 + per-email decoy — callers cannot distinguish "no account"
+        // from "account without recovery questions" by status code or question text.
+        req.session.pendingResetIsDecoy = true;
+        req.session.pendingResetExpiry = Date.now() + FIFTEEN_MIN;
+        return res.json({ questions: [decoyQuestionFor(email)] });
       }
-      const questions = await authStorage.getChallengeQuestions(user.id);
-      if (questions.length === 0) {
-        return res.status(404).json({ message: "No recovery questions set for this account" });
+      // Gate on the durable account-level lockout before revealing any real state.
+      const locked = await authStorage.isRecoveryLocked(user.id);
+      if (locked) {
+        return res.status(429).json({ message: "Too many failed recovery attempts. Please wait before trying again." });
       }
+      const allQuestions = await authStorage.getChallengeQuestions(user.id);
+      if (allQuestions.length === 0) {
+        // Decoy path — indistinguishable from "no account".
+        req.session.pendingResetIsDecoy = true;
+        req.session.pendingResetExpiry = Date.now() + FIFTEEN_MIN;
+        return res.json({ questions: [decoyQuestionFor(email)] });
+      }
+      // Pick exactly one question at random — never expose the full set.
+      const picked = allQuestions[Math.floor(Math.random() * allQuestions.length)];
       req.session.pendingResetUserId = user.id;
-      res.json({ userId: user.id, questions });
+      req.session.pendingResetExpiry = Date.now() + FIFTEEN_MIN;
+      res.json({ questions: [{ id: picked.id, question: picked.question, sortOrder: picked.sortOrder }] });
     } catch {
       res.status(500).json({ message: "Internal server error" });
     }
@@ -190,23 +280,75 @@ export function registerAuthRoutes(app: Express) {
     if (!challengeId || !answer) {
       return res.status(400).json({ message: "challengeId and answer are required" });
     }
+
+    // TTL check applies to both real and decoy sessions.
+    if (!req.session.pendingResetExpiry || Date.now() > req.session.pendingResetExpiry) {
+      delete req.session.pendingResetUserId;
+      delete req.session.pendingResetExpiry;
+      delete req.session.pendingResetIsDecoy;
+      return res.status(400).json({ message: "Recovery session expired. Please start over." });
+    }
+
+    // Decoy sessions — no matching account or account has no recovery questions.
+    // Log the probe so we capture what answers they're trying, then fail gracefully.
+    if (req.session.pendingResetIsDecoy) {
+      logProbe("decoy_probe", req, null, {
+        answer_hash: probeHash(String(answer)),
+        challenge_id: challengeId,
+      });
+      delete req.session.pendingResetIsDecoy;
+      delete req.session.pendingResetExpiry;
+      return res.status(401).json({ message: "Incorrect answer" });
+    }
+
     const userId = req.session.pendingResetUserId;
     if (!userId) {
       return res.status(400).json({ message: "No pending reset session. Start from the email step." });
     }
+
     try {
+      // Check durable account-level lockout BEFORE bcrypt — blocks session-restart bypass.
+      // If already locked while they have an active session: issue honeypot instead of
+      // revealing the lockout state, capturing their next attempted passphrase.
+      const alreadyLocked = await authStorage.isRecoveryLocked(userId);
+      if (alreadyLocked) {
+        logProbe("honeypot_trigger", req, userId, {
+          reason: "already_locked",
+          answer_hash: probeHash(String(answer)),
+        });
+        return issueHoneypotToken(req, res);
+      }
+
+      // Log every real verify attempt (before bcrypt) for pattern analysis.
+      logProbe("recovery_probe", req, userId, {
+        answer_hash: probeHash(String(answer)),
+        challenge_id: challengeId,
+      });
+
       const ok = await authStorage.verifyChallengeAnswer(userId, Number(challengeId), answer);
       if (!ok) {
+        const { locked } = await authStorage.recordRecoveryFailure(userId);
+        if (locked) {
+          // Lockout threshold just crossed. Trap the attacker in the honeypot
+          // instead of returning 429 — they believe they've succeeded.
+          logProbe("honeypot_trigger", req, userId, {
+            reason: "lockout_threshold",
+            answer_hash: probeHash(String(answer)),
+          });
+          return issueHoneypotToken(req, res);
+        }
         return res.status(401).json({ message: "Incorrect answer" });
       }
+
+      // Genuine success — clear attempt record and issue the real token.
+      await authStorage.clearRecoveryAttempts(userId);
       const resetToken = crypto.randomBytes(32).toString("hex");
       const FIFTEEN_MIN = 15 * 60 * 1000;
-      // Store only the hash of the reset token in the session — never plaintext.
-      // The plaintext is returned to the caller once and must be presented back.
       req.session.resetTokenHash = sha256Hex(resetToken);
       req.session.resetTokenExpiry = Date.now() + FIFTEEN_MIN;
       req.session.resetVerifiedUserId = userId;
       delete req.session.pendingResetUserId;
+      delete req.session.pendingResetExpiry;
       delete req.session.resetToken;
       res.json({ resetToken });
     } catch {
@@ -219,6 +361,41 @@ export function registerAuthRoutes(app: Express) {
     if (!resetToken || !newPassphrase) {
       return res.status(400).json({ message: "resetToken and newPassphrase are required" });
     }
+
+    // ── Honeypot path ────────────────────────────────────────────────────────
+    // Validate the token shape first so we don't expose a bypass via this check.
+    if (req.session.resetIsHoneypot) {
+      const storedHash = req.session.resetTokenHash;
+      const presentedHash = typeof resetToken === "string" ? sha256Hex(resetToken) : "";
+      let tokenShapeValid = false;
+      if (
+        storedHash &&
+        req.session.resetTokenExpiry &&
+        presentedHash.length === storedHash.length &&
+        Date.now() <= req.session.resetTokenExpiry
+      ) {
+        tokenShapeValid = crypto.timingSafeEqual(
+          Buffer.from(storedHash, "hex"),
+          Buffer.from(presentedHash, "hex"),
+        );
+      }
+      if (tokenShapeValid) {
+        // Capture the attacker's chosen new password (hashed) and all fingerprint
+        // data, then return a fake success — they believe the account is theirs.
+        logProbe("honeypot_passphrase", req, null, {
+          passphrase_hash: probeHash(String(newPassphrase)),
+          passphrase_len: String(newPassphrase).length,
+        });
+      }
+      // Clear honeypot session state regardless of token validity.
+      delete req.session.resetIsHoneypot;
+      delete req.session.resetTokenHash;
+      delete req.session.resetTokenExpiry;
+      // Return fake 200 OK — attacker thinks they've reset the password.
+      return res.json({ ok: true });
+    }
+    // ── End honeypot path ────────────────────────────────────────────────────
+
     const storedHash = req.session.resetTokenHash;
     const presentedHash = typeof resetToken === "string" ? sha256Hex(resetToken) : "";
     let tokenValid = false;
@@ -228,7 +405,6 @@ export function registerAuthRoutes(app: Express) {
       presentedHash.length === storedHash.length &&
       Date.now() <= req.session.resetTokenExpiry
     ) {
-      // Constant-time comparison of the two SHA-256 hashes.
       tokenValid = crypto.timingSafeEqual(
         Buffer.from(storedHash, "hex"),
         Buffer.from(presentedHash, "hex"),
@@ -251,8 +427,6 @@ export function registerAuthRoutes(app: Express) {
     try {
       const newHash = await hashPassphrase(newPassphrase);
       await authStorage.updatePassphrase(resetUserId, newHash);
-      // Burn any existing session and start fresh — invalidates other tabs that
-      // may have been mid-flow with the prior credentials.
       await regenerateSession(req);
       res.json({ ok: true });
     } catch {

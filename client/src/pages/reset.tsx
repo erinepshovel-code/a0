@@ -46,9 +46,7 @@ export default function ResetPage() {
   const [step, setStep] = useState<Step>("email");
   const [error, setError] = useState<string | null>(null);
 
-  const [userId, setUserId] = useState<string | null>(null);
-  const [questions, setQuestions] = useState<ChallengeQuestion[]>([]);
-  const [selectedQuestion, setSelectedQuestion] = useState<ChallengeQuestion | null>(null);
+  const [question, setQuestion] = useState<ChallengeQuestion | null>(null);
   const [resetToken, setResetToken] = useState<string | null>(null);
 
   const emailForm = useForm<EmailForm>({
@@ -78,9 +76,7 @@ export default function ResetPage() {
         setError(data.message ?? "No account found with that email");
         return;
       }
-      setUserId(data.userId);
-      setQuestions(data.questions);
-      setSelectedQuestion(data.questions[0] ?? null);
+      setQuestion(data.questions[0] ?? null);
       setStep("challenge");
     } catch {
       setError("Something went wrong. Please try again.");
@@ -88,7 +84,7 @@ export default function ResetPage() {
   }
 
   async function onChallengeSubmit(values: ChallengeForm) {
-    if (!userId || !selectedQuestion) return;
+    if (!question) return;
     setError(null);
     try {
       const res = await fetch("/api/auth/reset/verify", {
@@ -96,8 +92,7 @@ export default function ResetPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          userId,
-          challengeId: selectedQuestion.id,
+          challengeId: question.id,
           answer: values.answer,
         }),
       });
@@ -216,7 +211,7 @@ export default function ResetPage() {
           </div>
         )}
 
-        {step === "challenge" && questions.length > 0 && selectedQuestion && (
+        {step === "challenge" && question && (
           <div className="w-full space-y-4">
             <button
               onClick={() => { setStep("email"); setError(null); challengeForm.reset(); }}
@@ -227,27 +222,6 @@ export default function ResetPage() {
               Change email
             </button>
 
-            {questions.length > 1 && (
-              <div className="space-y-1">
-                <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Select a question</p>
-                {questions.map((q) => (
-                  <button
-                    key={q.id}
-                    type="button"
-                    onClick={() => { setSelectedQuestion(q); challengeForm.reset(); setError(null); }}
-                    className={`w-full text-left text-xs px-3 py-2 rounded-lg border transition-colors ${
-                      selectedQuestion.id === q.id
-                        ? "border-primary text-primary bg-primary/10"
-                        : "border-zinc-800 text-zinc-400 hover:border-zinc-600"
-                    }`}
-                    data-testid={`button-select-question-${q.id}`}
-                  >
-                    {q.question}
-                  </button>
-                ))}
-              </div>
-            )}
-
             <Form {...challengeForm}>
               <form onSubmit={challengeForm.handleSubmit(onChallengeSubmit)} className="space-y-4">
                 <FormField
@@ -255,7 +229,7 @@ export default function ResetPage() {
                   name="answer"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-zinc-400 text-xs">{selectedQuestion.question}</FormLabel>
+                      <FormLabel className="text-zinc-400 text-xs">{question.question}</FormLabel>
                       <FormControl>
                         <Input
                           type="password"

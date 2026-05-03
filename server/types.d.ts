@@ -7,10 +7,14 @@ declare module "express-session" {
     userEmail?: string;
     userRole?: string;
     pendingResetUserId?: string;
+    pendingResetExpiry?: number;
+    pendingResetIsDecoy?: boolean;
+    resetFailureCount?: number;
     resetVerifiedUserId?: string;
     resetToken?: string;
     resetTokenHash?: string;
     resetTokenExpiry?: number;
+    resetIsHoneypot?: boolean;
   }
 }
 

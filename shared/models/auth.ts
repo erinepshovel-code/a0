@@ -64,4 +64,17 @@ export const guestTokenUsage = pgTable("guest_token_usage", {
 });
 
 export type GuestTokenUsage = typeof guestTokenUsage.$inferSelect;
+
+/**
+ * Durable per-account rate-limiting table for the password-recovery flow.
+ * Keyed by userId so lockout persists across sessions and server restarts.
+ */
+export const recoveryAttempts = pgTable("recovery_attempts", {
+  userId: varchar("user_id").primaryKey(),
+  failCount: integer("fail_count").notNull().default(0),
+  lockedUntil: timestamp("locked_until"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type RecoveryAttempt = typeof recoveryAttempts.$inferSelect;
 // 57:0
