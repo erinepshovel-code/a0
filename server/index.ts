@@ -13,6 +13,9 @@ import {
   seedAdminUser,
 } from "./auth";
 import { registerAttachmentRoutes } from "./attachments";
+import { db } from "./db";
+import { messageAttachments } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? "5000", 10);
@@ -87,15 +90,59 @@ async function waitForPython(maxWaitMs = 120_000): Promise<void> {
   registerAttachmentRoutes(app);
   await seedAdminUser();
 
-  // Serve uploaded files (images attached to chat messages, generated images).
-  // Authed gate: any session-authenticated user may read; the path is opaque
-  // (uuid-based) so unauthenticated guessing is infeasible but we still gate.
+  // Serve uploaded files with per-file ownership checks.
+  // Files are forced to download (Content-Disposition: attachment) so no
+  // uploaded content — including code or markup — can execute in the browser
+  // as same-origin active content.
   const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  app.use("/uploads", (req, res, next) => {
-    if (!req.session?.userId) return res.status(401).json({ error: "Unauthorized" });
-    next();
-  }, express.static(UPLOADS_DIR, { maxAge: "1h" }));
+  app.get("/uploads/:filename", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const { filename } = req.params;
+    // Reject any path traversal attempts before touching the DB or filesystem.
+    if (!filename || filename.includes("/") || filename.includes("..")) {
+      return res.status(400).json({ error: "Invalid filename" });
+    }
+
+    const storageUrl = `/uploads/${filename}`;
+    let row: { ownerUserId: string | null } | undefined;
+    try {
+      [row] = await db
+        .select({ ownerUserId: messageAttachments.ownerUserId })
+        .from(messageAttachments)
+        .where(eq(messageAttachments.storageUrl, storageUrl))
+        .limit(1);
+    } catch (e) {
+      console.error("[uploads] db lookup failed:", e);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+
+    if (!row) return res.status(404).json({ error: "Not found" });
+    // Return 404 rather than 403 so the existence of another user's filename
+    // is not leaked to an authenticated attacker.
+    if (row.ownerUserId !== userId) return res.status(404).json({ error: "Not found" });
+
+    const filePath = path.join(UPLOADS_DIR, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Not found" });
+
+    // Harden response headers so uploaded content can never execute as
+    // same-origin active content even if an active file type slips through:
+    //
+    // • CSP sandbox — strips all browsing-context privileges from the document:
+    //   no script, no same-origin access, no plugins, no form submission.
+    //   This is the primary active-content neutralisation layer.
+    // • Content-Disposition: attachment — browser must prompt a download rather
+    //   than rendering the file inline, providing a second layer.
+    // • X-Content-Type-Options: nosniff — prevents MIME-type sniffing that
+    //   could cause a text file to be interpreted as HTML.
+    res.setHeader("Content-Security-Policy", "sandbox");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.sendFile(filePath);
+  });
 
   // Serve the a0 CLI script as plain text so users can `curl -fsSL <host>/a0 -o ~/.local/bin/a0`.
   app.get("/a0", (_req, res) => {

@@ -16,7 +16,7 @@ const IMAGE_MIME = new Set([
 const DOC_MIME = new Set([
   "application/pdf",
   "text/plain", "text/markdown", "text/csv",
-  "text/html", "text/x-python", "text/javascript", "text/typescript",
+  "text/x-python", "text/javascript", "text/typescript",
   "application/json", "application/xml", "application/yaml", "text/yaml",
   "application/zip",
 ]);
@@ -24,7 +24,7 @@ const DOC_MIME = new Set([
 // Fall back to extension whitelist for those.
 const DOC_EXT = new Set([
   ".pdf", ".txt", ".md", ".csv", ".tsv", ".json", ".yaml", ".yml",
-  ".xml", ".html", ".htm", ".py", ".js", ".ts", ".tsx", ".jsx",
+  ".xml", ".py", ".js", ".ts", ".tsx", ".jsx",
   ".go", ".rs", ".java", ".c", ".cc", ".cpp", ".h", ".sh", ".sql",
   ".log", ".toml", ".ini", ".env",
 ]);
