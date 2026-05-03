@@ -1,6 +1,7 @@
 # 368:258
 import os
 import stripe
+from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
@@ -57,6 +58,59 @@ router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 # subscribers are honored via the Stripe webhook + portal until they cancel.
 _DONATION_RETURN_PATH = "/pricing?donation=success"
 _WS_DOMAIN = "interdependentway.org"
+
+
+def _is_production() -> bool:
+    """Return True when running in the production/deployed environment."""
+    env = os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "")).lower()
+    return env in ("production", "prod")
+
+
+def _allowed_netlocs() -> set[str]:
+    """Return the set of trusted (scheme, netloc) pairs for return-URL validation.
+
+    Reads APP_ORIGIN from the environment (comma-separated list supported).
+    Localhost variants are included only outside production to avoid
+    allowing developer-only origins in the deployed app.
+    Comparison uses the parsed netloc (host[:port]) so prefix-bypass attacks
+    like https://a0p.replit.app.evil.com are rejected.
+    """
+    env = os.environ.get("APP_ORIGIN", "")
+    raw = [o.strip().rstrip("/") for o in env.split(",") if o.strip()]
+    if not raw:
+        raw = ["https://a0p.replit.app"]
+    netlocs: set[str] = set()
+    for origin in raw:
+        parsed = urlparse(origin)
+        if parsed.scheme and parsed.netloc:
+            netlocs.add(parsed.netloc)
+    if not _is_production():
+        # Allow local dev servers on any port.
+        netlocs.update({"localhost", "127.0.0.1"})
+    return netlocs
+
+
+def _safe_return_url(candidate: Optional[str], fallback: str) -> str:
+    """Return *candidate* if its origin is in the trusted allowlist; else *fallback*.
+
+    Validates by parsing the URL and comparing the normalized netloc
+    (host[:port]) against the allowlist, so prefix-bypass tricks such as
+    https://a0p.replit.app.evil.com/ are rejected.  Attacker-supplied values
+    that target external hosts are silently replaced with the application's
+    own safe default.
+    """
+    if candidate:
+        try:
+            parsed = urlparse(candidate)
+            if parsed.scheme in ("http", "https") and parsed.netloc:
+                if parsed.netloc in _allowed_netlocs():
+                    return candidate
+        except Exception:
+            pass
+        print(f"[billing] rejected untrusted return_url={candidate!r}; using fallback")
+    return fallback
+
+
 _ALLOWED_USER_COLS = {
     "stripe_customer_id", "stripe_subscription_id", "subscription_tier",
     "subscription_status",
@@ -263,8 +317,9 @@ async def create_donation(body: DonateBody, request: Request):
         )
 
     stripe.api_key = STRIPE_SECRET_KEY
-    origin = request.headers.get("origin") or "https://a0p.replit.app"
-    return_url = body.return_url or f"{origin}{_DONATION_RETURN_PATH}"
+    allowed_origins = _allowed_origins()
+    fallback_origin = allowed_origins[0] if allowed_origins else "https://a0p.replit.app"
+    return_url = _safe_return_url(body.return_url, f"{fallback_origin}{_DONATION_RETURN_PATH}")
 
     async with engine.connect() as conn:
         row = await conn.execute(
@@ -333,8 +388,11 @@ async def customer_portal(body: PortalBody, request: Request):
     if not rec or not rec["stripe_customer_id"]:
         raise HTTPException(status_code=404, detail="No billing account found")
 
+    allowed_origins = _allowed_origins()
+    fallback_origin = allowed_origins[0] if allowed_origins else "https://a0p.replit.app"
+    safe_url = _safe_return_url(body.return_url, f"{fallback_origin}/pricing")
     session = stripe.billing_portal.Session.create(
-        customer=rec["stripe_customer_id"], return_url=body.return_url,
+        customer=rec["stripe_customer_id"], return_url=safe_url,
     )
     return {"url": session.url}
 
@@ -475,6 +533,17 @@ async def _dispatch_webhook(event: dict) -> None:
 
     if etype == "checkout.session.completed":
         await _handle_checkout_completed(event["data"]["object"])
+    elif etype == "checkout.session.async_payment_succeeded":
+        # Delayed-payment method settled successfully — now safe to grant credits.
+        await _grant_explainer_credits_if_applicable(event["data"]["object"])
+    elif etype == "checkout.session.async_payment_failed":
+        # Delayed-payment method failed after checkout.session.completed fired.
+        # Credits were intentionally withheld (payment_status check in
+        # _handle_checkout_completed) so no reversal is needed here.
+        sess = event["data"]["object"]
+        uid = (sess.get("metadata") or {}).get("user_id", "<unknown>")
+        pk = (sess.get("metadata") or {}).get("product_key", "")
+        print(f"[billing] async_payment_failed: uid={uid} product_key={pk} — no credits were granted")
     elif etype in ("customer.subscription.updated", "customer.subscription.created"):
         await _handle_subscription_updated(event["data"]["object"])
     elif etype == "customer.subscription.deleted":
@@ -506,9 +575,56 @@ async def _dispatch_webhook(event: dict) -> None:
         await _handle_charge_refunded(event["data"]["object"])
 
 
+async def _grant_explainer_credits_if_applicable(sess: dict) -> None:
+    """Grant explainer-pack credits from a confirmed-paid checkout session.
+
+    Called from two paths:
+    - ``checkout.session.completed`` when ``payment_status == "paid"``
+      (immediate-settlement methods such as card).
+    - ``checkout.session.async_payment_succeeded`` for delayed-payment
+      methods whose funds settle after the completed event fires.
+
+    Credits are never granted from ``checkout.session.completed`` when
+    ``payment_status`` is ``"unpaid"`` or ``"no_payment_required"``; the
+    async_payment_succeeded event is the authoritative settlement signal
+    for those flows.
+    """
+    uid = (sess.get("metadata") or {}).get("user_id")
+    product_key = (sess.get("metadata") or {}).get("product_key", "")
+    if not uid or product_key != "explainer_pack":
+        return
+
+    # Re-derive pack count strictly from the confirmed settled amount so that
+    # metadata tampering in the Stripe dashboard cannot mint free credits.
+    # Require at least one full pack price ($50); reject underpriced sessions
+    # outright rather than awarding a floor of 1.
+    _PACK_PRICE_CENTS = 5000
+    amount_total = int(sess.get("amount_total") or 0)
+    if amount_total < _PACK_PRICE_CENTS:
+        print(
+            f"[billing] explainer_pack rejected: amount_total={amount_total}c "
+            f"is below the minimum pack price of {_PACK_PRICE_CENTS}c for uid={uid}"
+        )
+        return
+    packs = amount_total // _PACK_PRICE_CENTS
+    # Cross-check against metadata packs for transparency, but trust amount.
+    try:
+        packs_meta = int((sess.get("metadata") or {}).get("packs", packs) or packs)
+    except (TypeError, ValueError):
+        packs_meta = packs
+    if packs != packs_meta:
+        print(
+            f"[billing] explainer_pack amount/metadata mismatch: "
+            f"amount_total={amount_total}c → {packs} packs, "
+            f"metadata.packs={packs_meta} — trusting amount."
+        )
+    from ..storage import storage as _storage
+    await _storage.add_explanation_credits(uid, packs=packs)
+
+
 async def _handle_checkout_completed(sess: dict) -> None:
-    uid = sess.get("metadata", {}).get("user_id")
-    product_key = sess.get("metadata", {}).get("product_key", "")
+    uid = (sess.get("metadata") or {}).get("user_id")
+    product_key = (sess.get("metadata") or {}).get("product_key", "")
     customer_id = sess.get("customer")
     subscription_id = sess.get("subscription")
 
@@ -543,26 +659,21 @@ async def _handle_checkout_completed(sess: dict) -> None:
             async with engine.begin() as conn:
                 await conn.execute(text(f"UPDATE users SET {set_clause} WHERE id = :uid"), safe)
 
-    # Explainer pack: $50 = 3 explanations. We re-derive pack count from
-    # the session amount as defense-in-depth so a metadata edit in the
-    # Stripe dashboard can't mint free credits.
+    # Explainer pack: only grant credits when Stripe confirms the payment
+    # has actually settled. For immediate-payment methods (e.g. card),
+    # payment_status is "paid" at the time checkout.session.completed fires.
+    # For delayed/async methods it will be "unpaid" here; in that case we
+    # wait for checkout.session.async_payment_succeeded before granting.
     if product_key == "explainer_pack":
-        try:
-            packs_meta = int(sess.get("metadata", {}).get("packs", 1) or 1)
-        except (TypeError, ValueError):
-            packs_meta = 1
-        amount_total = int(sess.get("amount_total") or 0)
-        # Reject mismatched amounts to defeat metadata tampering.
-        expected_cents = packs_meta * 5000
-        if amount_total and amount_total != expected_cents:
+        payment_status = sess.get("payment_status", "")
+        if payment_status == "paid":
+            await _grant_explainer_credits_if_applicable(sess)
+        else:
             print(
-                f"[billing] explainer_pack amount mismatch: "
-                f"got {amount_total}c, expected {expected_cents}c (packs={packs_meta}). "
-                f"Trusting amount over metadata."
+                f"[billing] explainer_pack checkout.session.completed for uid={uid} "
+                f"with payment_status={payment_status!r} — deferring credit grant "
+                f"until checkout.session.async_payment_succeeded"
             )
-            packs_meta = max(1, amount_total // 5000)
-        from ..storage import storage as _storage
-        await _storage.add_explanation_credits(uid, packs=packs_meta)
 
 
 async def _handle_subscription_updated(sub: dict) -> None:
@@ -676,10 +787,10 @@ async def explainer_checkout(request: Request):
     stripe.api_key = STRIPE_SECRET_KEY
 
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    return_url = body.get("return_url") if isinstance(body, dict) else None
-    origin = request.headers.get("origin") or "https://a0p.replit.app"
-    if not return_url:
-        return_url = f"{origin}/transcripts?explainer_checkout=success"
+    candidate_url = body.get("return_url") if isinstance(body, dict) else None
+    allowed_origins = _allowed_origins()
+    fallback_origin = allowed_origins[0] if allowed_origins else "https://a0p.replit.app"
+    return_url = _safe_return_url(candidate_url, f"{fallback_origin}/transcripts?explainer_checkout=success")
 
     async with engine.connect() as conn:
         row = await conn.execute(
