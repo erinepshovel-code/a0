@@ -1,4 +1,4 @@
-# 222:46
+# 239:47
 """xai_provider — xAI Grok via the official xai-sdk (gRPC).
 
 Migrated from raw httpx to the `xai-sdk` Python SDK (v1.12+). The contract
@@ -33,6 +33,20 @@ from xai_sdk.chat import (
     tool_result,
     user,
 )
+from xai_sdk.proto.v6 import chat_pb2 as _chat_pb2
+
+_EFFORT_MAP: dict[str, int] = {
+    "low":    _chat_pb2.ReasoningEffort.EFFORT_LOW,
+    "medium": _chat_pb2.ReasoningEffort.EFFORT_MEDIUM,
+    "high":   _chat_pb2.ReasoningEffort.EFFORT_HIGH,
+}
+
+
+def _effort_enum(effort: Optional[str]):
+    """Map a string effort level to the xai-sdk proto enum value, or None."""
+    if not effort:
+        return None
+    return _EFFORT_MAP.get(effort.lower())
 
 from ._resolver import resolve_model_for_role
 
@@ -168,12 +182,16 @@ async def _call_with_search(
     xai_messages = _to_xai_messages(messages)
     search_params = SearchParameters(mode="auto", return_citations=True)
 
-    chat = client.chat.create(
+    create_kw: dict = dict(
         model=model,
         messages=xai_messages,
         max_tokens=max_tokens,
         search_parameters=search_params,
     )
+    effort = _effort_enum(reasoning_effort)
+    if effort is not None:
+        create_kw["reasoning_effort"] = effort
+    chat = client.chat.create(**create_kw)
 
     try:
         response = await chat.sample()
@@ -230,6 +248,9 @@ async def _call_with_tools(
     )
     if xai_tools:
         create_kwargs["tools"] = xai_tools
+    effort = _effort_enum(reasoning_effort)
+    if effort is not None:
+        create_kwargs["reasoning_effort"] = effort
 
     accumulated_usage: dict = {}
     prev_fingerprint: Optional[str] = None
@@ -327,4 +348,4 @@ async def _stream_chat(
             pass
 
     return ("".join(text_parts) or "[no content]"), accumulated_usage
-# 222:46
+# 239:47
