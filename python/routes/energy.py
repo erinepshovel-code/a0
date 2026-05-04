@@ -25,7 +25,7 @@ import time
 import re
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Any, Literal
+from typing import Optional, Literal
 from sqlalchemy import text as sa_text
 
 from ..services.energy_registry import (
