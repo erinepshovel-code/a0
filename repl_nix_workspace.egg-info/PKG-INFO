@@ -3,6 +3,7 @@ Name: repl-nix-workspace
 Version: 0.1.0
 Summary: Add your description here
 Requires-Python: >=3.12
+License-File: LICENSE
 Requires-Dist: aimmh-lib>=1.1.0
 Requires-Dist: aiofiles>=25.1.0
 Requires-Dist: alembic>=1.18.4
@@ -29,3 +30,4 @@ Requires-Dist: sqlalchemy>=2.0.48
 Requires-Dist: stripe>=15.0.1
 Requires-Dist: uvicorn[standard]>=0.42.0
 Requires-Dist: xai-sdk>=1.12.1
+Dynamic: license-file
