@@ -86,7 +86,6 @@ _PROVIDER_PRICING_URLS: dict[str, str] = {
     "claude": "https://www.anthropic.com/pricing",
     "grok": "https://docs.x.ai/docs/models",
 }
-_PROVIDER_CAPABILITIES: dict[str, dict] = {}
 _PROVIDER_ENABLED_TOOLS: dict[str, list] = {}
 
 
