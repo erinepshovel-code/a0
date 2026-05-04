@@ -13,7 +13,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, Download, Image as ImageIcon, FileText, FileJson, FileCode, FileBinary, Archive as ArchiveIcon } from "lucide-react";
+import { Loader2, Download, Image as ImageIcon, FileText, FileJson, FileCode, Binary as FileBinary, Archive as ArchiveIcon } from "lucide-react";
 
 type Artifact = {
   id: string;

@@ -1,4 +1,4 @@
-# 423:16
+# 393:56
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from sqlalchemy import select, update, delete, func, desc, asc, or_
@@ -8,19 +8,27 @@ from ..database import get_session
 from ..models import (
     Conversation, Message, AutomationTask, CommandHistory,
     A0pEvent, HeartbeatLog, CostMetric, EdcmSnapshot,
-    BanditArm, CustomTool, ToolResult, MessageAttachment, GeneratedImage,
+    CustomTool, ToolResult, MessageAttachment, GeneratedImage,
 )
 
 
 # Allowed client-supplied fields for create operations. Internal columns
-# (id, created_at, updated_at, etc.) are set server-side only.
+# (id, created_at, updated_at) AND ownership (user_id) are set
+# server-side only — see create_conversation's owner_user_id kwarg.
+# Including user_id here would be a mass-assignment hole: any route that
+# forwards request body into the data dict could let a caller plant a
+# row under another user's id.
 _CONV_ALLOWED_FIELDS = {
-    "title", "model", "user_id", "context_boost",
+    "title", "model", "context_boost",
     "parent_conv_id", "subagent_status", "subagent_error", "archived",
     "agent_id",
 }
 _MSG_ALLOWED_FIELDS = {
     "conversation_id", "role", "content", "model", "metadata",
+    # NOTE: orchestration_mode / cut_mode / parent_run_id were once on this
+    # whitelist but the Message model has no such columns — they belong on
+    # agent_runs (a different table) or inside the metadata JSONB.
+    # See routes/chat.py for the metadata-fold pattern.
 }
 
 
@@ -43,6 +51,7 @@ class _CoreStorage:
         user_id: Optional[str] = None,
         agent_id: Optional[int] = None,
         include_agent_pinned: bool = False,
+        archived: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """List conversations strictly scoped to a single user.
 
@@ -52,6 +61,12 @@ class _CoreStorage:
             from being polluted with Forge agent chats.
           - int: only conversations pinned to that specific agent.
           - None + include_agent_pinned=True: everything (admin / debug).
+
+        archived semantics:
+          - None: no filter (legacy callers / admin paths).
+          - False: only active (archived = false). Default for the chat sidebar's
+            main list so archived chats don't bleed into history.
+          - True: only archived rows. Used by the sidebar's "Archived" section.
         """
         async with get_session() as session:
             q = select(Conversation).order_by(desc(Conversation.updated_at))
@@ -61,6 +76,8 @@ class _CoreStorage:
                 q = q.where(Conversation.agent_id == agent_id)
             elif not include_agent_pinned:
                 q = q.where(Conversation.agent_id.is_(None))
+            if archived is not None:
+                q = q.where(Conversation.archived.is_(archived))
             result = await session.execute(q)
             return [_row_to_dict(r) for r in result.scalars().all()]
 
@@ -69,8 +86,23 @@ class _CoreStorage:
             result = await session.execute(select(Conversation).where(Conversation.id == id))
             return _row_to_dict(result.scalar_one_or_none())
 
-    async def create_conversation(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_conversation(
+        self,
+        data: Dict[str, Any],
+        *,
+        owner_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a Conversation row.
+
+        Ownership is keyword-only and never read from `data` — pass the
+        authenticated user id as `owner_user_id`. If a caller smuggles
+        `"user_id"` inside `data` it will be silently dropped by the
+        allowed-field filter (it's not in _CONV_ALLOWED_FIELDS).
+        Anonymous / system-owned conversations may pass owner_user_id=None.
+        """
         safe = _filter_fields(data, _CONV_ALLOWED_FIELDS)
+        if owner_user_id is not None:
+            safe["user_id"] = owner_user_id
         async with get_session() as session:
             conv = Conversation(**safe)
             session.add(conv)
@@ -424,50 +456,9 @@ class _CoreStorage:
             )
             return [_row_to_dict(r) for r in result.scalars().all()]
 
-    async def get_bandit_arms(self, domain: Optional[str] = None) -> List[Dict[str, Any]]:
-        async with get_session() as session:
-            if domain:
-                q = select(BanditArm).where(BanditArm.domain == domain).order_by(desc(BanditArm.ucb_score))
-            else:
-                q = select(BanditArm).order_by(asc(BanditArm.domain), desc(BanditArm.ucb_score))
-            result = await session.execute(q)
-            return [_row_to_dict(r) for r in result.scalars().all()]
-
-    async def get_bandit_arm(self, id: int) -> Optional[Dict[str, Any]]:
-        async with get_session() as session:
-            result = await session.execute(select(BanditArm).where(BanditArm.id == id))
-            return _row_to_dict(result.scalar_one_or_none())
-
-    async def upsert_bandit_arm(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        async with get_session() as session:
-            from sqlalchemy import and_
-            result = await session.execute(
-                select(BanditArm).where(
-                    and_(BanditArm.domain == data["domain"], BanditArm.arm_name == data["arm_name"])
-                )
-            )
-            existing = result.scalar_one_or_none()
-            if existing:
-                await session.execute(update(BanditArm).where(BanditArm.id == existing.id).values(**data))
-                await session.flush()
-                r2 = await session.execute(select(BanditArm).where(BanditArm.id == existing.id))
-                return _row_to_dict(r2.scalar_one())
-            arm = BanditArm(**data)
-            session.add(arm)
-            await session.flush()
-            await session.refresh(arm)
-            return _row_to_dict(arm)
-
-    async def update_bandit_arm(self, id: int, updates: Dict[str, Any]) -> None:
-        async with get_session() as session:
-            await session.execute(update(BanditArm).where(BanditArm.id == id).values(**updates))
-
-    async def reset_bandit_domain(self, domain: str) -> None:
-        async with get_session() as session:
-            await session.execute(
-                update(BanditArm).where(BanditArm.domain == domain)
-                .values(pulls=0, total_reward=0, avg_reward=0, ema_reward=0, ucb_score=0)
-            )
+    # Task #112 — bandit_arms storage methods removed; the table is
+    # dropped at lifespan startup. Live bandit state lives on
+    # PCNAEngine.bandit_state and is read via GET /api/v1/bandits/state.
 
     async def get_custom_tools(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         async with get_session() as session:
@@ -497,4 +488,23 @@ class _CoreStorage:
     async def delete_custom_tool(self, id: int) -> None:
         async with get_session() as session:
             await session.execute(delete(CustomTool).where(CustomTool.id == id))
-# 423:16
+
+
+# === CONTRACTS ===
+# id: storage_create_owner_isolation
+#   given: create_conversation called via POST /api/v1/conversations with
+#          {"user_id": "attacker"} in the body and x-user-id="legit"
+#   then:  stored row.user_id == "legit"; smuggled value is dropped by
+#          _CONV_ALLOWED_FIELDS
+#   class: security
+#   call:  python.tests.contracts.chat.test_create_owner_isolation
+#
+# id: storage_anonymous_owner_null
+#   given: POST /api/v1/conversations with no x-user-id header
+#   then:  row lands with user_id=NULL (owner_user_id kwarg defaults to
+#          None when caller is unauthenticated; nothing leaks into the
+#          owner field from the request body)
+#   class: security
+#   call:  python.tests.contracts.chat.test_create_anonymous_owner_null
+# === END CONTRACTS ===
+# 393:56

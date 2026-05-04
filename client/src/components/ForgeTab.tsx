@@ -1,4 +1,4 @@
-// 317:0
+// 349:0
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Hammer, Sparkles, Trash2, Loader2, MessageSquare } from "lucide-react";
@@ -27,12 +27,26 @@ type Archetype = {
 };
 
 type Tool = { name: string; description: string; category: string };
-type Model = {
-  id: string; label: string; vendor: string;
-  available: boolean; active: boolean;
-  min_tier?: string;
+type CatalogModel = {
+  model_id: string;
+  is_primary: boolean;
+  in_assignments: string[];
+  in_presets: string[];
+  discovered: boolean;
+  disabled: boolean;
 };
-const TIER_RANK: Record<string, number> = { free: 0, supporter: 1, ws: 2, admin: 3 };
+type CatalogProvider = {
+  provider_id: string;
+  label: string;
+  vendor: string;
+  active: boolean;
+  enabled: boolean;
+  key_present: boolean;
+  min_tier: string | null;
+  tier_blocked: boolean;
+  models: CatalogModel[];
+};
+type ModelCatalog = { user_tier: string; providers: CatalogProvider[] };
 type Agent = {
   id: number;
   name: string;
@@ -67,9 +81,7 @@ export default function ForgeTab() {
 
   const tplQ = useQuery<{ templates: Archetype[] }>({ queryKey: ["/api/v1/forge/templates"] });
   const toolsQ = useQuery<{ tools: Tool[] }>({ queryKey: ["/api/v1/forge/tools"] });
-  const modelsQ = useQuery<{ models: Model[]; user_tier: string }>({ queryKey: ["/api/v1/forge/models"] });
-  const userTierRank = TIER_RANK[modelsQ.data?.user_tier ?? "free"] ?? 0;
-  const isModelLocked = (m: Model) => !!m.min_tier && (TIER_RANK[m.min_tier] ?? 0) > userTierRank;
+  const modelsQ = useQuery<ModelCatalog>({ queryKey: ["/api/v1/models"] });
   const agentsQ = useQuery<{ agents: Agent[] }>({ queryKey: ["/api/v1/forge/agents"] });
 
   const pickArchetype = (a: Archetype) => {
@@ -183,17 +195,37 @@ export default function ForgeTab() {
                   <SelectValue placeholder="Use active model" />
                 </SelectTrigger>
                 <SelectContent>
-                  {modelsQ.data?.models.map(m => {
-                    const locked = isModelLocked(m);
-                    const disabled = !m.available || locked;
-                    return (
-                      <SelectItem key={m.id} value={m.id} disabled={disabled}
-                        data-testid={`option-model-${m.id}`}>
-                        {m.label}
-                        {!m.available && " (no key)"}
-                        {locked && ` (${m.min_tier}+ only)`}
-                      </SelectItem>
-                    );
+                  {(modelsQ.data?.providers ?? []).flatMap(p => {
+                    const providerBlocked =
+                      !p.enabled || !p.key_present || p.tier_blocked;
+                    const reason = !p.enabled
+                      ? "disabled"
+                      : !p.key_present
+                      ? "no key"
+                      : p.tier_blocked
+                      ? `${p.min_tier}+ only`
+                      : "";
+                    return p.models.map(m => {
+                      const disabled = providerBlocked || m.disabled;
+                      const tags: string[] = [];
+                      if (m.is_primary) tags.push("primary");
+                      if (m.in_assignments.length) tags.push(m.in_assignments.join("/"));
+                      const suffix = disabled
+                        ? ` (${m.disabled ? "off" : reason})`
+                        : tags.length
+                        ? ` · ${tags.join(" · ")}`
+                        : "";
+                      return (
+                        <SelectItem
+                          key={`${p.provider_id}:${m.model_id}`}
+                          value={m.model_id}
+                          disabled={disabled}
+                          data-testid={`option-model-${m.model_id}`}
+                        >
+                          {p.label} — {m.model_id}{suffix}
+                        </SelectItem>
+                      );
+                    });
                   })}
                 </SelectContent>
               </Select>
@@ -335,4 +367,4 @@ export default function ForgeTab() {
     </div>
   );
 }
-// 317:0
+// 349:0

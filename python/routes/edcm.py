@@ -1,9 +1,11 @@
-# 81:8
-from fastapi import APIRouter
+# 89:8
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from typing import Optional, Any
 
 from ..storage import storage
+from ..services.edcm import EDCMBONE_VERSION
+from ._admin_gate import require_admin
 
 # DOC module: edcm
 # DOC label: EDCM
@@ -89,20 +91,26 @@ class EdcmSnapshotInput(BaseModel):
 
 @router.get("/edcm/metrics")
 async def list_metrics(limit: int = 50):
-    return await storage.get_edcm_metric_snapshots(limit)
+    rows = await storage.get_edcm_metric_snapshots(limit)
+    return {"edcmbone_version": EDCMBONE_VERSION, "items": rows}
 
 
 @router.post("/edcm/metrics")
-async def add_metric(body: EdcmMetricInput):
-    return await storage.add_edcm_metric_snapshot(body.model_dump())
+async def add_metric(request: Request, body: EdcmMetricInput):
+    await require_admin(request)
+    row = await storage.add_edcm_metric_snapshot(body.model_dump())
+    return {"edcmbone_version": EDCMBONE_VERSION, "item": row}
 
 
 @router.get("/edcm/snapshots")
 async def list_snapshots(limit: int = 50):
-    return await storage.get_edcm_snapshots(limit)
+    rows = await storage.get_edcm_snapshots(limit)
+    return {"edcmbone_version": EDCMBONE_VERSION, "items": rows}
 
 
 @router.post("/edcm/snapshots")
-async def add_snapshot(body: EdcmSnapshotInput):
-    return await storage.add_edcm_snapshot(body.model_dump(exclude_none=True))
-# 81:8
+async def add_snapshot(request: Request, body: EdcmSnapshotInput):
+    await require_admin(request)
+    row = await storage.add_edcm_snapshot(body.model_dump(exclude_none=True))
+    return {"edcmbone_version": EDCMBONE_VERSION, "item": row}
+# 89:8

@@ -1,4 +1,4 @@
-# 318:32
+# 330:39
 """The Forge — character-sheet style agent instantiation.
 
 Self-updating tool/model docs DB:
@@ -16,6 +16,7 @@ from sqlalchemy import text as sa_text
 from ..database import get_session
 from ..services.energy_registry import energy_registry
 from ..services.tool_executor import TOOL_SCHEMAS_CHAT
+from ._admin_gate import require_admin
 
 # DOC module: forge
 # DOC label: Forge
@@ -197,10 +198,18 @@ def _validate_tools(tools: list[str]) -> list[str]:
 
 
 def _validate_model(model_id: str) -> dict:
-    info = energy_registry.get_provider(model_id)
-    if not info:
-        raise HTTPException(400, f"Unknown model: {model_id}")
-    return info
+    """Resolve `model_id` to its provider spec via the catalog resolver.
+
+    Delegates to model_catalog.resolve_model_id so the search rules
+    (provider id, primary model, preset role maps) live in one place.
+    Raises 400 instead of letting ValueError propagate.
+    """
+    from ..services.model_catalog import resolve_model_id
+    try:
+        _pid, spec = resolve_model_id(model_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return spec
 
 
 @router.get("/templates")
@@ -266,7 +275,18 @@ async def instantiate(request: Request, body: InstantiateRequest) -> dict:
     tools = _validate_tools(body.enabled_tools if body.enabled_tools is not None else arche["suggested_tools"])
     prompt = body.system_prompt_override or arche["system_prompt"]
     personality = body.personality_override or arche["personality"]
-    model_id = body.model_id or energy_registry.get_active_provider() or "gemini"
+    # No silent fallback to "gemini": forge requires either an explicit
+    # model_id in the body or a configured global active_provider.
+    model_id = body.model_id or energy_registry.get_active_provider()
+    if not model_id:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Cannot instantiate forge agent: no model_id provided and no "
+                "active_provider configured. Set one via "
+                "POST /api/agents/active-provider."
+            ),
+        )
     provider_info = _validate_model(model_id)
     provider = provider_info.get("vendor", model_id)
     stats = arche["stats"]
@@ -379,19 +399,19 @@ async def start_chat(agent_id: int, request: Request) -> dict:
     conv = await storage.create_conversation({
         "title": f"⚔ {arow['name']}",
         "model": arow["model_id"] or "grok",
-        "user_id": uid,
         "agent_id": agent_id,
-    })
+    }, owner_user_id=uid)
     return {"conversation": conv}
 
 
 @router.post("/duel")
-async def duel_stub() -> dict:
+async def duel_stub(request: Request) -> dict:
     """RPG-style agent vs agent — DB shape live, logic deferred."""
+    await require_admin(request)
     raise HTTPException(501, "Agent-vs-agent dueling is stubbed; ring is set up but the bell hasn't rung.")
 
 
 def _jsonb(value) -> str:
     import json
     return json.dumps(value) if value is not None else "null"
-# 318:32
+# 330:39

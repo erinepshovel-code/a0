@@ -6,12 +6,12 @@ Instance Merge Protocol — three modes for multi-instance PCNA mesh.
   fork     — parent spawns child with copied state + noise; both continue
   converge — both exchange tensors via federated averaging; both continue
 
-Operates on PCNAEngine instances containing PTCACore + MemoryCore + GuardianTensor.
+Operates on PCNAEngine instances containing PTCACore + MemoryCore + ThetaTensor.
 """
 
 import time
 import numpy as np
-from .guardian import GuardianTensor
+from .theta import ThetaTensor
 from .ptca_core import PTCACore
 from .pcna import PCNAEngine
 
@@ -35,35 +35,35 @@ class InstanceMerge:
         _blend_core(dominant.psi, donor.psi, alpha)
         _blend_core(dominant.omega, donor.omega, alpha)
 
-        dominant.guardian.tensor = _fed_avg(
-            dominant.guardian.tensor, donor.guardian.tensor, alpha=1.0 - alpha
+        dominant.theta.tensor = _fed_avg(
+            dominant.theta.tensor, donor.theta.tensor, alpha=1.0 - alpha
         )
         dominant.memory_l.tensor = _fed_avg(
             dominant.memory_l.tensor, donor.memory_l.tensor, alpha=0.8
         )
 
-        for i in range(min(len(dominant.guardian.circle_count), len(donor.guardian.circle_count))):
-            dominant.guardian.circle_count[i] = max(
-                dominant.guardian.circle_count[i],
-                donor.guardian.circle_count[i],
+        for i in range(min(len(dominant.theta.circle_count), len(donor.theta.circle_count))):
+            dominant.theta.circle_count[i] = max(
+                dominant.theta.circle_count[i],
+                donor.theta.circle_count[i],
             )
 
-        dominant.guardian._recompute_coherence()
+        dominant.theta._recompute_coherence()
         dominant.memory_l._recompute_hub_avg()
 
         phi_c = round(dominant.phi.ring_coherence, 4)
-        guard_c = round(float(dominant.guardian.node_coherence.mean()), 4)
+        guard_c = round(float(dominant.theta.node_coherence.mean()), 4)
 
         return {
             "mode": "absorb",
-            "dominant_id": dominant.guardian.instance_id,
-            "donor_id": donor.guardian.instance_id,
+            "dominant_id": dominant.theta.instance_id,
+            "donor_id": donor.theta.instance_id,
             "donor_status": "retired",
             "dominant_phi_coherence": phi_c,
-            "dominant_guardian_coherence": guard_c,
+            "dominant_theta_coherence": guard_c,
             "dominant_psi_coherence": round(dominant.psi.ring_coherence, 4),
             "dominant_omega_coherence": round(dominant.omega.ring_coherence, 4),
-            "circle_counts_after": [int(v) for v in dominant.guardian.circle_count],
+            "circle_counts_after": [int(v) for v in dominant.theta.circle_count],
             "timestamp": time.time(),
         }
 
@@ -80,19 +80,19 @@ class InstanceMerge:
             )
             c_core._recompute_coherence()
 
-        child.guardian.tensor = np.clip(
-            parent.guardian.tensor + noise.normal(0, 0.01, parent.guardian.tensor.shape), 0.0, 1.0
+        child.theta.tensor = np.clip(
+            parent.theta.tensor + noise.normal(0, 0.01, parent.theta.tensor.shape), 0.0, 1.0
         )
         child.memory_l.tensor = parent.memory_l.tensor.copy()
-        child.guardian.circle_count = parent.guardian.circle_count.copy()
-        child.guardian.blueprint_shards = parent.guardian.blueprint_shards[:]
-        child.guardian._recompute_coherence()
+        child.theta.circle_count = parent.theta.circle_count.copy()
+        child.theta.blueprint_shards = parent.theta.blueprint_shards[:]
+        child.theta._recompute_coherence()
         child.memory_l._recompute_hub_avg()
 
         result = {
             "mode": "fork",
-            "parent_id": parent.guardian.instance_id,
-            "child_id": child.guardian.instance_id,
+            "parent_id": parent.theta.instance_id,
+            "child_id": child.theta.instance_id,
             "parent_status": "continues",
             "child_status": "spawned",
             "child_phi_coherence": round(child.phi.ring_coherence, 4),
@@ -114,35 +114,35 @@ class InstanceMerge:
             core_a._recompute_coherence()
             core_b._recompute_coherence()
 
-        new_ga = _fed_avg(a.guardian.tensor, b.guardian.tensor, alpha)
-        new_gb = _fed_avg(b.guardian.tensor, a.guardian.tensor, alpha)
+        new_ga = _fed_avg(a.theta.tensor, b.theta.tensor, alpha)
+        new_gb = _fed_avg(b.theta.tensor, a.theta.tensor, alpha)
         new_mla = _fed_avg(a.memory_l.tensor, b.memory_l.tensor, alpha=0.6)
         new_mlb = _fed_avg(b.memory_l.tensor, a.memory_l.tensor, alpha=0.6)
 
-        a.guardian.tensor = new_ga
-        b.guardian.tensor = new_gb
+        a.theta.tensor = new_ga
+        b.theta.tensor = new_gb
         a.memory_l.tensor = new_mla
         b.memory_l.tensor = new_mlb
 
-        for i in range(min(len(a.guardian.circle_count), len(b.guardian.circle_count))):
-            avg = (int(a.guardian.circle_count[i]) + int(b.guardian.circle_count[i])) // 2
-            a.guardian.circle_count[i] = avg
-            b.guardian.circle_count[i] = avg
+        for i in range(min(len(a.theta.circle_count), len(b.theta.circle_count))):
+            avg = (int(a.theta.circle_count[i]) + int(b.theta.circle_count[i])) // 2
+            a.theta.circle_count[i] = avg
+            b.theta.circle_count[i] = avg
 
-        a.guardian._recompute_coherence()
-        b.guardian._recompute_coherence()
+        a.theta._recompute_coherence()
+        b.theta._recompute_coherence()
         a.memory_l._recompute_hub_avg()
         b.memory_l._recompute_hub_avg()
 
         return {
             "mode": "converge",
-            "instance_a": a.guardian.instance_id,
-            "instance_b": b.guardian.instance_id,
+            "instance_a": a.theta.instance_id,
+            "instance_b": b.theta.instance_id,
             "alpha": alpha,
             "a_phi_coherence_after": round(a.phi.ring_coherence, 4),
             "b_phi_coherence_after": round(b.phi.ring_coherence, 4),
-            "a_guardian_coherence_after": round(float(a.guardian.node_coherence.mean()), 4),
-            "b_guardian_coherence_after": round(float(b.guardian.node_coherence.mean()), 4),
+            "a_theta_coherence_after": round(float(a.theta.node_coherence.mean()), 4),
+            "b_theta_coherence_after": round(float(b.theta.node_coherence.mean()), 4),
             "a_psi_coherence_after": round(a.psi.ring_coherence, 4),
             "b_psi_coherence_after": round(b.psi.ring_coherence, 4),
             "a_omega_coherence_after": round(a.omega.ring_coherence, 4),

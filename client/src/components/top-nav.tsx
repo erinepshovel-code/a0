@@ -1,6 +1,6 @@
-// 139:0
+// 174:0
 import { useLocation, Link } from "wouter";
-import { Zap, Shield, Palette, Check, Archive } from "lucide-react";
+import { Zap, Shield, Palette, Check, Archive, Network, Images, FileSearch, Sun, Moon, Monitor, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUiStructure } from "@/hooks/use-ui-structure";
 import { useBillingStatus } from "@/hooks/use-billing-status";
@@ -8,14 +8,25 @@ import { useAuth } from "@/hooks/use-auth";
 import { useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useSkin, SKINS, SKIN_LABELS, type Skin } from "@/hooks/use-skin";
+import { useThemeMode, MODES, MODE_LABELS, type ThemeMode } from "@/hooks/use-theme-mode";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 
 const NAV_ITEMS = [
   { path: "/", icon: Zap, label: "Agent" },
   { path: "/console", icon: Shield, label: "Console" },
+  { path: "/fleet", icon: Network, label: "Fleet" },
   { path: "/archive", icon: Archive, label: "Archive" },
+  { path: "/gallery", icon: Images, label: "Gallery" },
+  { path: "/transcripts", icon: FileSearch, label: "Transcripts" },
+  { path: "/providers", icon: Cpu, label: "Providers" },
 ];
+
+const MODE_ICON: Record<ThemeMode, typeof Sun> = {
+  light: Sun,
+  dark: Moon,
+  system: Monitor,
+};
 
 const TIER_COLORS: Record<string, string> = {
   free: "bg-muted text-muted-foreground",
@@ -31,6 +42,7 @@ export default function TopNav() {
   const { tier, tierLabel } = useBillingStatus();
   const { toast } = useToast();
   const { skin, setSkin } = useSkin();
+  const { mode, setMode } = useThemeMode();
 
   const SKIN_SWATCHES: Record<Skin, string[]> = {
     tensor: ["#0A0A0F", "#4ADE80", "#E0F2FE"],
@@ -88,6 +100,30 @@ export default function TopNav() {
         </PopoverTrigger>
         <PopoverContent align="end" className="w-56 p-2" data-testid="popover-skin-selector">
           <div className="text-[11px] uppercase tracking-wide text-muted-foreground px-2 pt-1 pb-2">
+            Mode
+          </div>
+          <div className="flex flex-col gap-1 mb-2">
+            {MODES.map((m) => {
+              const active = mode === m;
+              const Icon = MODE_ICON[m];
+              return (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={cn(
+                    "flex items-center gap-2 px-2 py-2 rounded-md text-sm hover-elevate text-left",
+                    active && "bg-accent/10 text-accent-foreground"
+                  )}
+                  data-testid={`button-mode-${m}`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="flex-1">{MODE_LABELS[m]}</span>
+                  {active && <Check className="w-4 h-4 text-accent" />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground px-2 pt-1 pb-2 border-t border-border">
             Skin
           </div>
           <div className="flex flex-col gap-1">
@@ -144,4 +180,4 @@ export default function TopNav() {
     </nav>
   );
 }
-// 139:0
+// 174:0

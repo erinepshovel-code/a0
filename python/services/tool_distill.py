@@ -1,4 +1,4 @@
-# 124:17
+# 126:19
 """Tool-result distillation runner.
 
 Wraps oversized tool outputs in either a soft (paraphrase) or hard
@@ -23,6 +23,12 @@ def set_caller_provider(provider_id: str | None):
     a finally block so per-call provider context never leaks across composed
     agent invocations within one task."""
     return _caller_provider.set(provider_id)
+
+
+def get_caller_provider() -> str | None:
+    """Read the current caller_provider — the provider whose chat turn this
+    code is executing inside, if any. Returns None outside any chat context."""
+    return _caller_provider.get()
 
 
 def reset_caller_provider(token) -> None:
@@ -159,4 +165,4 @@ async def maybe_summarize(
         )
     except Exception:
         return flat_truncate(name, raw)
-# 124:17
+# 126:19

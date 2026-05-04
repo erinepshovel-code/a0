@@ -1,4 +1,4 @@
-# 624:108
+# 652:153
 import os
 import json
 import copy
@@ -15,6 +15,9 @@ from .tool_executor import (
     set_caller_provider,
     get_a0_skill_manifest,
 )
+# Single source of truth for provider specs — loaded from python/config/providers.json.
+# Replaces the old hardcoded PROVIDER_ENDPOINTS dict per the no-string-literals doctrine.
+from .energy_registry import BUILTIN_PROVIDERS
 
 _log = logging.getLogger("a0p.inference")
 
@@ -78,12 +81,27 @@ _ANTHROPIC_CACHE_MIN_CHARS = 4096
 
 
 def _resolve_attachment_path(storage_url: str) -> Optional[str]:
-    """Map a storage_url like '/uploads/foo.png' to an absolute local path."""
+    """Map a storage_url like '/uploads/foo.png' to an absolute local path.
+
+    Rejects any storage_url that resolves outside the project's uploads/
+    directory. lstrip('/') alone does NOT stop '..' segments — os.path.join
+    with an absolute base happily walks up via '..', and the realpath that
+    follows would then succeed against /etc/passwd or similar. The realpath
+    + commonpath check below is what actually contains the lookup.
+    """
     if not storage_url:
         return None
     base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    uploads_root = os.path.realpath(os.path.join(base, "uploads"))
     rel = storage_url.lstrip("/")
-    abs_path = os.path.join(base, rel)
+    abs_path = os.path.realpath(os.path.join(base, rel))
+    try:
+        if os.path.commonpath([uploads_root, abs_path]) != uploads_root:
+            _log.warning("attachment path traversal blocked: %s", storage_url)
+            return None
+    except ValueError:
+        # commonpath raises on different drives (Windows) or empty paths.
+        return None
     return abs_path if os.path.isfile(abs_path) else None
 
 
@@ -102,6 +120,90 @@ def _read_attachment_b64(storage_url: str) -> Optional[tuple[str, str]]:
     except OSError:
         return None
     return (mime, data)
+
+
+# Per-document character cap. ~100K chars ≈ ~25K tokens, well under any
+# provider's input window. Exceeding it returns the head of the doc with an
+# explicit truncation marker so the model sees that the tail was elided
+# (NO silent fallback policy — never lie to the model about its inputs).
+_DOC_TEXT_CAP = 100_000
+
+
+def _extract_pdf_text(abs_path: str) -> str:
+    """Extract text from a PDF using pypdf. Per-page errors are swallowed
+    to one page, never to the whole doc; the rest still comes through."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return "[pdf extraction unavailable: pypdf not installed]"
+    try:
+        reader = PdfReader(abs_path)
+    except Exception as e:
+        return f"[pdf open failed: {type(e).__name__}: {e}]"
+    pages: list[str] = []
+    total = len(reader.pages)
+    for i, page in enumerate(reader.pages):
+        try:
+            txt = page.extract_text() or ""
+        except Exception as e:
+            txt = f"[page {i + 1} extract failed: {type(e).__name__}]"
+        pages.append(f"--- page {i + 1}/{total} ---\n{txt}")
+        # Early stop once we're well past the cap — no point parsing 500 more pages.
+        if sum(len(p) for p in pages) > _DOC_TEXT_CAP * 1.2:
+            pages.append(f"[truncated: stopped at page {i + 1} of {total}]")
+            break
+    return "\n\n".join(pages)
+
+
+def _extract_text_file(abs_path: str) -> str:
+    """Read a UTF-8 (or latin-1 fallback) text/code file."""
+    try:
+        with open(abs_path, "rb") as fh:
+            raw = fh.read()
+    except OSError as e:
+        return f"[read failed: {type(e).__name__}: {e}]"
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # latin-1 always succeeds; better to show garbled bytes than fail silently.
+        return raw.decode("latin-1", errors="replace")
+
+
+def _extract_document_text(storage_url: str, mime_type: str, name: str = "") -> str:
+    """Return the textual contents of a document attachment, capped and labeled.
+
+    Caller is `_build_provider_messages` — we always return SOMETHING the
+    model can read, including an explicit error string when extraction
+    fails, so prompts never silently omit attachments the user uploaded.
+    """
+    p = _resolve_attachment_path(storage_url)
+    if not p:
+        return f"[attachment not found on disk: {storage_url}]"
+    label = name or os.path.basename(p)
+    mt = (mime_type or "").lower()
+    if mt == "application/pdf" or p.lower().endswith(".pdf"):
+        body = _extract_pdf_text(p)
+    else:
+        # Everything else in our DOC_MIME / DOC_EXT whitelist (server/attachments.ts)
+        # is plain-text-ish: code files, markdown, csv, json, yaml, xml, html, logs.
+        body = _extract_text_file(p)
+    if len(body) > _DOC_TEXT_CAP:
+        body = body[:_DOC_TEXT_CAP] + f"\n\n[truncated: showing first {_DOC_TEXT_CAP} chars of {len(body)}]"
+    header = f"[attachment: {label} ({mt or 'unknown mime'})]"
+    return f"{header}\n{body}"
+
+
+def _att_kind(att: dict) -> str:
+    """Best-effort kind classification. Trusts `kind` if the upload route
+    set it (server/attachments.ts does); otherwise falls back to mime sniff
+    so older rows or callers without kind still get routed correctly."""
+    k = (att.get("kind") or "").lower()
+    if k in ("image", "document"):
+        return k
+    mt = (att.get("mime_type") or "").lower()
+    if mt.startswith("image/"):
+        return "image"
+    return "document"
 
 
 def _build_provider_messages(messages: list[dict], provider_id: str) -> list[dict]:
@@ -123,11 +225,33 @@ def _build_provider_messages(messages: list[dict], provider_id: str) -> list[dic
             continue
         text = base.get("content") if isinstance(base.get("content"), str) else ""
 
-        if provider_id in ("openai", "grok", "grok-fast", "grok-code"):
+        # Split images vs documents. Documents get extracted server-side and
+        # spliced into the user turn as text — works on every provider, no
+        # vision capability required. Images stay on the multimodal path.
+        images = [a for a in atts if _att_kind(a) == "image"]
+        docs = [a for a in atts if _att_kind(a) == "document"]
+        doc_blocks = [
+            _extract_document_text(
+                a.get("storage_url", ""),
+                a.get("mime_type", ""),
+                a.get("name") or a.get("filename") or "",
+            )
+            for a in docs
+        ]
+        # Compose the text with doc bodies appended. Docs are bracketed by
+        # their own [attachment: ...] header inside _extract_document_text.
+        composed_text = text
+        if doc_blocks:
+            composed_text = (text + "\n\n" if text else "") + "\n\n".join(doc_blocks)
+
+        # Vision branch: providers using OpenAI Chat-Completions style image_url
+        # parts. Driven by providers.json supports_vision flag — claude has its
+        # own native parts branch below, gemini uses the google-genai parts API.
+        if (BUILTIN_PROVIDERS.get(provider_id) or {}).get("supports_vision"):
             parts: list[dict] = []
-            if text:
-                parts.append({"type": "text", "text": text})
-            for a in atts:
+            if composed_text:
+                parts.append({"type": "text", "text": composed_text})
+            for a in images:
                 pair = _read_attachment_b64(a.get("storage_url", ""))
                 if not pair:
                     continue
@@ -136,14 +260,14 @@ def _build_provider_messages(messages: list[dict], provider_id: str) -> list[dic
                     "type": "image_url",
                     "image_url": {"url": f"data:{mime};base64,{data}"},
                 })
-            out.append({**base, "content": parts})
+            out.append({**base, "content": parts if parts else composed_text})
             continue
 
         if provider_id == "claude":
             parts = []
-            if text:
-                parts.append({"type": "text", "text": text})
-            for a in atts:
+            if composed_text:
+                parts.append({"type": "text", "text": composed_text})
+            for a in images:
                 pair = _read_attachment_b64(a.get("storage_url", ""))
                 if not pair:
                     continue
@@ -152,23 +276,35 @@ def _build_provider_messages(messages: list[dict], provider_id: str) -> list[dic
                     "type": "image",
                     "source": {"type": "base64", "media_type": mime, "data": data},
                 })
-            out.append({**base, "content": parts})
+            out.append({**base, "content": parts if parts else composed_text})
             continue
 
         if provider_id in ("gemini", "gemini3"):
-            # Native Gemini path expects Part.from_bytes; preserve attachments
-            # so gemini_native._messages_to_contents can build inline_data parts.
+            # Native Gemini path expects Part.from_bytes; preserve image
+            # attachments so gemini_native._messages_to_contents can build
+            # inline_data parts. Doc text is folded into content above.
             inline = []
-            for a in atts:
+            for a in images:
                 pair = _read_attachment_b64(a.get("storage_url", ""))
                 if not pair:
                     continue
                 mime, data = pair
                 inline.append({"mime_type": mime, "data_b64": data})
-            out.append({**base, "attachments": inline})
+            out.append({**base, "content": composed_text, "attachments": inline})
             continue
 
-        out.append(base)
+        # Unknown provider: pass the composed text so docs aren't lost, and
+        # surface the dropped images explicitly rather than silently eliding
+        # them. Better that the model sees "[3 images dropped: ...]" than
+        # nothing at all.
+        if images:
+            _log.warning(
+                "provider %r has no multimodal adapter; %d image attachment(s) dropped",
+                provider_id, len(images),
+            )
+            marker = f"\n\n[{len(images)} image attachment(s) dropped: provider {provider_id!r} has no vision adapter]"
+            composed_text = (composed_text or "") + marker
+        out.append({**base, "content": composed_text})
     return out
 
 # Retry policy: 2 retries (3 attempts total) with jittered exponential backoff
@@ -177,20 +313,76 @@ _RETRY_MAX_ATTEMPTS = 3
 _RETRY_BASE_SLEEP = 1.5
 
 
+def _safe_error_snippet(raw: object, limit: int = 200) -> str:
+    """Sanitize an arbitrary error string so it's safe to surface to the UI.
+
+    Strips control chars, collapses whitespace, drops anything that looks like
+    a credential token or query string, and truncates. Empty if nothing safe
+    remains — callers should fall back to a generic label in that case.
+    """
+    if not raw:
+        return ""
+    s = str(raw).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    s = " ".join(s.split())
+    # Strip URL query strings and obvious key=value pairs (env-var leakage guard).
+    import re as _re
+    s = _re.sub(r"\?[^\s]+", "", s)
+    s = _re.sub(r"\b[A-Za-z_][A-Za-z0-9_]*=[\S]+", "", s)
+    # Strip bearer/sk- token shapes.
+    s = _re.sub(r"\b(?:Bearer\s+|sk-)[A-Za-z0-9_\-\.]{6,}", "", s)
+    s = s.strip(" .,;:")
+    if len(s) > limit:
+        s = s[:limit].rstrip() + "…"
+    return s
+
+
 def _sanitize_provider_error(provider: str, exc: BaseException) -> str:
     """Return a single-line user-safe error summary; full detail goes to server log."""
     _log.exception("[%s] provider call failed", provider)
+
+    # google-genai SDK errors carry useful, safe fields (.code, .message, .status).
+    # Surface them so users can tell quota/auth/blocked-content apart instead of
+    # all collapsing to "[gemini error: ClientError]".
+    try:
+        from google.genai import errors as _genai_errors  # type: ignore
+        if isinstance(exc, _genai_errors.APIError):
+            code = getattr(exc, "code", None) or getattr(exc, "status", None) or "?"
+            msg = _safe_error_snippet(getattr(exc, "message", None) or str(exc))
+            return f"[{provider} error: {code} {msg}]".rstrip(" ]") + "]"
+    except ImportError:
+        pass
+
     if isinstance(exc, httpx.HTTPStatusError):
         try:
             code = exc.response.status_code
         except Exception:
             code = "?"
+        # Try to lift a JSON `error.message` / `message` field from the response body.
+        body_msg = ""
+        try:
+            data = exc.response.json()
+            if isinstance(data, dict):
+                err = data.get("error")
+                if isinstance(err, dict):
+                    body_msg = err.get("message") or err.get("code") or ""
+                elif isinstance(err, str):
+                    body_msg = err
+                else:
+                    body_msg = data.get("message") or ""
+        except Exception:
+            body_msg = ""
+        body_msg = _safe_error_snippet(body_msg)
+        if body_msg:
+            return f"[{provider} error: HTTP {code} {body_msg}]"
         return f"[{provider} error: HTTP {code}]"
     if isinstance(exc, httpx.TimeoutException):
         return f"[{provider} error: request timed out]"
     if isinstance(exc, httpx.HTTPError):
         return f"[{provider} error: network error]"
-    # Generic — never include str(exc) which may carry env-var values, URLs, or keys.
+    # Generic — include the type plus a sanitized message snippet if non-empty.
+    snippet = _safe_error_snippet(str(exc))
+    if snippet:
+        return f"[{provider} error: {type(exc).__name__}: {snippet}]"
     return f"[{provider} error: {type(exc).__name__}]"
 
 
@@ -248,38 +440,6 @@ def _canonical_tool_calls(tool_calls: list[dict]) -> str:
             args_str = json.dumps(args_obj, sort_keys=True, default=str)
         except Exception:
             args_str = str(args)
-        norm.append(f"{name}::{args_str}")
-    return "|".join(sorted(norm))
-
-PROVIDER_ENDPOINTS = {
-    "grok": {
-        "url": "https://api.x.ai/v1/chat/completions",
-        "env_key": "XAI_API_KEY",
-        "model": "grok-4-fast-reasoning",
-        "supports_reasoning_effort": True,
-    },
-    "gemini": {
-        "url": "https://generativelanguage.googleapis.com/v1beta/chat/completions",
-        "env_key": "GEMINI_API_KEY",
-        "model": "gemini-2.5-flash",
-        "supports_reasoning_effort": False,
-    },
-    "gemini3": {
-        "url": "https://generativelanguage.googleapis.com/v1beta/chat/completions",
-        "env_key": "GEMINI_API_KEY",
-        "model": "gemini-3-pro-preview",
-        "supports_reasoning_effort": False,
-        "min_tier": "ws",
-    },
-    "claude": {
-        "url": "https://api.anthropic.com/v1/messages",
-        "env_key": "ANTHROPIC_API_KEY",
-        "model": "claude-sonnet-4-5",
-        "supports_reasoning_effort": False,
-        "supports_thinking": True,
-        "supports_prompt_caching": True,
-    },
-}
 
 # Anthropic API version (stable; new features arrive via anthropic-beta header).
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -313,36 +473,103 @@ async def call_energy_provider(
     provider_id: str,
     messages: list[dict],
     system_prompt: Optional[str] = None,
-    max_tokens: int = 2048,
+    max_tokens: int = 8000,
     use_tools: bool = True,
     user_id: Optional[str] = None,
     skip_approval: bool = False,
     reasoning_effort: Optional[str] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> tuple[str, dict]:
     """
     Forward messages to the active energy provider with the system prompt prepended.
     Returns (content, usage_dict).
     user_id is threaded into the OpenAI path for approval-scope checking.
     skip_approval=True bypasses the approval gate (used for replay after explicit APPROVE).
-    reasoning_effort is mapped per-provider:
-      - OpenAI: passed via openai_router call_cfg (this param is ignored on the openai branch)
-      - Grok:   passed as reasoning_effort on grok-4 / grok-4-fast-reasoning
-      - Claude: mapped to thinking.budget_tokens (extended thinking)
-      - Gemini: not honored on the compat endpoint (no thinking_config support there)
+    reasoning_effort is mapped per-provider, gated by capability flags in
+    providers.json (single source of truth — no model slugs in code):
+      - OpenAI: passed via openai_router call_cfg (ignored on the openai branch)
+      - Grok:   passed as reasoning_effort when spec.supports_reasoning_effort
+      - Claude: mapped to thinking.budget_tokens when spec.supports_thinking
+      - Gemini: honored only on the native SDK path (gemini3 spec.supports_thinking)
     """
     system_prompt = _prepend_doctrine(system_prompt)
     messages = _build_provider_messages(messages, provider_id)
 
+    # Per-provider PCNA: lazy-fork on first call, fire infer signal with the
+    # last user text. Reward stays explicit (pcna_reward tool, routed via
+    # caller_provider). Failure to fork or infer must NOT block the chat —
+    # PCNA is a learning side-effect, not the user-facing concern. Logged at
+    # WARNING so genuine bugs surface without silently corrupting output.
+    try:
+        from ..main import get_or_fork_provider_pcna
+        _core = await get_or_fork_provider_pcna(provider_id)
+        _last_user_text = ""
+        for _m in reversed(messages):
+            if _m.get("role") == "user":
+                _c = _m.get("content")
+                if isinstance(_c, str):
+                    _last_user_text = _c
+                elif isinstance(_c, list):
+                    for _p in _c:
+                        if isinstance(_p, dict) and _p.get("type") == "text":
+                            _last_user_text = _p.get("text", "")
+                            break
+                break
+        if _last_user_text:
+            # Cap to avoid projecting megabytes — projection is fixed-dim.
+            _core.infer(_last_user_text[:4000])
+    except Exception as _pcna_err:
+        _log.warning("[pcna] provider core infer skipped for %s: %s", provider_id, _pcna_err)
+
     if provider_id == "openai":
         return await _call_openai_routed(messages, system_prompt, use_tools=use_tools, user_id=user_id, skip_approval=skip_approval)
 
-    spec = PROVIDER_ENDPOINTS.get(provider_id)
+    spec = BUILTIN_PROVIDERS.get(provider_id)
     if not spec:
-        return _fallback_response(provider_id), {}
+        raise RuntimeError(
+            f"Unknown provider_id={provider_id!r} — no spec in BUILTIN_PROVIDERS. "
+            f"This indicates a misrouted call; fix at the caller."
+        )
+
+    # OpenAI-vendored single-model providers (openai-5.5, openai-5.5-pro and
+    # any future siblings). The legacy "openai" provider above goes through
+    # role-based router; these go straight to openai_provider.call with the
+    # spec's pinned model. reasoning_effort is clamped UP to the spec's
+    # min_reasoning_effort (no silent downgrade — gpt-5.5-pro returns HTTP
+    # 400 on 'low', so we honor the floor verbatim, not silently swallow).
+    if spec.get("vendor") == "openai":
+        api_key = os.environ.get(spec["env_key"], "")
+        if not api_key:
+            raise RuntimeError(
+                f"{provider_id} unavailable: env var {spec['env_key']} is not set. "
+                f"Set the API key or route the request to a configured provider."
+            )
+        effective_effort = (reasoning_effort or "medium").lower()
+        min_effort = spec.get("min_reasoning_effort")
+        if min_effort:
+            order = {"minimal": 0, "low": 1, "medium": 2, "high": 3}
+            if order.get(effective_effort, 0) < order.get(min_effort, 0):
+                effective_effort = min_effort
+        payload_messages: list[dict] = []
+        if system_prompt:
+            payload_messages.append({"role": "system", "content": system_prompt})
+        payload_messages.extend(messages)
+        from .providers.openai_provider import call as openai_call
+        return await openai_call(
+            payload_messages,
+            model_override=spec["model"],
+            api_key=api_key,
+            max_tokens=max_tokens,
+            use_tools=use_tools,
+            reasoning_effort=effective_effort,
+        )
 
     api_key = os.environ.get(spec["env_key"], "")
     if not api_key:
-        return _fallback_response(provider_id), {}
+        raise RuntimeError(
+            f"{provider_id} unavailable: env var {spec['env_key']} is not set. "
+            f"Set the API key or route the request to a configured provider."
+        )
 
     payload_messages: list[dict] = []
     if system_prompt:
@@ -358,18 +585,35 @@ async def call_energy_provider(
         )
 
     if provider_id in ("gemini", "gemini3"):
-        from .gemini_native import call_gemini_native
-        return await call_gemini_native(
-            api_key, spec["model"], payload_messages, max_tokens,
+        from .providers.gemini_provider import call as gemini_call
+        return await gemini_call(
+            payload_messages,
+            api_key=api_key,
+            model_override=spec["model"],
+            max_tokens=max_tokens,
             use_tools=use_tools,
             reasoning_effort=reasoning_effort,
-            supports_thinking=provider_id == "gemini3",
+            provider_id=provider_id,
         )
 
-    return await _call_openai_compat(
-        api_key, spec["url"], spec["model"], payload_messages, max_tokens,
-        use_tools=use_tools,
-        reasoning_effort=reasoning_effort if spec.get("supports_reasoning_effort") else None,
+    if provider_id == "grok":
+        from .providers.grok_provider import call as grok_call
+        return await grok_call(
+            payload_messages,
+            api_key=api_key,
+            model_override=spec["model"],
+            max_tokens=max_tokens,
+            use_tools=use_tools,
+            reasoning_effort=reasoning_effort,
+            progress_callback=progress_callback,
+        )
+
+    # No-silent-fallback doctrine: don't quietly route an unknown provider
+    # to the openai-compat endpoint. If we got here, the provider id is not
+    # one of the four we ship — raise so the caller sees a real error.
+    raise ValueError(
+        f"Unknown provider_id={provider_id!r} reached inference dispatcher. "
+        f"Supported: openai, claude, gemini, gemini3, grok."
     )
 
 
@@ -450,22 +694,26 @@ async def _call_openai_routed(
 
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        return _fallback_response("openai"), {}
+        raise RuntimeError(
+            "openai unavailable: env var OPENAI_API_KEY is not set. "
+            "Set the API key or route the request to a configured provider."
+        )
 
     full_input: list[dict] = []
     if system_prompt:
         full_input.append({"role": "system", "content": system_prompt})
     full_input.extend(messages)
 
-    content, usage = await _call_openai_responses(
+    from .providers.openai_provider import call as openai_call
+    content, usage = await openai_call(
+        full_input,
         api_key=api_key,
-        model=call_cfg["model"],
-        input_messages=full_input,
-        max_output_tokens=call_cfg["max_output_tokens"],
-        temperature=call_cfg["temperature"],
-        reasoning_effort=call_cfg["reasoning_effort"],
-        store=call_cfg["store"],
+        model_override=call_cfg["model"],
+        max_tokens=call_cfg["max_output_tokens"],
         use_tools=use_tools,
+        reasoning_effort=call_cfg["reasoning_effort"],
+        temperature=call_cfg["temperature"],
+        store=call_cfg["store"],
     )
 
     input_repr = json.dumps(full_input)
@@ -481,201 +729,6 @@ async def _call_openai_routed(
     return content, usage
 
 
-async def _call_openai_responses(
-    api_key: str,
-    model: str,
-    input_messages: list[dict],
-    max_output_tokens: int = 4000,
-    temperature: float = 1.0,
-    reasoning_effort: str = "low",
-    store: bool = False,
-    use_tools: bool = True,
-) -> tuple[str, dict]:
-    """
-    Call the OpenAI Responses API (/v1/responses) with optional tool calling.
-    Runs up to _MAX_TOOL_ROUNDS tool-call/result loops before returning final text.
-    """
-    # Pin the tool-result distiller to the same provider handling this call so
-    # large tool results self-distill instead of crossing vendors mid-loop.
-    set_caller_provider("openai")
-
-    def _fmt_messages(msgs: list[dict]) -> list[dict]:
-        out: list[dict] = []
-        for m in msgs:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-            if role == "system":
-                out.append({"role": "system", "content": content})
-            elif role == "assistant":
-                out.append({"role": "assistant", "content": [{"type": "output_text", "text": content}]})
-            else:
-                out.append({"role": "user", "content": [{"type": "input_text", "text": content}]})
-        return out
-
-    # Defensive deepcopy: caller's list is never mutated by our tool loop.
-    openai_input = _fmt_messages(copy.deepcopy(input_messages))
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    accumulated_usage: dict = {}
-    prev_call_fingerprint: Optional[str] = None
-
-    for _round in range(_MAX_TOOL_ROUNDS + 1):
-        payload: dict = {
-            "model": model,
-            "input": openai_input,
-            "store": store,
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-            "text": {"format": {"type": "text"}},
-        }
-        if reasoning_effort and reasoning_effort != "none":
-            payload["reasoning"] = {"effort": reasoning_effort}
-        if use_tools:
-            payload["tools"] = TOOL_SCHEMAS_RESPONSES
-
-        try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
-                resp = await _post_with_retry(client, _OPENAI_RESPONSES_URL, json_payload=payload, headers=headers)
-                data = resp.json()
-        except Exception as exc:
-            return _sanitize_provider_error("openai", exc), accumulated_usage
-
-        for k, v in data.get("usage", {}).items():
-            accumulated_usage[k] = accumulated_usage.get(k, 0) + (v if isinstance(v, (int, float)) else 0)
-
-        output_items = data.get("output", [])
-        tool_calls = [item for item in output_items if item.get("type") == "function_call"]
-
-        # Repeat-tool break: if the LLM emitted the exact same set of calls
-        # as last round, it's looping. Stop and answer directly.
-        if tool_calls:
-            fp = _canonical_tool_calls(tool_calls)
-            if prev_call_fingerprint is not None and fp == prev_call_fingerprint:
-                return "[noticed repeat tool call — answering directly]", accumulated_usage
-            prev_call_fingerprint = fp
-
-        if not tool_calls or not use_tools or _round >= _MAX_TOOL_ROUNDS:
-            content = ""
-            for item in output_items:
-                if item.get("type") == "message":
-                    for part in item.get("content", []):
-                        if part.get("type") == "output_text":
-                            content = part.get("text", "")
-                            break
-                if content:
-                    break
-            return content or "[openai: empty response]", accumulated_usage
-
-        # Responses API multi-turn: only function_call items from the model's output
-        # belong in the next round's input (ahead of function_call_output results).
-        # Including message/reasoning/web_search_call items causes 400/404 errors.
-        for item in output_items:
-            if item.get("type") == "function_call":
-                openai_input.append(item)
-
-        for tc in tool_calls:
-            call_id = tc.get("call_id", "")
-            name = tc.get("name", "")
-            try:
-                args = json.loads(tc.get("arguments", "{}"))
-            except Exception:
-                args = {}
-            result = await execute_tool(name, args)
-            openai_input.append({
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": result,
-            })
-
-    return "[openai: tool loop exhausted]", accumulated_usage
-
-
-async def _call_openai_compat(
-    api_key: str,
-    url: str,
-    model: str,
-    messages: list[dict],
-    max_tokens: int,
-    use_tools: bool = True,
-    reasoning_effort: Optional[str] = None,
-) -> tuple[str, dict]:
-    """
-    Chat Completions format (Grok, Gemini).
-    Runs tool-calling loop: execute tool_calls, inject tool results, re-call until done.
-    reasoning_effort is forwarded only when the caller has confirmed support (Grok).
-    """
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    # Defensive deepcopy: caller's list is never mutated by our tool loop.
-    current_messages = copy.deepcopy(messages)
-    accumulated_usage: dict = {}
-    prev_call_fingerprint: Optional[str] = None
-    # Provider name for sanitized errors — derive from URL.
-    provider_name = "grok" if "x.ai" in url else ("gemini" if "googleapis" in url else "provider")
-    # Pin distiller to this provider so tool-result summarization self-routes.
-    set_caller_provider(provider_name)
-
-    for _round in range(_MAX_TOOL_ROUNDS + 1):
-        payload: dict = {
-            "model": model,
-            "messages": current_messages,
-            "max_tokens": max_tokens,
-        }
-        if reasoning_effort:
-            payload["reasoning_effort"] = _gate_to_effort(reasoning_effort)
-        if use_tools:
-            payload["tools"] = TOOL_SCHEMAS_CHAT
-            payload["tool_choice"] = "auto"
-
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await _post_with_retry(client, url, json_payload=payload, headers=headers)
-                data = resp.json()
-        except Exception as exc:
-            return _sanitize_provider_error(provider_name, exc), accumulated_usage
-
-        for k, v in data.get("usage", {}).items():
-            accumulated_usage[k] = accumulated_usage.get(k, 0) + (v if isinstance(v, (int, float)) else 0)
-
-        choice = data.get("choices", [{}])[0]
-        message = choice.get("message", {})
-        finish_reason = choice.get("finish_reason", "stop")
-        tool_calls = message.get("tool_calls") or []
-
-        # Repeat-tool break: detect and short-circuit identical call sets.
-        if tool_calls:
-            fp = _canonical_tool_calls(tool_calls)
-            if prev_call_fingerprint is not None and fp == prev_call_fingerprint:
-                return "[noticed repeat tool call — answering directly]", accumulated_usage
-            prev_call_fingerprint = fp
-
-        if not tool_calls or not use_tools or _round >= _MAX_TOOL_ROUNDS:
-            return message.get("content") or "[no content]", accumulated_usage
-
-        current_messages.append(message)
-
-        for tc in tool_calls:
-            name = tc.get("function", {}).get("name", "")
-            call_id = tc.get("id", "")
-            try:
-                args = json.loads(tc.get("function", {}).get("arguments", "{}"))
-            except Exception:
-                args = {}
-            result = await execute_tool(name, args)
-            current_messages.append({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": result,
-            })
-
-    return "[tool loop exhausted]", accumulated_usage
-
 
 async def _call_anthropic(
     api_key: str,
@@ -686,20 +739,38 @@ async def _call_anthropic(
     reasoning_effort: Optional[str] = None,
     enable_caching: bool = True,
 ) -> tuple[str, dict]:
-    """
-    Anthropic Messages API via the official `anthropic` SDK.
+    """Backward-compat shim — delegates to providers.claude_provider.call.
 
-    - reasoning_effort: when set, enables extended thinking with a budget mapped from effort.
-    - enable_caching: when True, marks the system prompt and tools list with cache_control,
-      cutting input cost ~80% on repeated turns. Requires the prefix to be >= 1024 tokens
-      to actually cache (Anthropic ignores cache_control on smaller prefixes silently).
-
-    Migrated from raw httpx to the SDK so we get typed responses, automatic
-    retries on 429/5xx (max_retries=2 default), and forward-compat with new
-    Anthropic features (computer use, files, beta headers) without rewriting
-    the request shape.
+    The real implementation moved to python/services/providers/claude_provider.py
+    per energy-model-task-overhaul P3. New callers should import that module
+    directly and pass `role=` instead of a pre-resolved model id; legacy
+    callers in this file (the dispatcher at line ~547) still pass `model`
+    positionally and that path keeps working via `model_override`.
     """
-    # Pin distiller to claude so large tool results stay in-vendor.
+    from .providers.claude_provider import call as _claude_call
+    return await _claude_call(
+        messages,
+        api_key=api_key,
+        model_override=model,
+        max_tokens=max_tokens,
+        use_tools=use_tools,
+        reasoning_effort=reasoning_effort,
+        enable_caching=enable_caching,
+    )
+
+
+async def _call_anthropic_LEGACY_DEAD_PATH(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+    use_tools: bool = True,
+    reasoning_effort: Optional[str] = None,
+    enable_caching: bool = True,
+) -> tuple[str, dict]:
+    """Pre-extraction body, kept temporarily as a reference for the rest of
+    the P3 extraction work (grok/openai/gemini). Will be removed in the
+    final cleanup pass once all four providers are out. Not wired."""
     set_caller_provider("claude")
     from anthropic import AsyncAnthropic
     client = AsyncAnthropic(api_key=api_key, max_retries=2, timeout=90.0)
@@ -831,8 +902,4 @@ async def _call_anthropic(
         current_messages.append({"role": "user", "content": tool_results})
 
     return "[claude: tool loop exhausted]", accumulated_usage
-
-
-def _fallback_response(provider_id: str) -> str:
-    return f"[{provider_id} API key not configured — energy provider unavailable]"
-# 624:108
+# 652:153

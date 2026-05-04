@@ -1,4 +1,4 @@
-# 316:55
+# 314:53
 """ZFAE Tool Executor — thin shim over the per-tool registry.
 
 Tools live in `python/services/tools/*.py` (one file per tool, self-declared
@@ -333,19 +333,11 @@ TOOL_SCHEMAS_RESPONSES = OPENAI_NATIVE_TOOLS + TOOL_SCHEMAS_RESPONSES_ZFAE
 # ---------------------------------------------------------------------------
 # Approval-scope user context (per-async-task uid for tools that need it)
 # ---------------------------------------------------------------------------
-_approval_scope_user_cv: _cv.ContextVar[str | None] = _cv.ContextVar(
-    "approval_scope_user", default=None
+from .run_context import (
+    _approval_scope_user_cv,
+    set_approval_scope_user_id,
+    get_approval_scope_user_id,
 )
-
-
-def set_approval_scope_user_id(uid: str | None) -> None:
-    """Set the current user_id context for manage_approval_scope / set_user_tier."""
-    _approval_scope_user_cv.set(uid)
-
-
-def get_approval_scope_user_id() -> str | None:
-    """Read the current per-task user_id, or None if no chat context is active."""
-    return _approval_scope_user_cv.get()
 
 
 # ---------------------------------------------------------------------------
@@ -423,4 +415,4 @@ __all__ = [
     "_skill_recommend",
     "_skill_load",
 ]
-# 316:55
+# 314:53

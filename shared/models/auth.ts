@@ -1,4 +1,4 @@
-// 56:0
+// 57:0
 import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, timestamp, varchar, boolean, integer, text } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -29,6 +29,7 @@ export const users = pgTable("users", {
   stripeSubscriptionId: varchar("stripe_subscription_id"),
   subscriptionStatus: varchar("subscription_status").notNull().default("active"),
   byokEnabled: boolean("byok_enabled").notNull().default(false),
+  transcriptsUnlocked: boolean("transcripts_unlocked").notNull().default(false),
   founderSlot: integer("founder_slot"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -63,4 +64,4 @@ export const guestTokenUsage = pgTable("guest_token_usage", {
 });
 
 export type GuestTokenUsage = typeof guestTokenUsage.$inferSelect;
-// 56:0
+// 57:0

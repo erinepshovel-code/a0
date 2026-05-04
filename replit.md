@@ -1,7 +1,9 @@
-# a0p — Autonomous AI Agent Platform
+# a0p — a research instrument
 
-## Overview
-a0p is a mobile-first autonomous AI agent platform. One agent `a0(zeta fun alpha echo)` (ZFAE) owns one PCNA instance; LLMs (Gemini, Claude, Grok) are "energy providers" not agents; sub-agents `a0(zeta{n})` fork PCNA and merge back. The Python/FastAPI backend declares `UI_META` + `DATA_SCHEMA` per route module; Guardian assembles them into `GET /api/v1/ui/structure`; the frontend is a generic renderer.
+## Identity
+**a0p is a research instrument, not a product.** It is the deployed instance of `a0` (this codebase / repository) running publicly. It explores agent / energy-provider / PCNA dynamics in the open. Anyone may read and use it. Code-altering access is restricted to the owner (Erin) and a small set of explicitly-invited collaborators. The instrument is funded by donations; it does not solicit subscribers.
+
+> Naming: `a0` = the project / runtime / repository (used in `README.md`, `CONTRIBUTING.md`, `docs/`, GitHub). `a0p` = the deployed instance of `a0` (used in user-facing UI copy, billing, pricing, splash). See "Project name: `a0` vs `a0p`" in `README.md`.
 
 ## User Preferences
 - Clear and concise explanations.
@@ -37,12 +39,23 @@ a0p is a mobile-first autonomous AI agent platform. One agent `a0(zeta fun alpha
 - `python/pcna.py` — PCNA engine (53-node ring topology)
 - `python/logger.py` — JSONL append logger
 - `python/agents/zfae.py` — ZFAE agent definition, compose_name(), sub_agent_name()
-- `python/services/energy_registry.py` — LLM provider registry (Gemini, Claude, Grok)
+- `python/services/energy_registry.py` — LLM provider registry (loads `python/config/providers.json`)
+- `python/services/inference.py` — Dispatcher + orchestration (`_call_openai_routed` policy/role/gate); delegates outbound API calls to `providers/<name>.py`
+- `python/services/providers/` — One file per provider (P3 of energy-model-task-overhaul):
+  - `_resolver.py` — env > seed `route_config.model_assignments[role]` > spec model lookup; raises on unresolvable
+  - `openai_provider.py` — OpenAI Responses API + tool loop
+  - `grok_provider.py` — xAI Responses-with-search + Chat-Completions tool loop + SSE streaming
+  - `gemini_provider.py` — google-genai SDK (thin wrapper over `gemini_native.py`)
+  - `claude_provider.py` — Anthropic SDK + prompt caching
+  - All four expose `async def call(messages, *, role, model_override, api_key, max_tokens, use_tools, reasoning_effort, ...) -> (text, usage)` and lazy-import shared helpers from inference.py to avoid circular imports
+- `python/services/provider_seeds_bootstrap.py` — Lifespan-time idempotent seeding of `provider_<id>` WS modules from `providers.json` (preserves admin overrides)
 - `python/services/heartbeat.py` — Background heartbeat service (30s tick)
 - `python/services/bandit.py` — Multi-Armed Bandit (UCB1) service
 - `python/services/edcm.py` — EDCM behavioral directives scoring
 - `python/services/research.py` — Autonomous research (GitHub, AI social search)
-- `python/services/agent_lifecycle.py` — Sub-agent spawn/merge lifecycle
+- `python/services/agent_lifecycle.py` — Sub-agent PCNA fork/merge math
+- `python/services/spawn_executor.py` — Background poller that picks up `agent_runs` rows written by `sub_agent_spawn` and actually executes them: atomic claim (UPDATE … FOR UPDATE SKIP LOCKED), per-row provider binding via `AgentInstance`, full PCNA fork→infer→absorb cycle (forks child PCNA from primary at claim, feeds task + model response into child.infer, snapshots before/after parent state, absorbs back via merge_sub_agent), result logged via `run_logger.emit` with rich `merge` event carrying phi/psi/omega/theta_circles deltas (flows into existing agent_logs → JSONL artifact pipeline). Crash isolation per row; orchestration_mode != 'single' raises NotImplementedError (no silent fallback). `_try_get_primary_pcna` returns explicit `(pcna, error)` tuple so a missing primary surfaces in logs instead of being silently skipped.
+- `GET /api/v1/agents/learning_summary` — Aggregates the most recent `merge` events into cumulative phi/psi/omega/theta_circles delta sums + per-provider breakdown + live `primary_pcna_now` snapshot. This is the surface that lets you SEE alpha echo's compounded learning gain from spawned sub-agents. Defensive parsing skips malformed rows (counted, not fatal); primary snapshot failure surfaces as `primary_pcna_error` rather than null. Read-only SELECT over `agent_logs.event = 'merge'`; no schema change.
 - `python/services/zeta_observe.py` — ZFAE observation service
 - `python/storage/core.py` — Core CRUD storage (raw SQL via asyncpg)
 - `python/storage/domain.py` — Domain-specific storage (heartbeat, memory, PCNA, bandits)
@@ -58,9 +71,8 @@ Each declares `UI_META` (tab config for frontend) + `DATA_SCHEMA` (field specs).
 - `tools.py` — Custom tools CRUD
 - `heartbeat_api.py` — Heartbeat tasks and logs
 - `pcna_api.py` — PCNA state and propagation
-- `billing.py` — Stripe billing: status, plans, checkout, portal, webhook
+- `billing.py` — Stripe billing: status, donations, portal, webhook (donations-only — no recurring subscription tier)
 - `contexts.py` — Prompt contexts CRUD (admin-only write via ADMIN_USER_ID)
-- `founders.py` — Founders registry (53-slot lifetime tier)
 
 ### Frontend (`client/`)
 React + Vite + TypeScript, Tailwind CSS, shadcn/ui components. Fully metadata-driven:
@@ -76,10 +88,10 @@ React + Vite + TypeScript, Tailwind CSS, shadcn/ui components. Fully metadata-dr
   - `scripts/check-console-tabs.mjs` — fast static preflight: parses `CUSTOM_TAB_RENDERERS`, fetches `/api/v1/ui/structure`, fails if any API tab has no renderer and no sections. Run locally with `node scripts/check-console-tabs.mjs` (against Express on :5000) or `API_BASE=http://localhost:8001 INTERNAL_API_SECRET=… node scripts/check-console-tabs.mjs` (direct against uvicorn). The script reads `INTERNAL_API_SECRET` and forwards it as the `x-a0p-internal` header so it can call the gated Python backend without going through the Express proxy.
   - **CI integration (Task #92):** the `check-console-tabs` job in both `.github/workflows/deploy.yml` and `cloudbuild.yaml` boots an ephemeral Postgres + uvicorn backend on every push to `main` and runs the script. The `deploy` job declares `needs: check-console-tabs`, so the Cloud Run deploy is blocked when the script exits non-zero, which happens for either (a) a tab returned by the API with no custom renderer and no sections, or (b) an orphan entry in `CUSTOM_TAB_RENDERERS` whose `tab_id` is no longer returned by `/api/v1/ui/structure`. See `DEPLOYMENT.md` → "Pre-deploy checks".
 - `client/src/pages/chat.tsx` — chat shell with conversation list + message bubbles
-- `client/src/components/top-nav.tsx` — Agent/Console nav, agent name + tier badge, upgrade toast listener
+- `client/src/components/top-nav.tsx` — Agent/Console nav, agent name + tier badge
 - `client/src/components/tabs/` — Legacy hardcoded tab components (unused, retained for reference)
 - `client/src/hooks/use-billing-status.ts` — fetches /api/v1/billing/status (5-min stale), exposes tier, isAdmin
-- `client/src/pages/pricing.tsx` — Pricing page: 4 tier cards, Founder Lifetime, BYOK Add-On, Stripe checkout
+- `client/src/pages/pricing.tsx` — Donations-only support page (research-instrument framing; verbatim 501c3 copy block; one-off donation flow)
 - `client/src/pages/admin-contexts.tsx` — Admin-only prompt context editor (guarded by isAdmin)
 
 ### Database
@@ -96,13 +108,17 @@ PostgreSQL via SQLAlchemy (Python) and Drizzle ORM (schema management).
 - Deprecated names (alfa/beta/gamma) cleaned on boot
 
 ### Energy Providers
-LLMs are energy sources, not agents. Managed by `energy_registry.py`:
-- **grok** — xAI Grok-3 Mini (default)
+LLMs are energy sources, not agents. Managed by `energy_registry.py` (loads `python/config/providers.json` + `python/config/pricing.json`):
+- **grok** — xAI Grok-4 Fast (reasoning)
 - **gemini** — Google Gemini 2.5 Flash
-- **claude** — Anthropic Claude
+- **gemini3** — Google Gemini 3 Pro (preview)
+- **claude** — Anthropic Claude Sonnet 4.5
+- **openai** — OpenAI GPT-5 mini (Responses API)
+- **openai-5.5** — OpenAI GPT-5.5 (1M ctx, $5/$30 per 1M in/out, cached $0.50; released Apr 2026)
+- **openai-5.5-pro** — OpenAI GPT-5.5 Pro (1M ctx, $30/$180 per 1M, cached $3.00; FrontierMath Tier 4 SOTA — reserve for PCNA-critical merges; requires `reasoning_effort >= medium`)
 
 ### PCNA Engine
-53-node circular topology with 4 rings: Phi, Psi, Omega, Guardian.
+53-node circular topology with rings: Phi, Psi, Omega, Theta (formerly "Guardian"; runs PCEA encryption over its tensor state via the `pcea-lib` package).
 Each ring has coherence tracking and propagation.
 
 ### Key Concepts
@@ -111,15 +127,52 @@ Each ring has coherence tracking and propagation.
 - **Bandits**: UCB1 + EMA decay across tool, model, routing domains
 - **EDCM**: Behavioral directive scoring (CM, DA, DRIFT, DVG, INT, TBF)
 - **Sub-agent lifecycle**: fork() at spawn → absorb() on completion → retired
-- **Monetization**: 4 tiers (Free/$0, Seeker/$12, Operator/$39, Patron/$53) + Founder Lifetime ($530, 53 slots) + BYOK add-on ($9/mo) + credit packs. Stripe webhook updates `subscription_tier` on user record; tier determines which `prompt_context` is injected into chat system prompt. No hard rate limiting — EDCM + The Way constrain behavior.
 - **ADMIN_USER_ID**: Env var set to Erin's Replit user ID; only this user can write to `prompt_contexts` via `PUT /api/v1/contexts/{name}`
+
+## Funding
+
+a0p is a research instrument, not a product. It is supported entirely by donations.
+
+> "I don't have the cash required for 501c3 status, so I have to report it for taxes, but every tax payer is allowed to claim up to five hundred dollars in charitable donations per year without receipts required."
+
+The single productized service is the **EDCMbone transcript explainer** — a one-off paid analysis priced against the operator's $1,000/hr benchmark. Donations and the explainer are the only two ways money enters the project. There is no recurring subscription tier.
+
+### Explainer pricing (LOCKED, Task #111)
+
+- 3 free explanations per user, lifetime (seeded on first read of `/api/v1/transcripts/explainer/credits`).
+- $50 = pack of 3 explanations (~$16.67 each, ~1 minute of operator time per shot).
+- Decrement order: free first, then paid.
+- Stripe Checkout (embedded) created via `POST /api/v1/billing/explainer-checkout`; `checkout.session.completed` webhook (product_key=`explainer_pack`) calls `storage.add_explanation_credits(uid, packs)`. Amount is re-derived from `amount_total` to defeat metadata tampering.
+- `charge.refunded` webhook reverses paid credits (rounded down by $50 increments).
+- One explanation per report (UNIQUE on `transcript_explanations.report_id` + FK CASCADE on report delete) — refresh on the report page returns the cached row, no re-billing.
+- Model: `openai-5.5` (gpt-5.5) via `call_energy_provider`. Strict-JSON output (body + citations); parse failure refunds the credit and surfaces the error.
+- **Citation integrity**: every quoted span is verified to actually appear in the transcript (whitespace/case-normalized substring match). Fabricated quotes are dropped; if none survive, the call is rejected and the credit refunded.
+- Observability: each call emits an `agent_logs.event = 'explainer_call'` row that `/api/v1/agents/learning_summary` rolls up into a separate `paid_explainer` section (kept out of `cum.merges` so the sub-agent merge counter stays honest).
+- Frontend: `client/src/components/ExplainerCard.tsx`, mounted in `client/src/pages/transcripts.tsx` under the report stat grid.
+
+The previous Free / Seeker / Operator / Patron / Founder pricing language has been retired; it never matched what the code actually enforced. The runtime tiers that still exist are operational only:
+
+- `free` — default tier for any signed-in user; full read access to the console.
+- `ws` — auto-assigned to `@interdependentway.org` accounts; full operational access.
+- `admin` — owner + invited collaborators (see Access Control below).
+
+There is no `supporter` tier in new sign-ups. Existing Supporter subscribers (if any) are honored until they cancel via the Stripe portal; the `customer.subscription.deleted` webhook drops them back to `free`.
+
+## Access Control (two-tier write gating)
+
+Code-altering access has exactly two tiers:
+
+1. **Owner + invited collaborators** — anyone with `users.role = 'admin'` (or whose email is in the `admin_emails` table). They can mutate prompt contexts, WS modules, energy-provider seeds, custom tools, admin emails, the resolution directory, billing/tier overrides, and other shared instrument state.
+2. **Everyone else** — read the console, run their own chats, upload their own transcripts, manage their own Forge agents and conversations. They cannot reach into shared instrument state.
+
+This is enforced at the route layer. `python/tests/contracts/route_gating.py` is the regression test: it walks every `python/routes/*.py`, finds every POST/PATCH/DELETE/PUT, and asserts each one is either (a) gated by an explicit ownership/admin check, (b) gated by `x-user-id` (i.e., a per-caller mutation that requires sign-in and is scoped to the caller's own row), or (c) explicitly listed in the contract's allowlist with a written reason (Stripe webhook, Express-internal endpoint, public guest chat, etc.). Adding a new write endpoint without falling into one of those buckets fails the contract.
 
 ## External Dependencies
 - **AI**: Gemini 2.5 Flash (Replit integration), Grok-3 Mini (XAI_API_KEY), Claude (Anthropic)
 - **Google**: Gmail, Google Drive (Replit connectors)
 - **GitHub**: Repository ops, Codespace management (Replit connector + GITHUB_PAT)
 - **Auth**: Replit Auth (OpenID Connect)
-- **Payments**: Stripe (sandbox, Replit integration)
+- **Payments**: Stripe (donations only — sandbox, Replit integration)
 - **Database**: PostgreSQL (Replit managed)
 
 ## Module Doctrine

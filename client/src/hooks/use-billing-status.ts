@@ -1,4 +1,4 @@
-// 33:0
+// 33:4
 import { useQuery } from "@tanstack/react-query";
 
 export interface BillingStatus {
@@ -8,11 +8,15 @@ export interface BillingStatus {
   user_id: string | null;
 }
 
+// a0p reframed itself as a research instrument — there is no longer a paid
+// "Supporter" tier for new users. The label is retained ONLY for grandfathered
+// rows whose recurring Stripe subscription pre-dates the reframe; the hook
+// surfaces that fact so the UI can show the self-cancel path.
 const TIER_LABELS: Record<string, string> = {
-  free: "Free",
-  supporter: "Supporter",
+  free: "Open access",
+  supporter: "Supporter (grandfathered)",
   ws: "WS",
-  admin: "Admin",
+  admin: "Owner",
 };
 
 const WS_TIERS = new Set(["ws"]);
@@ -30,11 +34,11 @@ export function useBillingStatus() {
     isLoading,
     error,
     tier: plan,
-    tierLabel: isAdmin && plan === "free" ? "Admin" : (TIER_LABELS[plan] ?? "Free"),
+    tierLabel: isAdmin ? "Owner" : (TIER_LABELS[plan] ?? "Open access"),
     isAdmin,
     isWs: WS_TIERS.has(plan) || isAdmin,
-    isPaid: plan === "supporter",
+    isGrandfatheredSupporter: plan === "supporter",
     userId: data?.user_id ?? null,
   };
 }
-// 33:0
+// 33:4

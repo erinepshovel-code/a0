@@ -1,9 +1,10 @@
-# 176:10
-from fastapi import APIRouter, HTTPException
+# 183:10
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, Any
 
 from ..storage import storage
+from ._admin_gate import require_admin
 
 # DOC module: system
 # DOC label: System
@@ -139,12 +140,14 @@ async def list_toggles():
 
 
 @router.put("/system/toggles/{subsystem}")
-async def upsert_toggle(subsystem: str, body: ToggleInput):
+async def upsert_toggle(subsystem: str, request: Request, body: ToggleInput):
+    await require_admin(request)
     return await storage.upsert_system_toggle(subsystem, body.enabled, body.parameters)
 
 
 @router.delete("/system/toggles/{subsystem}")
-async def delete_toggle(subsystem: str):
+async def delete_toggle(subsystem: str, request: Request):
+    await require_admin(request)
     await storage.delete_system_toggle(subsystem)
     return {"ok": True}
 
@@ -175,7 +178,8 @@ async def list_deals(user_id: str = "default"):
 
 
 @router.post("/system/deals")
-async def create_deal(body: DealInput):
+async def create_deal(request: Request, body: DealInput):
+    await require_admin(request)
     data = body.model_dump(exclude_none=True)
     return await storage.create_deal(data)
 
@@ -189,7 +193,8 @@ async def get_deal(deal_id: int):
 
 
 @router.patch("/system/deals/{deal_id}")
-async def update_deal(deal_id: int, body: DealUpdate):
+async def update_deal(deal_id: int, request: Request, body: DealUpdate):
+    await require_admin(request)
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="no updates")
@@ -202,12 +207,14 @@ async def list_discovery(limit: int = 50):
 
 
 @router.post("/system/discovery")
-async def create_draft(body: dict):
+async def create_draft(request: Request, body: dict):
+    await require_admin(request)
     return await storage.create_discovery_draft(body)
 
 
 @router.post("/system/discovery/{draft_id}/promote")
-async def promote_draft(draft_id: int, body: dict):
+async def promote_draft(draft_id: int, request: Request, body: dict):
+    await require_admin(request)
     conv_id = body.get("conversation_id")
     if not conv_id:
         raise HTTPException(status_code=400, detail="conversation_id required")
@@ -226,4 +233,4 @@ editable_registry.register(EditableField(
     patch_endpoint="/api/v1/system/toggles/{subsystem}",
     query_key="/api/v1/system/toggles",
 ))
-# 176:10
+# 183:10

@@ -139,8 +139,8 @@ class ZetaEngine:
         """
         try:
             from ..main import get_pcna
-            guardian = get_pcna().guardian
-            open_frac = float(guardian.gate_open.mean())
+            theta = get_pcna().theta
+            open_frac = float(theta.gate_open.mean())
             return round(0.8 + open_frac * 0.4, 4)
         except Exception as exc:
             print(f"[zfae:gate_factor] error reading Theta gate factor: {exc}")

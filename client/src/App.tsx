@@ -1,4 +1,4 @@
-// 89:0
+// 98:0
 import { Switch, Route, useLocation, Redirect } from "wouter";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
@@ -15,6 +15,10 @@ import ResetPage from "@/pages/reset";
 import PricingPage from "@/pages/pricing";
 import AdminContextsPage from "@/pages/admin-contexts";
 import ArchivePage from "@/pages/archive";
+import FleetPage from "@/pages/fleet";
+import GalleryPage from "@/pages/gallery";
+import TranscriptsPage from "@/pages/transcripts";
+import ProvidersPage from "@/pages/providers";
 import TopNav from "@/components/top-nav";
 import HmmmDoctrine from "@/components/hmmm-doctrine";
 
@@ -30,6 +34,10 @@ function Router() {
       <Route path="/pricing" component={PricingPage} />
       <Route path="/admin/contexts" component={AdminContextsPage} />
       <Route path="/archive" component={ArchivePage} />
+      <Route path="/gallery" component={GalleryPage} />
+      <Route path="/fleet" component={FleetPage} />
+      <Route path="/transcripts" component={TranscriptsPage} />
+      <Route path="/providers" component={ProvidersPage} />
       <Route component={ChatPage} />
     </Switch>
   );
@@ -60,7 +68,8 @@ function AppShell() {
     location === "/login" ||
     location === "/register" ||
     location === "/reset" ||
-    location === "/pricing";
+    location === "/pricing" ||
+    location === "/gallery";
 
   if (isPublicPage) {
     return (
@@ -97,4 +106,4 @@ export default function App() {
     </QueryClientProvider>
   );
 }
-// 89:0
+// 98:0

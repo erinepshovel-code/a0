@@ -1,4 +1,4 @@
-# 59:204
+# 59:213
 import asyncio
 import json
 import time
@@ -202,12 +202,12 @@ class HeartbeatService:
             pcna.phi.propagate(steps=5)
             pcna.psi.propagate(steps=4)
             pcna.omega.propagate(steps=3)
-            pcna.guardian.propagate(steps=2)
+            pcna.theta.propagate(steps=2)
             pcna_8 = get_pcna_8()
             pcna_8.phi.propagate(steps=5)
             pcna_8.psi.propagate(steps=4)
             pcna_8.omega.propagate(steps=3)
-            pcna_8.guardian.propagate(steps=2)
+            pcna_8.theta.propagate(steps=2)
             return f"propagate_ok: p7_phi={pcna.phi.ring_coherence:.4f} p8_phi={pcna_8.phi.ring_coherence:.4f}"
 
         if task_type == "conversation_review":
@@ -257,7 +257,16 @@ class HeartbeatService:
         transcript = "\n".join(msg_lines)
 
         prompt_text = REVIEW_PROMPT + transcript
-        provider_id = energy_registry.get_active_provider() or "gemini"
+        # No silent fallback: heartbeat conversation reviews require an
+        # explicitly configured active_provider. Skipping a tick is
+        # preferable to silently sending Gemini-bound traffic when the
+        # admin intended a different provider.
+        provider_id = energy_registry.get_active_provider()
+        if not provider_id:
+            return (
+                "conversation_review_skipped: no active_provider configured "
+                "(set via POST /api/agents/active-provider)"
+            )
 
         try:
             raw_content, _ = await call_energy_provider(
@@ -305,4 +314,4 @@ class HeartbeatService:
 
 
 heartbeat_service = HeartbeatService()
-# 59:204
+# 59:213

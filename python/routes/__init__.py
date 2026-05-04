@@ -1,4 +1,4 @@
-# 157:4
+# 172:17
 from .chat import router as chat_router
 from .agents import router as agents_router
 from .memory import router as memory_router
@@ -26,6 +26,13 @@ from .forge import router as forge_router
 from .energy import router as energy_router, pcna_router as energy_pcna_router
 from .liminals import router as liminals_router
 from .artifacts import router as artifacts_router
+from .runs import router as runs_router
+from .orch_progress import router as orch_progress_router
+from .preferences import router as preferences_router
+from .fleet import router as fleet_router
+from .transcripts import router as transcripts_router
+from .models import router as models_router
+from .module_config_api import router as module_config_router
 
 ALL_ROUTERS = [
     chat_router,
@@ -57,6 +64,13 @@ ALL_ROUTERS = [
     energy_pcna_router,
     liminals_router,
     artifacts_router,
+    runs_router,
+    orch_progress_router,
+    preferences_router,
+    fleet_router,
+    transcripts_router,
+    models_router,
+    module_config_router,
 ]
 
 
@@ -85,6 +99,7 @@ def collect_ui_meta() -> list[dict]:
         "python.routes.forge",
         "python.routes.liminals",
         "python.routes.artifacts",
+        "python.routes.module_config_api",
     ]
     tabs = []
     for mod_name in modules:
@@ -158,7 +173,7 @@ def collect_doc_meta() -> list[dict]:
         "billing.py", "contexts.py", "openai_api.py",
         "zfae_api.py", "approval_scopes.py", "ws_modules.py", "docs.py",
         "sigma_api.py", "editable_schema.py", "cli.py", "forge.py",
-        "artifacts.py",
+        "artifacts.py", "module_config_api.py",
     ]
     results: list[dict] = []
     for fname in route_files:
@@ -172,4 +187,20 @@ def collect_doc_meta() -> list[dict]:
             results.append(meta)
     results.sort(key=lambda d: d.get("label", ""))
     return results
-# 157:4
+
+
+# === CONTRACTS ===
+# id: routes_write_endpoints_gated
+#   given: every @router.{post,patch,delete,put} handler in
+#          python/routes/*.py (excluding billing_helpers.py and __init__)
+#   then:  the handler body must reference at least one gating sentinel
+#          (admin check, x-user-id resolution, ownership filter, internal
+#          token, HMAC verification, or FastAPI Depends auth) OR be in
+#          the explicit ALLOWLIST in route_gating.py with a justification.
+#          Stale ALLOWLIST entries (route no longer exists) also fail.
+#   class: security
+#   call:  python.tests.contracts.route_gating.test_every_write_route_is_gated
+# === END CONTRACTS ===
+# 171:16
+
+# 172:17
