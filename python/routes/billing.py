@@ -1,4 +1,4 @@
-# 416:306
+# 420:311
 import os
 import stripe
 from urllib.parse import urlparse
@@ -88,6 +88,18 @@ def _allowed_netlocs() -> set[str]:
         # Allow local dev servers on any port.
         netlocs.update({"localhost", "127.0.0.1"})
     return netlocs
+
+
+def _allowed_origins() -> list[str]:
+    """Return the ordered list of trusted full origin strings (scheme + host[:port]).
+
+    Used to build the fallback_origin prefix for Stripe return URLs.
+    Reads APP_ORIGIN from the environment (comma-separated list supported).
+    Falls back to https://a0p.replit.app when the env var is absent.
+    """
+    env = os.environ.get("APP_ORIGIN", "")
+    raw = [o.strip().rstrip("/") for o in env.split(",") if o.strip()]
+    return raw if raw else ["https://a0p.replit.app"]
 
 
 def _safe_return_url(candidate: Optional[str], fallback: str) -> str:
@@ -848,4 +860,4 @@ async def explainer_checkout(request: Request):
 #   class: idempotency
 #   call:  python.tests.contracts.billing.test_webhook_replay_is_idempotent
 # === END CONTRACTS ===
-# 416:306
+# 420:311

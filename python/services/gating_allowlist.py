@@ -65,7 +65,7 @@ OWNER_OR_PUBLIC_WRITES: list[AllowEntry] = [
     AllowEntry("focus.py", "PUT", "/conversations/{conv_id}/boost", "Owner-of-conv check via _assert_conv_owner"),
     AllowEntry("focus.py", "DELETE", "/conversations/{conv_id}/boost", "Owner-of-conv check via _assert_conv_owner"),
     AllowEntry("focus.py", "POST", "/conversations/{conv_id}/focus", "Owner-of-conv check via _assert_conv_owner"),
-    AllowEntry("focus.py", "POST", "/subagent", "Caller spawns sub-agent for their own conv; ownership checked via _assert_conv_owner"),
+    AllowEntry("focus.py", "POST", "/subagent", "Caller must be authenticated (401 if uid missing); spawns sub-agent conversation owned by caller uid — no shared instrument state mutated"),
     AllowEntry("transcripts.py", "POST", "/upload", "Caller uploads to their own quota; uid from header + quota check"),
     AllowEntry("transcripts.py", "POST", "/reports/{report_id}/explain", "Owner-only EDCMbone explainer; ownership checked via get_transcript_report join, billed against caller's own credits"),
     AllowEntry("billing.py", "POST", "/explainer-checkout", "Caller buys their own explainer pack; uid from header"),

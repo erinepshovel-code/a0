@@ -1,4 +1,4 @@
-# 217:25
+# 225:25
 # DOC module: focus
 # DOC label: Focus & Sub-agents
 # DOC description: Model focus management and sub-agent delegation. Provides context boost injection per conversation, focus regain directives, sub-agent background task launch, and error log retrieval for model calls.
@@ -58,6 +58,8 @@ class BoostBody(BaseModel):
 @router.put("/conversations/{conv_id}/boost")
 async def set_boost(conv_id: int, body: BoostBody, request: Request):
     uid = _uid(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
     await _assert_conv_owner(conv_id, uid)
     async with engine.begin() as conn:
         await conn.execute(
@@ -70,6 +72,8 @@ async def set_boost(conv_id: int, body: BoostBody, request: Request):
 @router.delete("/conversations/{conv_id}/boost")
 async def clear_boost(conv_id: int, request: Request):
     uid = _uid(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
     await _assert_conv_owner(conv_id, uid)
     async with engine.begin() as conn:
         await conn.execute(
@@ -84,6 +88,8 @@ async def clear_boost(conv_id: int, request: Request):
 @router.post("/conversations/{conv_id}/focus")
 async def regain_focus(conv_id: int, request: Request):
     uid = _uid(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
     conv = await _assert_conv_owner(conv_id, uid)
 
     from ..services.inference import call_energy_provider
@@ -173,6 +179,8 @@ async def launch_subagent(body: SubagentBody, request: Request):
     Returns immediately with the sub-agent conversation ID.
     """
     uid = _uid(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     conv = await storage.create_conversation({
         "title": f"[sub-agent] {body.task[:60]}",
@@ -291,4 +299,4 @@ async def subagent_status(conv_id: int, request: Request):
         result["error"] = conv.get("subagent_error")
 
     return result
-# 217:25
+# 225:25
