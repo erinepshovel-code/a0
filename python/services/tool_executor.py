@@ -67,14 +67,25 @@ def get_active_responses_schemas() -> list[dict]:
     if allowed is None:
         return TOOL_SCHEMAS_RESPONSES
     allowed_set = set(allowed)
-    # TOOL_SCHEMAS_RESPONSES may contain native types without a "name" key at
-    # top level (e.g. {"type": "web_search_preview"}) — always include those.
+    # Map OpenAI native tool types to their logical allow-list name so that
+    # disabling "web_search" also removes the native "web_search_preview" entry.
+    _NATIVE_TYPE_TO_TOOL_NAME: dict[str, str] = {
+        "web_search_preview": "web_search",
+    }
     filtered = []
     for s in TOOL_SCHEMAS_RESPONSES:
         if "name" in s:
+            # Named tool (function-call style) — check allow-list directly.
             if s["name"] in allowed_set:
                 filtered.append(s)
+        elif "type" in s:
+            # Native type entry (e.g. {"type": "web_search_preview"}).
+            # Map to logical name; include if the logical name is allowed.
+            logical = _NATIVE_TYPE_TO_TOOL_NAME.get(s["type"], s["type"])
+            if logical in allowed_set:
+                filtered.append(s)
         else:
+            # Unknown shape — include unconditionally.
             filtered.append(s)
     return filtered
 

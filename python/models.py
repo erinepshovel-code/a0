@@ -54,6 +54,7 @@ class Conversation(Base):
     subagent_error = Column(Text)
     archived = Column(Boolean, nullable=False, server_default=text("false"))
     agent_id = Column(Integer)
+    enabled_tools = Column(JSONB)
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
