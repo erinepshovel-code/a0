@@ -409,6 +409,19 @@ async def patch_conv_tools(conv_id: int, body: ToolsBody, request: Request):
         raise HTTPException(status_code=401, detail="Authentication required")
     await _assert_conv_owner(conv_id, uid)
 
+    # Validate tool names against the known registry to prevent data drift.
+    if body.enabled_tools is not None:
+        from ..services.tool_executor import TOOL_SCHEMAS_CHAT
+        known = {s["function"]["name"] for s in TOOL_SCHEMAS_CHAT}
+        unknown = [n for n in body.enabled_tools if n not in known]
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown tool name(s): {', '.join(unknown)}",
+            )
+        # Deduplicate and sort for stable storage.
+        body = body.model_copy(update={"enabled_tools": sorted(set(body.enabled_tools))})
+
     import json as _json
     new_val = _json.dumps(body.enabled_tools) if body.enabled_tools is not None else None
 

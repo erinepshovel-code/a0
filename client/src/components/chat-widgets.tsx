@@ -496,7 +496,6 @@ export function PreChatInspectorPanel({ convId }: { convId: number }) {
 
 export function ConvToolsPopover({ convId }: { convId: number }) {
   const [open, setOpen] = useState(false);
-  const qc = useQueryClient();
 
   const { data } = useQuery<ConvToolsRes>({
     queryKey: ["/api/v1/conversations", convId, "tools"],
