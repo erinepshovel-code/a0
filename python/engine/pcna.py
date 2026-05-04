@@ -1,4 +1,4 @@
-# 295:27
+# 325:37
 """
 PCNA Inference Engine — six-ring pipeline, all rings real.
 
@@ -30,7 +30,7 @@ import numpy as np
 
 from .ptca_core import PTCACore
 from .memory_core import MemoryCore
-from .guardian import GuardianTensor
+from .theta import ThetaTensor
 
 
 def _tensor_to_b64(arr: np.ndarray) -> str:
@@ -42,11 +42,33 @@ def _tensor_to_b64(arr: np.ndarray) -> str:
 def _b64_to_tensor(s: str) -> np.ndarray:
     return np.load(io.BytesIO(base64.b64decode(s)))
 
+
+def _arm_to_json(arm: dict) -> dict:
+    """Bandit arm → JSON-safe dict (datetime → ISO str)."""
+    out = dict(arm)
+    lp = out.get("last_pulled")
+    if hasattr(lp, "isoformat"):
+        out["last_pulled"] = lp.isoformat()
+    return out
+
+
+def _arm_from_json(arm: dict) -> dict:
+    """Inverse of _arm_to_json. Tolerates missing fields from old snapshots."""
+    out = dict(arm or {})
+    lp = out.get("last_pulled")
+    if isinstance(lp, str) and lp:
+        try:
+            from datetime import datetime as _dt
+            out["last_pulled"] = _dt.fromisoformat(lp)
+        except Exception:
+            out["last_pulled"] = None
+    return out
+
 RING_WEIGHTS = {
     "phi": 0.30,
     "psi": 0.15,
     "omega": 0.15,
-    "guardian": 0.20,
+    "theta": 0.20,
     "memory_l": 0.12,
     "memory_s": 0.08,
 }
@@ -64,16 +86,21 @@ class PCNAEngine:
         self.omega = PTCACore(name="omega", symbol="Ω", role="autonomy", n=53, seed=47, phases=phases)
         self.memory_l = MemoryCore(n=19, seed=19, role="long_term", phases=phases)
         self.memory_s = MemoryCore(n=17, seed=17, role="short_term", phases=phases)
-        self.guardian = GuardianTensor(phases=phases)
+        self.theta = ThetaTensor(phases=phases)
         self.infer_count = 0
         self.reward_count = 0
         self.last_coherence = 0.0
         self.last_winner = "phi"
-        self.blueprint_hash = self.guardian.blueprint_hash
+        self.blueprint_hash = self.theta.blueprint_hash
         self.created_at = time.time()
         self.checkpoint_at: float | None = None
         self.checkpoint_ring_means: dict[str, float] = {}
         self._checkpoint_key = "pcna_tensor_checkpoint" if phases == 7 else f"pcna_tensor_checkpoint_p{phases}"
+
+        # Task #112 — bandit lives on PCNA core: fork=pull, merge=reward.
+        # Map of domain -> list[arm dict]. Empty by default; arms added
+        # lazily by spawn_executor via bandit.ensure_arm.
+        self.bandit_state: dict[str, list[dict]] = {}
 
     async def load_checkpoint(self):
         """
@@ -133,6 +160,14 @@ class PCNAEngine:
                 name: round(float(ring_map[name].tensor.mean()), 4)
                 for name in decoded
             }
+            # Task #112 — bandit_state round-trip. Old snapshots without
+            # the key default to {}, preserving back-compat.
+            bs = data.get("bandit_state") or {}
+            if isinstance(bs, dict):
+                self.bandit_state = {
+                    str(domain): [_arm_from_json(a) for a in (arms or [])]
+                    for domain, arms in bs.items()
+                }
             print(f"[pcna] checkpoint restored: {len(decoded)} rings, saved_at={ts}")
         except Exception as e:
             print(f"[pcna] checkpoint load failed (fresh start): {e}")
@@ -153,6 +188,12 @@ class PCNAEngine:
                 data[f"{name}_tensor"] = _tensor_to_b64(ring.tensor)
                 if hasattr(ring, "velocities"):
                     data[f"{name}_velocities"] = _tensor_to_b64(ring.velocities)
+            # Task #112 — persist bandit_state alongside ring tensors so
+            # learned preferences survive restart.
+            data["bandit_state"] = {
+                str(domain): [_arm_to_json(a) for a in arms]
+                for domain, arms in (self.bandit_state or {}).items()
+            }
             await storage.upsert_system_toggle(self._checkpoint_key, True, data)
             self.checkpoint_at = data["saved_at"]
             self.checkpoint_ring_means = {
@@ -175,8 +216,8 @@ class PCNAEngine:
         self.phi._recompute_coherence()
         self.memory_s.write(signal)
 
-        # Θ (Theta/Guardian) → Φ: guardian gate state softly shapes phi (Task #72)
-        theta_nc = self.guardian.node_coherence
+        # Θ (Theta) → Φ: theta gate state softly shapes phi (Task #72)
+        theta_nc = self.theta.node_coherence
         theta_signal = np.full(53, float(theta_nc.mean()), dtype=np.float64)
         theta_signal[:len(theta_nc)] = theta_nc
         self.phi.inject(theta_signal)
@@ -210,7 +251,7 @@ class PCNAEngine:
         self.phi.propagate(steps=10)
         self.psi.propagate(steps=8)
         self.omega.propagate(steps=6)
-        self.guardian.propagate(steps=5)
+        self.theta.propagate(steps=5)
 
     def _ptca_seed_audit(self) -> dict:
         cores = {"phi": self.phi, "psi": self.psi, "omega": self.omega}
@@ -225,15 +266,15 @@ class PCNAEngine:
         return result
 
     def _pcta_circle_audit(self) -> dict:
-        g_audit = self.guardian.pcta_circle_audit()
+        g_audit = self.theta.pcta_circle_audit()
         open_nodes = [n for n in g_audit if n["gate"]]
         closed_nodes = [n for n in g_audit if not n["gate"]]
         return {
-            "guardian_nodes": len(g_audit),
+            "theta_nodes": len(g_audit),
             "gates_open": len(open_nodes),
             "gates_closed": len(closed_nodes),
             "avg_circles": round(sum(n["circles"] for n in g_audit) / len(g_audit), 2),
-            "guardian_coherence": round(float(self.guardian.node_coherence.mean()), 4),
+            "theta_coherence": round(float(self.theta.node_coherence.mean()), 4),
             "memory_l_hub_avg": self.memory_l.state()["avg_hub"],
         }
 
@@ -242,7 +283,7 @@ class PCNAEngine:
             "phi": seed_audit["phi_coherence"],
             "psi": seed_audit["psi_coherence"],
             "omega": seed_audit["omega_coherence"],
-            "guardian": circle_audit["guardian_coherence"],
+            "theta": circle_audit["theta_coherence"],
             "memory_l": self.memory_l.state()["avg_hub"],
             "memory_s": self.memory_s.state()["avg_hub"],
         }
@@ -282,14 +323,14 @@ class PCNAEngine:
             "signal_mean": round(float(signal.mean()), 4),
             "step1_project": {"signal_len": len(signal), "signal_mean": round(float(signal.mean()), 4)},
             "step2_inject": {"phi_n": 53, "psi_n": 53, "omega_n": 53, "memory_s_n": 17},
-            "step3_propagate": {"phi_steps": 10, "psi_steps": 8, "omega_steps": 6, "guardian_steps": 5},
+            "step3_propagate": {"phi_steps": 10, "psi_steps": 8, "omega_steps": 6, "theta_steps": 5},
             "step4_ptca_seed": seed_audit,
             "step5_pcta_circle": circle_audit,
             "step6_coherence": coherence,
             "coherence_score": coherence["weighted_coherence"],
             "winner": coherence["winner"],
             "confidence": coherence["confidence"],
-            "guardian_circles": int(self.guardian.circle_count.mean()),
+            "theta_circles": int(self.theta.circle_count.mean()),
             "memory_l_state": self.memory_l.state(),
             "memory_s_state": self.memory_s.state(),
         }
@@ -298,7 +339,7 @@ class PCNAEngine:
         self.phi.nudge(outcome, lr=0.025)
         self.psi.nudge(outcome, lr=0.020)
         self.omega.nudge(outcome, lr=0.015)
-        self.guardian.apply_reward(outcome)
+        self.theta.apply_reward(outcome)
         flushed = self.memory_s.flush_to(self.memory_l, outcome)
         try:
             from .sigma import get_sigma
@@ -319,8 +360,8 @@ class PCNAEngine:
             "phi_coherence_after": round(self.phi.ring_coherence, 4),
             "psi_coherence_after": round(self.psi.ring_coherence, 4),
             "omega_coherence_after": round(self.omega.ring_coherence, 4),
-            "theta_coherence_after": round(float(self.guardian.node_coherence.mean()), 4),
-            "guardian_circles_after": [int(v) for v in self.guardian.circle_count],
+            "theta_coherence_after": round(float(self.theta.node_coherence.mean()), 4),
+            "theta_circles_after": [int(v) for v in self.theta.circle_count],
             "memory_l_flush_count": self.memory_l.flush_count,
             "memory_s_flush_count": self.memory_s.flush_count,
         }
@@ -336,7 +377,7 @@ class PCNAEngine:
             sigma_state = get_sigma().state()
         except Exception:
             sigma_state = {}
-        guardian_state = self.guardian.state()
+        theta_state = self.theta.state()
         return {
             "engine": "pcna",
             "version": "2.2.0",
@@ -349,8 +390,7 @@ class PCNAEngine:
                 "phi": self.phi.state(),
                 "psi": self.psi.state(),
                 "omega": self.omega.state(),
-                "theta": guardian_state,
-                "guardian": guardian_state,
+                "theta": theta_state,
                 "sigma": sigma_state,
                 "memory_l": self.memory_l.state(),
                 "memory_s": self.memory_s.state(),
@@ -360,5 +400,10 @@ class PCNAEngine:
             "checkpoint_at": self.checkpoint_at,
             "checkpoint_ring_means": self.checkpoint_ring_means,
             "echo_history": echo_history[-20:],
+            # Task #112 — surface live bandit state in PCNA snapshot
+            "bandit_state": {
+                d: [_arm_to_json(a) for a in arms]
+                for d, arms in (self.bandit_state or {}).items()
+            },
         }
-# 295:27
+# 325:37

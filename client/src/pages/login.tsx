@@ -1,4 +1,4 @@
-// 318:0
+// 319:0
 import { useState, useRef, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -42,7 +42,8 @@ function GuestChat() {
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length === 0) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages]);
 
   async function send() {
@@ -342,4 +343,4 @@ export default function LoginPage() {
     </div>
   );
 }
-// 318:0
+// 319:0

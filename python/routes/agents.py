@@ -1,6 +1,6 @@
-# 160:9
+# 292:41
 import time
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
@@ -11,6 +11,17 @@ from ..agents.zfae import (
 )
 from ..services.energy_registry import energy_registry
 from ..engine import PCNAEngine, InstanceMerge
+from ..services.agent_lifecycle import (
+    # Task #122 — re-export the canonical registry from agent_lifecycle so
+    # there is exactly one in-memory `_sub_agents` per process. The dict
+    # used to live here too; we keep the name as a shim for one release
+    # in case anything outside the repo imports it.
+    _sub_agents,
+    spawn_sub_agent as _lifecycle_spawn,
+    merge_sub_agent as _lifecycle_merge,
+    list_sub_agents as _lifecycle_list,
+)
+from ._admin_gate import require_admin
 
 # DOC module: agents
 # DOC label: Agents
@@ -65,8 +76,8 @@ DATA_SCHEMA = {
 
 router = APIRouter(prefix="/api/v1", tags=["agents"])
 
-_sub_agents: dict[str, PCNAEngine] = {}
-_sub_counter = 0
+# Note: `_sub_agents` is imported above from agent_lifecycle. Local
+# `_sub_counter` is no longer needed — the lifecycle module owns naming.
 
 
 class SpawnRequest(BaseModel):
@@ -135,53 +146,212 @@ async def list_agents():
             "energy_provider": active_provider,
         }
     ]
-    for idx, (sa_name, sa_engine) in enumerate(_sub_agents.items()):
+    for idx, sa in enumerate(_lifecycle_list()):
         agents.append({
-            "name": sa_name,
+            "name": sa["name"],
             "slot": f"zeta{idx}",
             "status": "active",
             "is_persistent": False,
-            "energy_provider": active_provider,
-            "uptime_s": round(time.time() - sa_engine.created_at, 1),
+            "energy_provider": sa.get("provider") or active_provider,
+            "uptime_s": sa["uptime_s"],
         })
     return agents
 
 
 @router.get("/agents/energy-providers")
 async def list_energy_providers():
-    return energy_registry.list_providers()
+    """List providers + per-provider enable/disable state from the seed.
+
+    `enabled` defaults to True when the field is absent in route_config so
+    existing seed rows behave as before. `disabled_models` is the per-model
+    deny list (empty when unset). Both are surfaced here so the chat input
+    can hide killed providers without a separate fetch.
+    """
+    base = energy_registry.list_providers()
+    # Read each provider's seed once. _get_seed_module is cheap and we only
+    # have a handful of providers, so the N round-trips are fine.
+    from .energy import _get_seed_module
+    for entry in base:
+        seed = await _get_seed_module(entry["id"])
+        rc = (seed or {}).get("route_config") or {}
+        entry["enabled"] = bool(rc.get("enabled", True))
+        dm = rc.get("disabled_models") or []
+        entry["disabled_models"] = list(dm) if isinstance(dm, list) else []
+    return base
 
 
 @router.post("/agents/energy-providers/active")
-async def set_active_provider(body: SetProviderRequest):
-    if not energy_registry.set_active_provider(body.provider_id):
+async def set_active_provider(request: Request, body: SetProviderRequest):
+    await require_admin(request)
+    if not await energy_registry.set_active_provider_persistent(body.provider_id):
         raise HTTPException(status_code=400, detail="unknown provider")
     return {"active": body.provider_id, "agent_name": compose_name(body.provider_id)}
 
 
 @router.post("/agents/spawn")
-async def spawn_sub_agent(body: SpawnRequest):
+async def spawn_sub_agent(request: Request, body: SpawnRequest):
+    """Admin-only manual spawn — has no run row, so no parent_run_id."""
+    await require_admin(request)
     from ..main import get_pcna
-    global _sub_counter
     parent = get_pcna()
-    child, result = InstanceMerge.fork(parent)
-    _sub_counter += 1
     provider = body.provider or energy_registry.get_active_provider()
-    name = sub_agent_name(_sub_counter, provider)
-    _sub_agents[name] = child
-    result["sub_agent_name"] = name
-    return result
+    return _lifecycle_spawn(parent, provider=provider)
 
 
 @router.post("/agents/{agent_name}/merge")
-async def merge_sub_agent(agent_name: str):
+async def merge_sub_agent(agent_name: str, request: Request):
+    await require_admin(request)
     from ..main import get_pcna
-    if agent_name not in _sub_agents:
+    result = _lifecycle_merge(get_pcna(), agent_name)
+    if isinstance(result, dict) and result.get("error") == "sub-agent not found":
         raise HTTPException(status_code=404, detail="sub-agent not found")
-    child = _sub_agents.pop(agent_name)
-    result = InstanceMerge.absorb(get_pcna(), child)
-    result["retired_agent"] = agent_name
     return result
+
+
+@router.get("/agents/learning_summary")
+async def learning_summary(limit: int = 200):
+    """Aggregate alpha echo's learning gains from sub-agent merges.
+
+    Reads recent 'merge' events written by spawn_executor and rolls up:
+      * total merges counted
+      * cumulative phi/psi/omega coherence deltas (the four ring metrics)
+      * per-provider breakdown (which providers' work has compounded most)
+      * the live primary-PCNA snapshot so the user can compare
+        "alpha echo right now" against the cumulative gain it absorbed
+
+    Also surfaces a separate `paid_explainer` rollup of recent
+    'explainer_call' events — these are paid one-shot model calls, not
+    pcna merges, and are kept in their own section so the merge counter
+    stays honest. No schema change; pure aggregation over agent_logs rows.
+    """
+    from sqlalchemy import text as _sa_text
+    from ..database import get_session
+    from ..main import get_pcna
+    if limit < 1 or limit > 1000:
+        raise HTTPException(status_code=400, detail="limit must be 1..1000")
+    rows = []
+    explainer_rows = []
+    async with get_session() as s:
+        r = await s.execute(_sa_text(
+            "SELECT payload, ts FROM agent_logs "
+            "WHERE event = 'merge' ORDER BY ts DESC LIMIT :lim"
+        ), {"lim": limit})
+        rows = r.mappings().all()
+        r2 = await s.execute(_sa_text(
+            "SELECT payload, ts FROM agent_logs "
+            "WHERE event = 'explainer_call' ORDER BY ts DESC LIMIT :lim"
+        ), {"lim": limit})
+        explainer_rows = r2.mappings().all()
+    def _num(v, caster):
+        """Coerce v to int/float defensively; return 0 for malformed input."""
+        try:
+            return caster(v) if v is not None else caster(0)
+        except (TypeError, ValueError):
+            return caster(0)
+
+    cum = {
+        "merges": 0,
+        "phi_delta_sum": 0.0,
+        "psi_delta_sum": 0.0,
+        "omega_delta_sum": 0.0,
+        "theta_circles_delta_sum": 0,
+    }
+    by_provider: dict[str, dict] = {}
+    most_recent = None
+    malformed_skipped = 0
+    for row in rows:
+        p = row["payload"]
+        if not isinstance(p, dict):
+            malformed_skipped += 1
+            continue
+        d = p.get("delta")
+        if not isinstance(d, dict):
+            d = {}
+        cum["merges"] += 1
+        cum["phi_delta_sum"] += _num(d.get("phi_delta"), float)
+        cum["psi_delta_sum"] += _num(d.get("psi_delta"), float)
+        cum["omega_delta_sum"] += _num(d.get("omega_delta"), float)
+        cum["theta_circles_delta_sum"] += _num(d.get("theta_circles_delta"), int)
+        prov = str(p.get("provider") or "unknown")
+        bp = by_provider.setdefault(prov, {
+            "merges": 0,
+            "phi_delta_sum": 0.0,
+            "psi_delta_sum": 0.0,
+            "omega_delta_sum": 0.0,
+        })
+        bp["merges"] += 1
+        bp["phi_delta_sum"] += _num(d.get("phi_delta"), float)
+        bp["psi_delta_sum"] += _num(d.get("psi_delta"), float)
+        bp["omega_delta_sum"] += _num(d.get("omega_delta"), float)
+        if most_recent is None:
+            most_recent = {"ts": str(row["ts"]), **p}
+    cum["phi_delta_sum"] = round(cum["phi_delta_sum"], 6)
+    cum["psi_delta_sum"] = round(cum["psi_delta_sum"], 6)
+    cum["omega_delta_sum"] = round(cum["omega_delta_sum"], 6)
+    for bp in by_provider.values():
+        bp["phi_delta_sum"] = round(bp["phi_delta_sum"], 6)
+        bp["psi_delta_sum"] = round(bp["psi_delta_sum"], 6)
+        bp["omega_delta_sum"] = round(bp["omega_delta_sum"], 6)
+    # Live primary snapshot — explicit error surfaces the failure rather
+    # than collapsing into a silent None that hides a real bug.
+    primary = None
+    primary_error = None
+    try:
+        p = get_pcna()
+        primary = {
+            "phi_coherence": round(float(p.phi.ring_coherence), 6),
+            "psi_coherence": round(float(p.psi.ring_coherence), 6),
+            "omega_coherence": round(float(p.omega.ring_coherence), 6),
+            "theta_circles": int(p.theta.circle_count.mean()),
+            "infer_count": int(getattr(p, "infer_count", 0)),
+            "instance_id": p.theta.instance_id,
+        }
+    except Exception as exc:
+        primary_error = f"{type(exc).__name__}: {exc}"[:200]
+    # Paid-explainer rollup — separate from `cumulative` and `by_provider`
+    # above so the merge counter isn't inflated by paid one-shot calls.
+    paid = {
+        "calls": 0,
+        "total_prompt_tokens": 0,
+        "total_completion_tokens": 0,
+        "total_cost_cents": 0,
+        "by_provider": {},
+        "most_recent": None,
+    }
+    for row in explainer_rows:
+        p = row["payload"]
+        if not isinstance(p, dict):
+            continue
+        paid["calls"] += 1
+        pt = _num(p.get("prompt_tokens"), int)
+        ct = _num(p.get("completion_tokens"), int)
+        cc = _num(p.get("cost_cents"), int)
+        paid["total_prompt_tokens"] += pt
+        paid["total_completion_tokens"] += ct
+        paid["total_cost_cents"] += cc
+        prov = str(p.get("provider") or "unknown")
+        bp = paid["by_provider"].setdefault(prov, {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_cents": 0,
+        })
+        bp["calls"] += 1
+        bp["prompt_tokens"] += pt
+        bp["completion_tokens"] += ct
+        bp["cost_cents"] += cc
+        if paid["most_recent"] is None:
+            paid["most_recent"] = {"ts": str(row["ts"]), **p}
+    return {
+        "window_size": len(rows),
+        "malformed_skipped": malformed_skipped,
+        "cumulative": cum,
+        "by_provider": by_provider,
+        "primary_pcna_now": primary,
+        "primary_pcna_error": primary_error,
+        "most_recent_merge": most_recent,
+        "paid_explainer": paid,
+    }
 
 
 from ..services.editable_registry import editable_registry, EditableField
@@ -196,4 +366,4 @@ editable_registry.register(EditableField(
     query_key="/api/v1/agents/energy-providers",
     options=["grok", "gemini", "claude"],
 ))
-# 160:9
+# 292:41

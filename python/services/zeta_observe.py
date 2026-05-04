@@ -8,12 +8,12 @@ def observe_coherence(pcna_state: dict) -> dict[str, Any]:
     phi = rings.get("phi", {})
     psi = rings.get("psi", {})
     omega = rings.get("omega", {})
-    guardian = rings.get("guardian", {})
+    theta = rings.get("theta", {})
 
     phi_c = phi.get("ring_coherence", 0)
     psi_c = psi.get("ring_coherence", 0)
     omega_c = omega.get("ring_coherence", 0)
-    guardian_c = guardian.get("avg_coherence", 0)
+    theta_c = theta.get("ring_coherence", 0)
 
     winner = "phi"
     best = phi_c
@@ -22,7 +22,7 @@ def observe_coherence(pcna_state: dict) -> dict[str, Any]:
             best = val
             winner = name
 
-    weighted = 0.30 * phi_c + 0.15 * psi_c + 0.15 * omega_c + 0.20 * guardian_c
+    weighted = 0.30 * phi_c + 0.15 * psi_c + 0.15 * omega_c + 0.20 * theta_c
     confidence = min(1.0, max(0.0, weighted))
 
     return {
@@ -33,7 +33,7 @@ def observe_coherence(pcna_state: dict) -> dict[str, Any]:
         "phi": round(phi_c, 4),
         "psi": round(psi_c, 4),
         "omega": round(omega_c, 4),
-        "guardian": round(guardian_c, 4),
+        "theta": round(theta_c, 4),
         "note": _classify(weighted),
     }
 

@@ -1,7 +1,9 @@
-# 277:11
+# 291:11
 import time
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from ._admin_gate import require_admin
 
 # DOC module: pcna
 # DOC label: PCNA Engine
@@ -109,7 +111,7 @@ class NudgeRequest(BaseModel):
 
 class PropagateRequest(BaseModel):
     steps: int = 10
-    guardian_steps: int = 5
+    theta_steps: int = 5
 
 
 class MergeRequest(BaseModel):
@@ -139,14 +141,16 @@ async def pcna_state():
 
 
 @router.post("/pcna/infer")
-async def pcna_infer(req: InferRequest):
+async def pcna_infer(req: InferRequest, request: Request):
+    await require_admin(request)
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="text is required")
     return _get_pcna().infer(req.text)
 
 
 @router.post("/pcna/reward")
-async def pcna_reward(req: RewardRequest):
+async def pcna_reward(req: RewardRequest, request: Request):
+    await require_admin(request)
     if req.outcome < -1.0 or req.outcome > 1.0:
         raise HTTPException(status_code=400, detail="outcome must be in [-1, 1]")
     return _get_pcna().reward(req.winner, req.outcome)
@@ -163,13 +167,15 @@ async def phi_audit():
 
 
 @router.post("/pcna/phi/propagate")
-async def phi_propagate(req: PropagateRequest):
+async def phi_propagate(req: PropagateRequest, request: Request):
+    await require_admin(request)
     _get_pcna().phi.propagate(steps=req.steps)
     return _get_pcna().phi.state()
 
 
 @router.post("/pcna/phi/nudge")
-async def phi_nudge(req: NudgeRequest):
+async def phi_nudge(req: NudgeRequest, request: Request):
+    await require_admin(request)
     _get_pcna().phi.nudge(req.reward, lr=req.lr)
     return _get_pcna().phi.state()
 
@@ -185,13 +191,15 @@ async def psi_audit():
 
 
 @router.post("/pcna/psi/propagate")
-async def psi_propagate(req: PropagateRequest):
+async def psi_propagate(req: PropagateRequest, request: Request):
+    await require_admin(request)
     _get_pcna().psi.propagate(steps=req.steps)
     return _get_pcna().psi.state()
 
 
 @router.post("/pcna/psi/nudge")
-async def psi_nudge(req: NudgeRequest):
+async def psi_nudge(req: NudgeRequest, request: Request):
+    await require_admin(request)
     _get_pcna().psi.nudge(req.reward, lr=req.lr)
     return _get_pcna().psi.state()
 
@@ -207,47 +215,51 @@ async def omega_audit():
 
 
 @router.post("/pcna/omega/propagate")
-async def omega_propagate(req: PropagateRequest):
+async def omega_propagate(req: PropagateRequest, request: Request):
+    await require_admin(request)
     _get_pcna().omega.propagate(steps=req.steps)
     return _get_pcna().omega.state()
 
 
 @router.post("/pcna/omega/nudge")
-async def omega_nudge(req: NudgeRequest):
+async def omega_nudge(req: NudgeRequest, request: Request):
+    await require_admin(request)
     _get_pcna().omega.nudge(req.reward, lr=req.lr)
     return _get_pcna().omega.state()
 
 
-@router.get("/pcna/guardian/state")
-async def guardian_state():
-    return _get_pcna().guardian.state()
+@router.get("/pcna/theta/state")
+async def theta_state():
+    return _get_pcna().theta.state()
 
 
-@router.get("/pcna/guardian/gates")
-async def guardian_gates():
-    return _get_pcna().guardian.gate_status()
+@router.get("/pcna/theta/gates")
+async def theta_gates():
+    return _get_pcna().theta.gate_status()
 
 
-@router.get("/pcna/guardian/audit")
-async def guardian_audit():
-    return _get_pcna().guardian.pcta_circle_audit()
+@router.get("/pcna/theta/audit")
+async def theta_audit():
+    return _get_pcna().theta.pcta_circle_audit()
 
 
-@router.get("/pcna/guardian/crypto")
-async def guardian_crypto():
-    return _get_pcna().guardian.crypto_meta()
+@router.get("/pcna/theta/crypto")
+async def theta_crypto():
+    return _get_pcna().theta.crypto_meta()
 
 
-@router.post("/pcna/guardian/propagate")
-async def guardian_propagate(req: PropagateRequest):
-    _get_pcna().guardian.propagate(steps=req.guardian_steps)
-    return _get_pcna().guardian.state()
+@router.post("/pcna/theta/propagate")
+async def theta_propagate(req: PropagateRequest, request: Request):
+    await require_admin(request)
+    _get_pcna().theta.propagate(steps=req.theta_steps)
+    return _get_pcna().theta.state()
 
 
-@router.post("/pcna/guardian/reward")
-async def guardian_reward(req: NudgeRequest):
-    _get_pcna().guardian.apply_reward(req.reward)
-    return _get_pcna().guardian.state()
+@router.post("/pcna/theta/reward")
+async def theta_reward(req: NudgeRequest, request: Request):
+    await require_admin(request)
+    _get_pcna().theta.apply_reward(req.reward)
+    return _get_pcna().theta.state()
 
 
 @router.get("/pcna/memory/l/state")
@@ -261,7 +273,8 @@ async def memory_s_state():
 
 
 @router.post("/pcna/memory/flush")
-async def memory_flush(req: RewardRequest):
+async def memory_flush(req: RewardRequest, request: Request):
+    await require_admin(request)
     pcna = _get_pcna()
     flushed = pcna.memory_s.flush_to(pcna.memory_l, req.outcome)
     return {
@@ -281,7 +294,7 @@ async def list_instances():
                 "phi_coherence": round(eng.phi.ring_coherence, 4),
                 "psi_coherence": round(eng.psi.ring_coherence, 4),
                 "omega_coherence": round(eng.omega.ring_coherence, 4),
-                "guardian_coherence": round(float(eng.guardian.node_coherence.mean()), 4),
+                "theta_coherence": round(float(eng.theta.node_coherence.mean()), 4),
                 "infer_count": eng.infer_count,
                 "uptime_s": round(time.time() - eng.created_at, 1),
             }
@@ -292,21 +305,23 @@ async def list_instances():
 
 
 @router.post("/pcna/instances/spawn")
-async def spawn_instance():
+async def spawn_instance(request: Request):
+    await require_admin(request)
     from ..engine import InstanceMerge
     child, result = InstanceMerge.fork(_get_pcna())
-    _get_instances()[child.guardian.instance_id] = child
+    _get_instances()[child.theta.instance_id] = child
     return result
 
 
 @router.post("/pcna/instances/merge")
-async def merge_instances(req: MergeRequest):
+async def merge_instances(req: MergeRequest, request: Request):
+    await require_admin(request)
     from ..engine import InstanceMerge
     primary = _get_pcna()
     instances = _get_instances()
     if req.mode == "fork":
         child, result = InstanceMerge.fork(primary)
-        instances[child.guardian.instance_id] = child
+        instances[child.theta.instance_id] = child
         return result
     target_id = req.target_instance_id
     if not target_id or target_id not in instances:
@@ -314,7 +329,7 @@ async def merge_instances(req: MergeRequest):
     target = instances[target_id]
     if req.mode == "absorb":
         result = InstanceMerge.absorb(primary, target)
-        if target_id != primary.guardian.instance_id:
+        if target_id != primary.theta.instance_id:
             del instances[target_id]
         return result
     if req.mode == "converge":
@@ -365,4 +380,4 @@ async def pcna_compare():
         "psi_delta": round(p7_psi - p8_psi, 4),
         "omega_delta": round(p7_omega - p8_omega, 4),
     }
-# 277:11
+# 291:11

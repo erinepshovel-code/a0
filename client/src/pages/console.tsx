@@ -1,4 +1,4 @@
-// 132:0
+// 187:7
 import { useState, useEffect, type ComponentType } from "react";
 import { AlertTriangle, Loader2, Pencil, PencilOff } from "lucide-react";
 import { useUiStructure } from "@/hooks/use-ui-structure";
@@ -13,6 +13,9 @@ import DocsTab from "@/components/DocsTab";
 import SigmaTab from "@/components/SigmaTab";
 import AgentsTab from "@/components/AgentsTab";
 import CliKeysTab from "@/components/CliKeysTab";
+import ForgeTab from "@/components/ForgeTab";
+import LiminalsTab from "@/components/LiminalsTab";
+import ModuleConfigEditor from "@/components/ModuleConfigEditor";
 import type { TabDef } from "@/hooks/use-ui-structure";
 
 const STORAGE_KEY = "a0p_active_tab";
@@ -28,6 +31,9 @@ export const CUSTOM_TAB_RENDERERS: Record<string, ComponentType> = {
   sigma: SigmaTab,
   agents: AgentsTab,
   cli_keys: CliKeysTab,
+  forge: ForgeTab,
+  liminals: LiminalsTab,
+  module_config: ModuleConfigEditor,
 };
 
 function MissingRendererError({ tabId }: { tabId: string }) {
@@ -204,4 +210,4 @@ export default function ConsolePage() {
     </WsEditContext.Provider>
   );
 }
-// 132:0
+// 187:7

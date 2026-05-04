@@ -1,0 +1,444 @@
+{
+  "version": "2026-04-27.a0.providers.v1",
+  "attribution": "Externalized from energy_registry.py BUILTIN_PROVIDERS + _PROVIDER_PRESETS + _PROVIDER_PRICING_URLS so model slugs / provider IDs / capability flags live as data, not code literals (doctrine: no executable-data string literals).",
+  "_doc": {
+    "providers[].* fields": "id label model vendor env_key cost_per_1k_input cost_per_1k_output cache_read_per_1k_input cache_write_per_1k_input max_tokens supports_streaming supports_prompt_caching supports_thinking supports_reasoning_effort api_family min_tier note pricing_url",
+    "presets": "Per-provider role-map keyed by preset name. Roles: record practice conduct perform derive (the renamed pipeline slots). Single-model providers pin every preset to their one model so the active_preset switch still has effect."
+  },
+  "providers": {
+    "openai": {
+      "id": "openai",
+      "label": "GPT-5 mini (Responses API)",
+      "model": "gpt-5-mini",
+      "vendor": "openai",
+      "env_key": "OPENAI_API_KEY",
+      "cost_per_1k_input": 0.00025,
+      "cost_per_1k_output": 0.002,
+      "cache_read_per_1k_input": 2.5e-05,
+      "max_tokens": 128000,
+      "supports_streaming": false,
+      "supports_prompt_caching": true,
+      "api_family": "responses",
+      "pricing_url": "https://openai.com/api/pricing/",
+      "note": "gpt-5-mini default; cached input 90% off (automatic on >=1024 token prefixes)",
+      "supports_vision": true
+    },
+    "gemini": {
+      "id": "gemini",
+      "label": "Gemini 2.5 Flash",
+      "model": "gemini-2.5-flash",
+      "vendor": "google",
+      "env_key": "GEMINI_API_KEY",
+      "cost_per_1k_input": 0.0003,
+      "cost_per_1k_output": 0.0025,
+      "cache_read_per_1k_input": 7.5e-05,
+      "max_tokens": 65536,
+      "supports_streaming": true,
+      "pricing_url": "https://ai.google.dev/pricing",
+      "note": "Implicit cache hits returned via usage.cached_content_token_count when prefix is reused",
+      "supports_vision": false
+    },
+    "gemini3": {
+      "id": "gemini3",
+      "label": "Gemini 3 Pro",
+      "model": "gemini-3-pro-preview",
+      "vendor": "google",
+      "env_key": "GEMINI_API_KEY",
+      "cost_per_1k_input": 0.00125,
+      "cost_per_1k_output": 0.01,
+      "cache_read_per_1k_input": 0.00031,
+      "max_tokens": 65536,
+      "supports_streaming": true,
+      "supports_thinking": true,
+      "min_tier": "ws",
+      "pricing_url": "https://ai.google.dev/pricing",
+      "note": "Top-tier reasoning; ws/admin only. Pricing doubles above 200K input tokens.",
+      "supports_vision": false
+    },
+    "claude": {
+      "id": "claude",
+      "label": "Claude Sonnet 4.5",
+      "model": "claude-sonnet-4-5",
+      "vendor": "anthropic",
+      "env_key": "ANTHROPIC_API_KEY",
+      "cost_per_1k_input": 0.003,
+      "cost_per_1k_output": 0.015,
+      "cache_read_per_1k_input": 0.0003,
+      "cache_write_per_1k_input": 0.00375,
+      "max_tokens": 64000,
+      "supports_streaming": true,
+      "supports_prompt_caching": true,
+      "pricing_url": "https://www.anthropic.com/pricing",
+      "supports_vision": false
+    },
+    "grok": {
+      "id": "grok",
+      "label": "Grok 4 Fast (reasoning)",
+      "model": "grok-4-fast-reasoning",
+      "vendor": "xai",
+      "env_key": "XAI_API_KEY",
+      "cost_per_1k_input": 0.0002,
+      "cost_per_1k_output": 0.0005,
+      "cache_read_per_1k_input": 5e-05,
+      "max_tokens": 2000000,
+      "supports_streaming": true,
+      "supports_reasoning_effort": true,
+      "supports_prompt_caching": true,
+      "pricing_url": "https://docs.x.ai/docs/models",
+      "note": "Auto-cache on >=1024 token prefix; cached_tokens reported in prompt_tokens_details. Live search disabled — routes to chat completions for full ZFAE tool access.",
+      "url": "https://api.x.ai/v1/chat/completions",
+      "responses_url": "https://api.x.ai/v1/responses",
+      "supports_live_search": false,
+      "supports_vision": true
+    },
+    "openai-5.5": {
+      "id": "openai-5.5",
+      "label": "GPT-5.5 (Responses API)",
+      "model": "gpt-5.5",
+      "vendor": "openai",
+      "env_key": "OPENAI_API_KEY",
+      "cost_per_1k_input": 0.005,
+      "cost_per_1k_output": 0.03,
+      "cache_read_per_1k_input": 0.0005,
+      "max_tokens": 128000,
+      "supports_streaming": false,
+      "supports_prompt_caching": true,
+      "supports_reasoning_effort": true,
+      "supports_vision": true,
+      "api_family": "responses",
+      "pricing_url": "https://openai.com/api/pricing/",
+      "note": "GPT-5.5 frontier model; 1M context; cached input 90% off (automatic on >=1024 token prefixes); released Apr 2026.",
+      "min_reasoning_effort": "low"
+    },
+    "openai-5.5-pro": {
+      "id": "openai-5.5-pro",
+      "label": "GPT-5.5 Pro (Responses API)",
+      "model": "gpt-5.5-pro",
+      "vendor": "openai",
+      "env_key": "OPENAI_API_KEY",
+      "cost_per_1k_input": 0.03,
+      "cost_per_1k_output": 0.18,
+      "cache_read_per_1k_input": 0.003,
+      "max_tokens": 128000,
+      "supports_streaming": false,
+      "supports_prompt_caching": true,
+      "supports_reasoning_effort": true,
+      "supports_vision": true,
+      "api_family": "responses",
+      "pricing_url": "https://openai.com/api/pricing/",
+      "note": "GPT-5.5 Pro highest-accuracy variant; 1M context; FrontierMath Tier 4 SOTA at release; reserve for PCNA-critical merges and hardest reasoning.",
+      "min_reasoning_effort": "high",
+      "requires_human_instantiation": true
+    }
+  },
+  "presets": {
+    "openai": {
+      "speed": {
+        "record": "gpt-5-nano",
+        "practice": "gpt-5-nano",
+        "conduct": "gpt-5-mini",
+        "perform": "gpt-5-mini",
+        "derive": "gpt-5-nano"
+      },
+      "price": {
+        "record": "gpt-5-nano",
+        "practice": "gpt-5-nano",
+        "conduct": "gpt-5-nano",
+        "perform": "gpt-5-mini",
+        "derive": "gpt-5-nano"
+      },
+      "balance": {
+        "record": "gpt-5-nano",
+        "practice": "gpt-5-mini",
+        "conduct": "gpt-5-mini",
+        "perform": "gpt-5-mini",
+        "derive": "gpt-5-mini"
+      },
+      "depth": {
+        "record": "gpt-5-mini",
+        "practice": "gpt-5",
+        "conduct": "gpt-5",
+        "perform": "gpt-5",
+        "derive": "gpt-5"
+      },
+      "coding": {
+        "record": "gpt-5-nano",
+        "practice": "gpt-5-mini",
+        "conduct": "gpt-5",
+        "perform": "gpt-5",
+        "derive": "gpt-5-mini"
+      },
+      "creativity": {
+        "record": "gpt-5-mini",
+        "practice": "gpt-5",
+        "conduct": "gpt-5",
+        "perform": "gpt-5",
+        "derive": "gpt-5-mini"
+      }
+    },
+    "gemini": {
+      "speed": {
+        "record": "gemini-2.5-flash-lite",
+        "practice": "gemini-2.5-flash-lite",
+        "conduct": "gemini-2.5-flash",
+        "perform": "gemini-2.5-flash",
+        "derive": "gemini-2.5-flash-lite"
+      },
+      "price": {
+        "record": "gemini-2.5-flash-lite",
+        "practice": "gemini-2.5-flash-lite",
+        "conduct": "gemini-2.5-flash-lite",
+        "perform": "gemini-2.5-flash",
+        "derive": "gemini-2.5-flash-lite"
+      },
+      "balance": {
+        "record": "gemini-2.5-flash-lite",
+        "practice": "gemini-2.5-flash",
+        "conduct": "gemini-2.5-flash",
+        "perform": "gemini-2.5-flash",
+        "derive": "gemini-2.5-flash"
+      },
+      "depth": {
+        "record": "gemini-2.5-flash",
+        "practice": "gemini-2.5-pro",
+        "conduct": "gemini-2.5-pro",
+        "perform": "gemini-2.5-pro",
+        "derive": "gemini-2.5-pro"
+      },
+      "coding": {
+        "record": "gemini-2.5-flash-lite",
+        "practice": "gemini-2.5-flash",
+        "conduct": "gemini-2.5-pro",
+        "perform": "gemini-2.5-pro",
+        "derive": "gemini-2.5-flash"
+      },
+      "creativity": {
+        "record": "gemini-2.5-flash",
+        "practice": "gemini-2.5-pro",
+        "conduct": "gemini-2.5-pro",
+        "perform": "gemini-2.5-pro",
+        "derive": "gemini-2.5-flash"
+      }
+    },
+    "gemini3": {
+      "speed": {
+        "record": "gemini-3-pro-preview",
+        "practice": "gemini-3-pro-preview",
+        "conduct": "gemini-3-pro-preview",
+        "perform": "gemini-3-pro-preview",
+        "derive": "gemini-3-pro-preview"
+      },
+      "price": {
+        "record": "gemini-3-pro-preview",
+        "practice": "gemini-3-pro-preview",
+        "conduct": "gemini-3-pro-preview",
+        "perform": "gemini-3-pro-preview",
+        "derive": "gemini-3-pro-preview"
+      },
+      "balance": {
+        "record": "gemini-3-pro-preview",
+        "practice": "gemini-3-pro-preview",
+        "conduct": "gemini-3-pro-preview",
+        "perform": "gemini-3-pro-preview",
+        "derive": "gemini-3-pro-preview"
+      },
+      "depth": {
+        "record": "gemini-3-pro-preview",
+        "practice": "gemini-3-pro-preview",
+        "conduct": "gemini-3-pro-preview",
+        "perform": "gemini-3-pro-preview",
+        "derive": "gemini-3-pro-preview"
+      },
+      "coding": {
+        "record": "gemini-3-pro-preview",
+        "practice": "gemini-3-pro-preview",
+        "conduct": "gemini-3-pro-preview",
+        "perform": "gemini-3-pro-preview",
+        "derive": "gemini-3-pro-preview"
+      },
+      "creativity": {
+        "record": "gemini-3-pro-preview",
+        "practice": "gemini-3-pro-preview",
+        "conduct": "gemini-3-pro-preview",
+        "perform": "gemini-3-pro-preview",
+        "derive": "gemini-3-pro-preview"
+      }
+    },
+    "claude": {
+      "speed": {
+        "record": "claude-haiku-4-5",
+        "practice": "claude-haiku-4-5",
+        "conduct": "claude-sonnet-4-5",
+        "perform": "claude-sonnet-4-5",
+        "derive": "claude-haiku-4-5"
+      },
+      "price": {
+        "record": "claude-haiku-4-5",
+        "practice": "claude-haiku-4-5",
+        "conduct": "claude-haiku-4-5",
+        "perform": "claude-sonnet-4-5",
+        "derive": "claude-haiku-4-5"
+      },
+      "balance": {
+        "record": "claude-haiku-4-5",
+        "practice": "claude-sonnet-4-5",
+        "conduct": "claude-sonnet-4-5",
+        "perform": "claude-sonnet-4-5",
+        "derive": "claude-sonnet-4-5"
+      },
+      "depth": {
+        "record": "claude-sonnet-4-5",
+        "practice": "claude-opus-4-1",
+        "conduct": "claude-opus-4-1",
+        "perform": "claude-opus-4-1",
+        "derive": "claude-opus-4-1"
+      },
+      "coding": {
+        "record": "claude-haiku-4-5",
+        "practice": "claude-sonnet-4-5",
+        "conduct": "claude-sonnet-4-5",
+        "perform": "claude-sonnet-4-5",
+        "derive": "claude-sonnet-4-5"
+      },
+      "creativity": {
+        "record": "claude-sonnet-4-5",
+        "practice": "claude-opus-4-1",
+        "conduct": "claude-opus-4-1",
+        "perform": "claude-opus-4-1",
+        "derive": "claude-sonnet-4-5"
+      }
+    },
+    "grok": {
+      "speed": {
+        "record": "grok-4-fast-non-reasoning",
+        "practice": "grok-4-fast-non-reasoning",
+        "conduct": "grok-4-fast-reasoning",
+        "perform": "grok-4-fast-reasoning",
+        "derive": "grok-4-fast-non-reasoning"
+      },
+      "price": {
+        "record": "grok-4-fast-non-reasoning",
+        "practice": "grok-4-fast-non-reasoning",
+        "conduct": "grok-4-fast-non-reasoning",
+        "perform": "grok-4-fast-reasoning",
+        "derive": "grok-4-fast-non-reasoning"
+      },
+      "balance": {
+        "record": "grok-4-fast-non-reasoning",
+        "practice": "grok-4-fast-reasoning",
+        "conduct": "grok-4-fast-reasoning",
+        "perform": "grok-4-fast-reasoning",
+        "derive": "grok-4-fast-reasoning"
+      },
+      "depth": {
+        "record": "grok-4-fast-reasoning",
+        "practice": "grok-4",
+        "conduct": "grok-4",
+        "perform": "grok-4",
+        "derive": "grok-4"
+      },
+      "coding": {
+        "record": "grok-4-fast-non-reasoning",
+        "practice": "grok-code-fast-1",
+        "conduct": "grok-code-fast-1",
+        "perform": "grok-code-fast-1",
+        "derive": "grok-4-fast-reasoning"
+      },
+      "creativity": {
+        "record": "grok-4-fast-reasoning",
+        "practice": "grok-4",
+        "conduct": "grok-4",
+        "perform": "grok-4",
+        "derive": "grok-4-fast-reasoning"
+      }
+    },
+    "openai-5.5": {
+      "speed": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "price": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "balance": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "depth": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "coding": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      },
+      "creativity": {
+        "record": "gpt-5.5",
+        "practice": "gpt-5.5",
+        "conduct": "gpt-5.5",
+        "perform": "gpt-5.5",
+        "derive": "gpt-5.5"
+      }
+    },
+    "openai-5.5-pro": {
+      "speed": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "price": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "balance": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "depth": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "coding": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      },
+      "creativity": {
+        "record": "gpt-5.5-pro",
+        "practice": "gpt-5.5-pro",
+        "conduct": "gpt-5.5-pro",
+        "perform": "gpt-5.5-pro",
+        "derive": "gpt-5.5-pro"
+      }
+    }
+  }
+}

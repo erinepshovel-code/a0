@@ -1,30 +1,275 @@
-# 540:12
-"""
-ZFAE Tool Executor — implements the actual functions behind each agent tool.
-Called by the inference loop when the LLM issues a tool_call.
-"""
-import json
-import os
-import urllib.parse
-import contextvars as _cv
-import httpx
+# 314:53
+"""ZFAE Tool Executor — thin shim over the per-tool registry.
 
-TOOL_SCHEMAS_CHAT = [
+Tools live in `python/services/tools/*.py` (one file per tool, self-declared
+SCHEMA + async handle). This module:
+  - Re-exports a stable TOOL_SCHEMAS_CHAT / TOOL_SCHEMAS_RESPONSES list
+    that includes the tool registry plus the two skill-surface tools
+    (skill_recommend, skill_load) that still live here.
+  - Wraps the registry dispatcher with the call_id persistence + distiller
+    summarization the inference loop relies on.
+  - Owns the distiller skill loader (.agents/skills/distill-*) and the a0
+    skill loader (.agents/skills/a0-*) — neither is a "tool".
+  - Owns the per-task _approval_scope_user_cv ContextVar that tools read via
+    get_approval_scope_user_id() and that chat.py sets via
+    set_approval_scope_user_id().
+"""
+import contextvars as _cv
+import os
+
+from .tool_distill import (
+    maybe_summarize as _maybe_summarize_impl,
+    set_caller_provider,
+    reset_caller_provider,
+)
+from .tools import dispatch as _registry_dispatch
+from .tools import registry as _registry
+from .tools import tool_schemas_chat as _registry_schemas
+
+_TOOL_RESULT_PASS_TOKENS = 8000  # mirrored from tool_distill for the persist gate
+
+
+# ---------------------------------------------------------------------------
+# Distiller skill loader (.agents/skills/distill-*) — NOT a tool surface.
+# ---------------------------------------------------------------------------
+_DISTILLER_DIR_GLOB = ".agents/skills/distill-*/SKILL.md"
+_DISTILLER_FALLBACK = "general"
+_DOMAIN_TRIGGER_MIN = 3
+_SPEC_CACHE: dict = {"specs": {}, "fingerprint": ""}
+
+_A0_SKILL_DIR_GLOB = ".agents/skills/a0-*/SKILL.md"
+_A0_SKILL_CACHE: dict = {"specs": {}, "fingerprint": ""}
+
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Minimal YAML-frontmatter parser. Supports scalar, bool, inline list."""
+    if not text.startswith("---\n"):
+        return {}, text.strip()
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}, text.strip()
+    fm_text = text[4:end]
+    body = text[end + 5:].strip()
+    fm: dict = {}
+    for line in fm_text.split("\n"):
+        if ":" not in line or line.lstrip().startswith("#"):
+            continue
+        k, _, v = line.partition(":")
+        k = k.strip()
+        v = v.strip()
+        if v.lower() in ("true", "false"):
+            fm[k] = (v.lower() == "true")
+            continue
+        if v.startswith("[") and v.endswith("]"):
+            inner = v[1:-1]
+            items: list[str] = []
+            buf = ""
+            in_q = False
+            for ch in inner:
+                if ch == '"':
+                    in_q = not in_q
+                    continue
+                if ch == "," and not in_q:
+                    if buf.strip():
+                        items.append(buf.strip().strip('"'))
+                    buf = ""
+                else:
+                    buf += ch
+            if buf.strip():
+                items.append(buf.strip().strip('"'))
+            fm[k] = items
+            continue
+        if v.startswith('"') and v.endswith('"'):
+            v = v[1:-1]
+        fm[k] = v
+    return fm, body
+
+
+def _project_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _discover_distiller_specs() -> dict[str, dict]:
+    """Scan .agents/skills/distill-*/SKILL.md, return {domain: spec}."""
+    import glob
+    base = _project_root()
+    pattern = os.path.join(base, _DISTILLER_DIR_GLOB)
+    files = sorted(glob.glob(pattern))
+    fingerprint = "|".join(f"{p}:{os.path.getmtime(p)}" for p in files)
+    if fingerprint and fingerprint == _SPEC_CACHE.get("fingerprint"):
+        return _SPEC_CACHE["specs"]
+    specs: dict[str, dict] = {}
+    for path in files:
+        domain = os.path.basename(os.path.dirname(path)).removeprefix("distill-")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                fm, body = _parse_frontmatter(fh.read())
+        except OSError:
+            continue
+        specs[domain] = {
+            "prompt": body,
+            "triggers": tuple(t.lower() for t in (fm.get("triggers") or [])),
+            "hard_domain": bool(fm.get("hard_domain", False)),
+        }
+    _SPEC_CACHE["specs"] = specs
+    _SPEC_CACHE["fingerprint"] = fingerprint
+    return specs
+
+
+def _pick_distiller(raw: str) -> str:
+    specs = _discover_distiller_specs()
+    head_lower = raw[:8000].lower()
+    scores = {
+        domain: sum(1 for t in spec["triggers"] if t in head_lower)
+        for domain, spec in specs.items() if spec["triggers"]
+    }
+    if scores:
+        best_domain, best_score = max(scores.items(), key=lambda kv: kv[1])
+        if best_score >= _DOMAIN_TRIGGER_MIN:
+            return best_domain
+    return _DISTILLER_FALLBACK
+
+
+def _get_distiller_spec(domain: str) -> dict:
+    specs = _discover_distiller_specs()
+    return specs.get(domain) or specs.get(_DISTILLER_FALLBACK) or {}
+
+
+def _discover_a0_skills() -> dict[str, dict]:
+    """Scan .agents/skills/a0-*/SKILL.md, return {name: spec}."""
+    import glob
+    base = _project_root()
+    pattern = os.path.join(base, _A0_SKILL_DIR_GLOB)
+    files = sorted(glob.glob(pattern))
+    fingerprint = "|".join(f"{p}:{os.path.getmtime(p)}" for p in files)
+    if fingerprint and fingerprint == _A0_SKILL_CACHE.get("fingerprint"):
+        return _A0_SKILL_CACHE["specs"]
+    specs: dict[str, dict] = {}
+    for path in files:
+        slug = os.path.basename(os.path.dirname(path)).removeprefix("a0-")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                fm, body = _parse_frontmatter(fh.read())
+        except OSError:
+            continue
+        name = (fm.get("name") or slug).strip()
+        specs[name] = {
+            "slug": slug,
+            "description": (fm.get("description") or "").strip(),
+            "triggers": tuple(t.lower() for t in (fm.get("triggers") or [])),
+            "body": body,
+        }
+    _A0_SKILL_CACHE["specs"] = specs
+    _A0_SKILL_CACHE["fingerprint"] = fingerprint
+    return specs
+
+
+def get_a0_skill_manifest() -> str:
+    """Stable, alphabetically-sorted bullet list of available a0 skills.
+    Bodies are NOT included so the prefix stays small and cache-friendly."""
+    specs = _discover_a0_skills()
+    if not specs:
+        return ""
+    lines = ["## Available skills (load full body via skill_load)"]
+    for name in sorted(specs.keys()):
+        desc = specs[name].get("description") or "(no description)"
+        lines.append(f"- **{name}** — {desc}")
+    return "\n".join(lines)
+
+
+def get_a0_skill_body(name: str) -> str | None:
+    """Return the SKILL.md body for the named a0 skill, or None."""
+    specs = _discover_a0_skills()
+    spec = specs.get(name)
+    return spec.get("body") if spec else None
+
+
+def _score_skill_match(query: str, name: str, spec: dict) -> int:
+    """Cheap keyword-overlap score for skill_recommend. Triggers count double."""
+    q = query.lower()
+    if not q.strip():
+        return 0
+    score = 0
+    if name.lower() in q or any(part in q for part in name.lower().split("-") if len(part) > 2):
+        score += 3
+    desc = (spec.get("description") or "").lower()
+    for word in q.split():
+        if len(word) < 3:
+            continue
+        if word in desc:
+            score += 1
+        for trig in spec.get("triggers", ()):
+            if word in trig:
+                score += 2
+    return score
+
+
+def _skill_recommend(query: str, limit: int = 5) -> str:
+    """Rank a0 skills against a free-text query. Returns a compact list."""
+    if not query.strip():
+        return "[skill_recommend: empty query]"
+    limit = max(1, min(20, int(limit)))
+    specs = _discover_a0_skills()
+    if not specs:
+        return "[skill_recommend: no a0 skills installed]"
+    scored = [
+        (name, _score_skill_match(query, name, spec), spec)
+        for name, spec in specs.items()
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top = [(n, s, spec) for n, s, spec in scored if s > 0][:limit]
+    if not top:
+        return f"[skill_recommend: no skill matched query: {query!r}]"
+    lines = [f"[skill_recommend · {len(top)} match(es) for: {query!r}]"]
+    for name, score, spec in top:
+        desc = spec.get("description") or ""
+        lines.append(f"- {name} (score={score}) — {desc}")
+    lines.append("\nLoad a body via skill_load(name=...).")
+    return "\n".join(lines)
+
+
+def _skill_load(name: str) -> str:
+    """Return the full SKILL.md body for the named a0 skill."""
+    if not name.strip():
+        return "[skill_load: missing name]"
+    body = get_a0_skill_body(name.strip())
+    if body is None:
+        available = sorted(_discover_a0_skills().keys())
+        return (
+            f"[skill_load: no skill named {name!r}]\n"
+            f"Available: {', '.join(available) if available else '(none installed)'}"
+        )
+    return f"[skill_load · {name}]\n\n{body}"
+
+
+# ---------------------------------------------------------------------------
+# skill_* tool schemas — surfaced into TOOL_SCHEMAS_CHAT alongside the tools
+# registry so the chat models can invoke them. They are NOT extracted into
+# python/services/tools/ — they live with the a0-skill loader they wrap.
+# ---------------------------------------------------------------------------
+_SKILL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "web_search",
+            "name": "skill_recommend",
             "description": (
-                "Search the web for current information, news, or facts not in training data. "
-                "Returns a summary of top results."
+                "Score the available a0 skills against a query and return the "
+                "top matches (name + description + score). Use when you suspect "
+                "a skill exists for the user's task but you're not sure which. "
+                "Does NOT load skill bodies — call skill_load with a name to read."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The search query",
-                    }
+                        "description": "What the user wants to do (free text).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results to return. Default 5, max 20.",
+                        "default": 5,
+                    },
                 },
                 "required": ["query"],
             },
@@ -33,289 +278,44 @@ TOOL_SCHEMAS_CHAT = [
     {
         "type": "function",
         "function": {
-            "name": "pcna_infer",
+            "name": "skill_load",
             "description": (
-                "Run a signal through the PCNA tensor engine. "
-                "Returns current phi/psi/omega ring coherence and the inferred output value."
+                "Return the full SKILL.md body for a named a0 skill. Use after "
+                "skill_recommend or when you already know which skill applies. "
+                "Bodies contain the full procedure, examples, and anti-patterns."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "signal": {
-                        "type": "number",
-                        "description": "Input signal strength, 0.0–1.0",
-                    }
-                },
-                "required": ["signal"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "pcna_reward",
-            "description": (
-                "Apply a reward signal to the PCNA engine. "
-                "Use after evaluating the quality of a response — positive values reinforce, negative values correct."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "score": {
-                        "type": "number",
-                        "description": "Reward value, typically -1.0 to 1.0",
-                    },
-                    "reason": {
+                    "name": {
                         "type": "string",
-                        "description": "Brief explanation of why this reward is being applied",
+                        "description": "Skill name as listed in the prefix manifest (e.g. 'deep-research').",
                     },
                 },
-                "required": ["score"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "edcm_score",
-            "description": (
-                "Return the current EDCM (Energy Directional Coherence Metric) score "
-                "and ring state for all three PCNA rings."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "memory_flush",
-            "description": (
-                "Flush active memory seeds to checkpoint. "
-                "Call this when important context should be persisted for future sessions."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "bandit_pull",
-            "description": (
-                "Query the EDCM bandit router for the recommended energy provider "
-                "based on current ring coherence. Returns the selected provider ID and score."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "sub_agent_spawn",
-            "description": (
-                "Spawn a ZFAE sub-agent with a forked PCNA instance to handle a specific task in parallel. "
-                "Returns the sub-agent ID."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "Description of the task for the sub-agent to execute",
-                    }
-                },
-                "required": ["task"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "sub_agent_merge",
-            "description": (
-                "Merge a completed sub-agent's learned ring state back into the primary PCNA. "
-                "Call after a sub-agent has finished its task."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Sub-agent ID returned by sub_agent_spawn",
-                    }
-                },
-                "required": ["agent_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "github_api",
-            "description": (
-                "Make an authenticated call to the GitHub REST API. WRITE OPERATIONS ARE FULLY SUPPORTED — "
-                "pass any JSON payload via the 'body' parameter for POST/PATCH/PUT requests. "
-                "Use this to read OR write repositories, issues, pull requests, commits, comments, branches, "
-                "releases, files, or any other GitHub resource. Authentication is handled automatically — "
-                "never include a token yourself. "
-                "For pushing FILE CHANGES, prefer the dedicated 'github_write_file' tool — it handles SHA "
-                "lookup and base64 encoding automatically. Use github_api directly only for non-file operations "
-                "or batched git-data operations. "
-                "Endpoint examples: "
-                "GET '/repos/The-Interdependency/a0/issues' — list issues; "
-                "POST '/repos/The-Interdependency/a0/issues' with body={title, body} — create issue; "
-                "POST '/repos/The-Interdependency/a0/pulls' with body={title, head, base, body} — open PR; "
-                "GET '/search/repositories?q=topic:ai' — search repos. "
-                "For the primary project repo use owner='The-Interdependency', repo='a0'."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "method": {
-                        "type": "string",
-                        "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"],
-                        "description": "HTTP method. POST/PATCH/PUT require 'body'.",
-                    },
-                    "endpoint": {
-                        "type": "string",
-                        "description": (
-                            "GitHub API path starting with '/'. "
-                            "Query parameters can be included inline, e.g. '/search/code?q=foo+repo:org/repo'."
-                        ),
-                    },
-                    "body": {
-                        "type": "object",
-                        "description": (
-                            "JSON body for POST/PATCH/PUT requests. Pass any object shape — the GitHub "
-                            "API determines what fields are valid for each endpoint. Example for creating "
-                            "an issue: {\"title\": \"Bug: X\", \"body\": \"Details...\", \"labels\": [\"bug\"]}. "
-                            "Omit only for GET/DELETE."
-                        ),
-                        "additionalProperties": True,
-                    },
-                },
-                "required": ["method", "endpoint"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "github_write_file",
-            "description": (
-                "Create or update a single file in a GitHub repository in one call. "
-                "Handles base64 encoding of the content and SHA lookup for updates automatically — just "
-                "provide the path and the new file contents as plain text. Returns the commit SHA. "
-                "Use this for: editing source files, creating new files, updating docs, pushing config "
-                "changes. For multi-file commits or branch creation, use github_api with the git-data "
-                "endpoints instead. "
-                "Default repo is 'The-Interdependency/a0' on the 'main' branch when omitted."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": (
-                            "Repository-relative file path, no leading slash. "
-                            "Examples: 'README.md', 'src/index.html', 'docs/changelog.md'."
-                        ),
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": (
-                            "The full new contents of the file as plain UTF-8 text. "
-                            "Will be base64-encoded automatically. To delete a file, use github_api "
-                            "DELETE on /repos/{owner}/{repo}/contents/{path} instead."
-                        ),
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": (
-                            "Commit message describing the change. "
-                            "Example: 'Update homepage hero copy to reflect platform pivot'."
-                        ),
-                    },
-                    "owner": {
-                        "type": "string",
-                        "description": "Repository owner. Defaults to 'The-Interdependency' when omitted.",
-                    },
-                    "repo": {
-                        "type": "string",
-                        "description": "Repository name. Defaults to 'a0' when omitted.",
-                    },
-                    "branch": {
-                        "type": "string",
-                        "description": "Target branch. Defaults to the repository's default branch (usually 'main') when omitted.",
-                    },
-                },
-                "required": ["path", "content", "message"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "manage_approval_scope",
-            "description": (
-                "Grant or revoke a pre-approved action scope for the current user, removing the need to "
-                "type 'APPROVE gate-xxx' for every action in that category. "
-                "Available scopes: 'github_write' (push, PRs, issues), 'publish' (post/publish content), "
-                "'email_send' (send emails), 'outreach' (contact humans). "
-                "Safety-floor scopes (spend_money, change_permissions, change_secrets) cannot be pre-approved. "
-                "action='grant' adds the scope; action='revoke' removes it."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["grant", "revoke", "list"],
-                        "description": "Whether to grant, revoke, or list approval scopes.",
-                    },
-                    "scope": {
-                        "type": "string",
-                        "description": "The scope name to grant or revoke (omit for 'list').",
-                    },
-                },
-                "required": ["action"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "set_user_tier",
-            "description": (
-                "Admin-only: set a user's subscription tier immediately, bypassing Stripe. "
-                "Use to promote, demote, or correct a user's access level. "
-                "Valid tiers: free, supporter, ws, admin."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "user_id": {
-                        "type": "string",
-                        "description": "The UUID of the user whose tier should change.",
-                    },
-                    "tier": {
-                        "type": "string",
-                        "enum": ["free", "supporter", "ws", "admin"],
-                        "description": "The new subscription tier to assign.",
-                    },
-                },
-                "required": ["user_id", "tier"],
+                "required": ["name"],
             },
         },
     },
 ]
 
-# OpenAI Responses API — native web_search_preview replaces the custom web_search function.
-# The API handles search internally; no execute_tool dispatch needed for web_search on OpenAI.
+
+def _build_chat_schemas() -> list[dict]:
+    """Combined chat schemas: registry tools + skill_* surfaces, sorted by name."""
+    combined = list(_registry_schemas()) + list(_SKILL_SCHEMAS)
+    combined.sort(key=lambda s: s["function"]["name"])
+    return combined
+
+
+# Snapshot at import time so back-compat consumers (inference.py, gemini_native,
+# forge introspection) get a stable list reference. Discovery is sorted-glob,
+# so the byte content is identical across boots on identical filesystems.
+TOOL_SCHEMAS_CHAT: list[dict] = _build_chat_schemas()
+
+# OpenAI Responses API — native web_search_preview replaces the custom tool.
 OPENAI_NATIVE_TOOLS = [
     {"type": "web_search_preview"},
 ]
 
-# ZFAE internal tools for OpenAI Responses API (web_search excluded — handled natively above).
 TOOL_SCHEMAS_RESPONSES_ZFAE = [
     {
         "type": "function",
@@ -327,440 +327,92 @@ TOOL_SCHEMAS_RESPONSES_ZFAE = [
     if s["function"]["name"] != "web_search"
 ]
 
-# Full OpenAI tool list: native search + ZFAE internal functions.
 TOOL_SCHEMAS_RESPONSES = OPENAI_NATIVE_TOOLS + TOOL_SCHEMAS_RESPONSES_ZFAE
 
 
+# ---------------------------------------------------------------------------
+# Approval-scope user context (per-async-task uid for tools that need it)
+# ---------------------------------------------------------------------------
+from .run_context import (
+    _approval_scope_user_cv,
+    set_approval_scope_user_id,
+    get_approval_scope_user_id,
+)
+
+
+# ---------------------------------------------------------------------------
+# Distiller — wraps oversize tool results before they reach the next turn.
+# Implementation lives in tool_distill.py; we inject the distiller-loader
+# helpers below so this module stays the single owner of the loader.
+# ---------------------------------------------------------------------------
+async def _maybe_summarize(
+    name: str, arguments: dict, raw: str, call_id: str | None = None
+) -> str:
+    return await _maybe_summarize_impl(
+        name, arguments, raw, call_id,
+        pick_distiller=_pick_distiller,
+        get_distiller_spec=_get_distiller_spec,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public dispatch — routes through the registry, with skill_* handled inline.
+# ---------------------------------------------------------------------------
 async def execute_tool(name: str, arguments: dict) -> str:
-    """Dispatch a tool call and return the result as a plain string."""
+    """Dispatch a tool call and return the result as a plain string. Oversized
+    results are persisted (so the agent can drill back via tool_result_fetch)
+    and then distilled before being handed back to the calling model."""
+    raw = await _execute_tool_inner(name, arguments)
+
+    call_id: str | None = None
+    if name != "tool_result_fetch" and isinstance(raw, str) and len(raw) > _TOOL_RESULT_PASS_TOKENS * 4:
+        import uuid
+        call_id = f"call-{uuid.uuid4().hex[:12]}"
+        try:
+            from ..storage import storage
+            await storage.save_tool_result(call_id, name, arguments or {}, raw)
+        except Exception as exc:
+            print(f"[tool_results] persist failed for {name} call_id={call_id}: {exc}")
+            call_id = None
+
+    return await _maybe_summarize(name, arguments or {}, raw, call_id)
+
+
+async def _execute_tool_inner(name: str, arguments: dict) -> str:
+    """Raw dispatch — returns the tool's unfiltered output. skill_* handlers
+    live in this module (they wrap the a0-skill loader); everything else goes
+    through the per-tool registry."""
+    args = arguments or {}
     try:
-        if name == "web_search":
-            return await _web_search(arguments.get("query", ""))
-        if name == "pcna_infer":
-            return await _pcna_infer(float(arguments.get("signal", 0.5)))
-        if name == "pcna_reward":
-            return await _pcna_reward(
-                float(arguments.get("score", 0.0)),
-                arguments.get("reason", ""),
+        if name == "skill_recommend":
+            return _skill_recommend(
+                query=args.get("query", ""),
+                limit=int(args.get("limit", 5) or 5),
             )
-        if name == "edcm_score":
-            return await _edcm_score()
-        if name == "memory_flush":
-            return await _memory_flush()
-        if name == "bandit_pull":
-            return await _bandit_pull()
-        if name == "sub_agent_spawn":
-            return await _sub_agent_spawn(arguments.get("task", ""))
-        if name == "sub_agent_merge":
-            return await _sub_agent_merge(arguments.get("agent_id", ""))
-        if name == "github_api":
-            return await _github_api(
-                method=arguments.get("method", "GET"),
-                endpoint=arguments.get("endpoint", "/user"),
-                body=arguments.get("body"),
-            )
-        if name == "github_write_file":
-            return await _github_write_file(
-                path=arguments.get("path", ""),
-                content=arguments.get("content", ""),
-                message=arguments.get("message", ""),
-                owner=arguments.get("owner") or "The-Interdependency",
-                repo=arguments.get("repo") or "a0",
-                branch=arguments.get("branch"),
-            )
-        if name == "manage_approval_scope":
-            return await _manage_approval_scope(
-                action=arguments.get("action", "list"),
-                scope=arguments.get("scope"),
-            )
-        if name == "set_user_tier":
-            return await _set_user_tier(
-                user_id=arguments.get("user_id", ""),
-                tier=arguments.get("tier", ""),
-            )
-        return f"[unknown tool: {name}]"
+        if name == "skill_load":
+            return _skill_load(args.get("name", ""))
+        try:
+            return await _registry_dispatch(name, **args)
+        except KeyError:
+            return f"[unknown tool: {name}]"
     except Exception as exc:
         return f"[tool error — {name}: {exc}]"
 
 
-async def _web_search(query: str) -> str:
-    if not query.strip():
-        return "[web_search: empty query]"
-    encoded = urllib.parse.quote_plus(query)
-    url = (
-        f"https://api.duckduckgo.com/?q={encoded}"
-        f"&format=json&no_redirect=1&no_html=1&skip_disambig=1"
-    )
-    try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(url, headers={"User-Agent": "a0p/2.0"})
-            resp.raise_for_status()
-            data = resp.json()
-        parts: list[str] = []
-
-        answer = data.get("Answer", "").strip()
-        if answer:
-            parts.append(f"Answer: {answer}")
-
-        abstract = (data.get("AbstractText") or data.get("Abstract") or "").strip()
-        if abstract:
-            parts.append(f"Summary: {abstract}")
-            source = data.get("AbstractURL") or data.get("AbstractSource", "")
-            if source:
-                parts.append(f"Source: {source}")
-
-        definition = data.get("Definition", "").strip()
-        if definition:
-            parts.append(f"Definition: {definition}")
-
-        topics = data.get("RelatedTopics", [])[:8]
-        for t in topics:
-            if isinstance(t, dict) and t.get("Text"):
-                parts.append(f"- {t['Text']}")
-            elif isinstance(t, dict) and t.get("Topics"):
-                for sub in t["Topics"][:3]:
-                    if sub.get("Text"):
-                        parts.append(f"  · {sub['Text']}")
-
-        if not parts:
-            return (
-                f"[web_search: DuckDuckGo returned no instant-answer data for '{query}'. "
-                f"This tool covers encyclopedic topics well; for very recent news or niche queries, "
-                f"results may be sparse.]"
-            )
-        return f"Query: {query}\n" + "\n".join(parts)
-    except Exception as exc:
-        return f"[web_search error: {exc}]"
-
-
-async def _pcna_infer(signal: float) -> str:
-    from ..main import get_pcna as _get
-    pcna = _get()
-    result = pcna.infer(str(signal))
-    return json.dumps({
-        "signal_in": signal,
-        "coherence_score": result.get("coherence_score"),
-        "winner": result.get("winner"),
-        "confidence": result.get("confidence"),
-        "phi_coherence": result.get("step6_coherence", {}).get("phi", round(pcna.phi.ring_coherence, 4)),
-        "infer_count": pcna.infer_count,
-    })
-
-
-async def _pcna_reward(score: float, reason: str) -> str:
-    from ..main import get_pcna as _get
-    pcna = _get()
-    result = pcna.reward(winner="agent", outcome=score)
-    return json.dumps({
-        "applied_score": score,
-        "reason": reason or "not specified",
-        "reward_count": pcna.reward_count,
-        "last_coherence": round(pcna.last_coherence, 4),
-    })
-
-
-async def _edcm_score() -> str:
-    from ..main import get_pcna as _get
-    pcna = _get()
-    return json.dumps({
-        "phi": round(pcna.phi.ring_coherence, 4),
-        "psi": round(pcna.psi.ring_coherence, 4),
-        "omega": round(pcna.omega.ring_coherence, 4),
-        "mean": round(
-            (pcna.phi.ring_coherence + pcna.psi.ring_coherence + pcna.omega.ring_coherence) / 3,
-            4,
-        ),
-        "infer_count": pcna.infer_count,
-        "reward_count": pcna.reward_count,
-    })
-
-
-async def _memory_flush() -> str:
-    from ..main import get_pcna as _get
-    pcna = _get()
-    await pcna.save_checkpoint()
-    return json.dumps({
-        "flushed": True,
-        "checkpoint_key": pcna._checkpoint_key,
-        "infer_count": pcna.infer_count,
-    })
-
-
-async def _bandit_pull() -> str:
-    from ..services.energy_registry import energy_registry
-    from ..services.bandit import select_arm
-    provider = energy_registry.get_active_provider()
-    return json.dumps({
-        "recommended_provider": provider,
-        "note": "Bandit router defers to coherence-weighted active provider",
-    })
-
-
-async def _sub_agent_spawn(task: str) -> str:
-    import uuid
-    agent_id = f"a0z-{uuid.uuid4().hex[:8]}"
-    return json.dumps({
-        "agent_id": agent_id,
-        "task": task,
-        "status": "spawned",
-        "note": "Sub-agent forked PCNA — call sub_agent_merge with this ID when complete",
-    })
-
-
-async def _sub_agent_merge(agent_id: str) -> str:
-    if not agent_id:
-        return "[sub_agent_merge: agent_id required]"
-    return json.dumps({
-        "agent_id": agent_id,
-        "status": "merged",
-        "note": "Ring state consolidated into primary PCNA",
-    })
-
-
-import base64 as _b64
-
-
-async def _github_write_file(
-    path: str,
-    content: str,
-    message: str,
-    owner: str = "The-Interdependency",
-    repo: str = "a0",
-    branch: str | None = None,
-) -> str:
-    """
-    Create or update a single file via the GitHub Contents API.
-    Handles SHA lookup (required for updates), base64 encoding, and branch defaulting.
-    """
-    if not path or not message:
-        return "[github_write_file: path and message are required]"
-    pat = os.environ.get("GITHUB_PAT", "")
-    if not pat:
-        return "[github_write_file: GITHUB_PAT not configured]"
-
-    safe_path = "/".join(urllib.parse.quote(p, safe="") for p in path.lstrip("/").split("/"))
-    contents_endpoint = f"/repos/{owner}/{repo}/contents/{safe_path}"
-
-    sha: str | None = None
-    lookup_endpoint = contents_endpoint + (f"?ref={urllib.parse.quote(branch)}" if branch else "")
-    lookup_raw = await _github_api("GET", lookup_endpoint)
-    try:
-        lookup = json.loads(lookup_raw)
-        if isinstance(lookup, dict):
-            if lookup.get("status") == 200 and isinstance(lookup.get("data"), dict):
-                sha = lookup["data"].get("sha")
-            elif lookup.get("status") and lookup["status"] >= 400 and lookup["status"] != 404:
-                return json.dumps({
-                    "ok": False,
-                    "stage": "sha_lookup",
-                    "endpoint": lookup_endpoint,
-                    "error": lookup.get("error"),
-                })
-    except Exception:
-        pass
-
-    encoded = _b64.b64encode(content.encode("utf-8")).decode("ascii")
-    body: dict = {"message": message, "content": encoded}
-    if sha:
-        body["sha"] = sha
-    if branch:
-        body["branch"] = branch
-
-    write_raw = await _github_api("PUT", contents_endpoint, body=body)
-    try:
-        write = json.loads(write_raw)
-    except Exception:
-        return write_raw
-
-    if isinstance(write, dict) and write.get("status") in (200, 201):
-        data = write.get("data", {}) or {}
-        commit = data.get("commit", {}) or {}
-        content_meta = data.get("content", {}) or {}
-        return json.dumps({
-            "ok": True,
-            "action": "updated" if sha else "created",
-            "path": path,
-            "branch": branch or "(default)",
-            "commit_sha": commit.get("sha"),
-            "commit_url": commit.get("html_url"),
-            "file_sha": content_meta.get("sha"),
-        })
-    return json.dumps({"ok": False, "stage": "write", "response": write})
-
-
-async def _github_api(method: str, endpoint: str, body: dict | None = None) -> str:
-    pat = os.environ.get("GITHUB_PAT", "")
-    if not pat:
-        return "[github_api: GITHUB_PAT not configured]"
-
-    method = method.upper()
-    url = f"https://api.github.com{endpoint}"
-    headers = {
-        "Authorization": f"Bearer {pat}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "a0p-zfae/2.0",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            if method in ("POST", "PATCH", "PUT") and body:
-                resp = await client.request(method, url, json=body, headers=headers)
-            else:
-                resp = await client.request(method, url, headers=headers)
-
-        if resp.status_code == 204:
-            return json.dumps({"status": 204, "result": "ok (no content)"})
-
-        try:
-            data = resp.json()
-        except Exception:
-            text = (resp.text or "").strip()
-            if text.lower().startswith("<!doctype") or text.startswith("<"):
-                data = f"[non-JSON HTML response, {len(text)} bytes — likely 404/auth page]"
-            else:
-                data = text[:500] + ("…" if len(text) > 500 else "")
-
-        if resp.status_code >= 400:
-            return json.dumps({
-                "status": resp.status_code,
-                "endpoint": endpoint,
-                "error": data,
-            })
-
-        if isinstance(data, list):
-            truncated = data[:25]
-            result: dict = {"status": resp.status_code, "count": len(data), "items": truncated}
-            if len(data) > 25:
-                result["note"] = f"Showing first 25 of {len(data)} items"
-            return json.dumps(result, default=str)
-
-        return json.dumps({"status": resp.status_code, "data": data}, default=str)
-
-    except Exception as exc:
-        return f"[github_api error: {exc}]"
-
-
-_approval_scope_user_cv: _cv.ContextVar[str | None] = _cv.ContextVar(
-    "approval_scope_user", default=None
-)
-
-
-def set_approval_scope_user_id(uid: str | None) -> None:
-    """Set the current user_id context for manage_approval_scope tool calls (per-async-task)."""
-    _approval_scope_user_cv.set(uid)
-
-
-async def _manage_approval_scope(action: str, scope: str | None = None) -> str:
-    """Grant, revoke, or list pre-approved action scopes for the current user."""
-    from ..storage import storage
-    from ..config.policy_loader import get_scope_categories, get_safety_floor_actions
-
-    uid = _approval_scope_user_cv.get()
-    if not uid:
-        return "[manage_approval_scope: no user context — tool must be called within a chat request]"
-
-    categories = get_scope_categories()
-    safety_floor = set(get_safety_floor_actions())
-
-    if action == "list":
-        granted = await storage.get_approval_scopes(uid)
-        if not granted:
-            available = ", ".join(categories.keys())
-            return json.dumps({
-                "granted": [],
-                "available": list(categories.keys()),
-                "note": f"No scopes pre-approved. Available: {available}",
-            })
-        return json.dumps({
-            "granted": [r["scope"] for r in granted],
-            "available": list(categories.keys()),
-        })
-
-    if not scope:
-        return "[manage_approval_scope: 'scope' is required for grant/revoke]"
-
-    scope = scope.lower().strip()
-
-    if action == "grant":
-        if scope in safety_floor:
-            return json.dumps({
-                "ok": False,
-                "error": f"'{scope}' is on the safety floor and cannot be pre-approved.",
-            })
-        if scope not in categories:
-            return json.dumps({
-                "ok": False,
-                "error": f"Unknown scope '{scope}'. Valid: {list(categories.keys())}",
-            })
-        from ..storage.domain import check_scope_grant_tier
-        try:
-            await check_scope_grant_tier(uid)
-        except ValueError as _tier_err:
-            return json.dumps({"ok": False, "error": str(_tier_err)})
-        await storage.grant_approval_scope(uid, scope)
-        meta = categories[scope]
-        return json.dumps({
-            "ok": True,
-            "scope": scope,
-            "label": meta["label"],
-            "description": meta["description"],
-        })
-
-    if action == "revoke":
-        from ..storage.domain import check_scope_grant_tier
-        try:
-            await check_scope_grant_tier(uid)
-        except ValueError as _tier_err:
-            return json.dumps({"ok": False, "error": str(_tier_err)})
-        removed = await storage.revoke_approval_scope(uid, scope)
-        return json.dumps({"ok": removed, "scope": scope, "revoked": removed})
-
-    return f"[manage_approval_scope: unknown action '{action}']"
-
-
-async def _set_user_tier(user_id: str, tier: str) -> str:
-    """Admin-only: set a user's subscription tier directly in the DB."""
-    from ..database import engine
-    from sqlalchemy import text as sa_text
-
-    _VALID = ("free", "supporter", "ws", "admin")
-    if not user_id:
-        return json.dumps({"ok": False, "error": "user_id is required"})
-    if tier not in _VALID:
-        return json.dumps({"ok": False, "error": f"Invalid tier '{tier}'. Valid: {_VALID}"})
-
-    caller_uid = _approval_scope_user_cv.get()
-    if not caller_uid:
-        return json.dumps({"ok": False, "error": "No user context — must be called within a chat request"})
-
-    async with engine.connect() as conn:
-        admin_row = await conn.execute(
-            sa_text(
-                "SELECT 1 FROM admin_emails WHERE email = "
-                "(SELECT email FROM users WHERE id = :uid)"
-            ),
-            {"uid": caller_uid},
-        )
-        if not admin_row.first():
-            return json.dumps({"ok": False, "error": "Admin access required"})
-
-    async with engine.begin() as conn:
-        res = await conn.execute(
-            sa_text(
-                "UPDATE users SET subscription_tier = :tier WHERE id = :uid "
-                "RETURNING id, email, subscription_tier"
-            ),
-            {"tier": tier, "uid": user_id},
-        )
-        updated = res.mappings().first()
-
-    if not updated:
-        return json.dumps({"ok": False, "error": f"User '{user_id}' not found"})
-    return json.dumps({
-        "ok": True,
-        "user_id": updated["id"],
-        "email": updated["email"],
-        "tier": updated["subscription_tier"],
-    })
-# 540:12
+__all__ = [
+    "TOOL_SCHEMAS_CHAT",
+    "TOOL_SCHEMAS_RESPONSES",
+    "TOOL_SCHEMAS_RESPONSES_ZFAE",
+    "OPENAI_NATIVE_TOOLS",
+    "execute_tool",
+    "set_caller_provider",
+    "reset_caller_provider",
+    "set_approval_scope_user_id",
+    "get_approval_scope_user_id",
+    "get_a0_skill_manifest",
+    "get_a0_skill_body",
+    "_discover_a0_skills",
+    "_skill_recommend",
+    "_skill_load",
+]
+# 314:53

@@ -1,10 +1,11 @@
-// 112:0
+// 178:11
 import "./types.d.ts";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { spawn, type ChildProcess } from "child_process";
 import express from "express";
+import multer from "multer";
 import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import {
   setupAuth,
@@ -12,6 +13,7 @@ import {
   registerGuestChatRoute,
   seedAdminUser,
 } from "./auth";
+import { registerAttachmentRoutes } from "./attachments";
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? "5000", 10);
@@ -83,7 +85,30 @@ async function waitForPython(maxWaitMs = 120_000): Promise<void> {
   await setupAuth(app);
   registerAuthRoutes(app);
   registerGuestChatRoute(app);
+  registerAttachmentRoutes(app);
   await seedAdminUser();
+
+  // Serve uploaded files (images attached to chat messages, generated images).
+  // Authed gate: any session-authenticated user may read; the path is opaque
+  // (uuid-based) so unauthenticated guessing is infeasible but we still gate.
+  const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
+  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  app.use("/uploads", (req, res, next) => {
+    if (!req.session?.userId) return res.status(401).json({ error: "Unauthorized" });
+    next();
+  }, express.static(UPLOADS_DIR, { maxAge: "1h" }));
+
+  // Serve the a0 CLI script as plain text so users can `curl -fsSL <host>/a0 -o ~/.local/bin/a0`.
+  app.get("/a0", (_req, res) => {
+    const cliPath = path.resolve(process.cwd(), "scripts", "a0-cli.sh");
+    if (!fs.existsSync(cliPath)) {
+      res.status(404).type("text/plain").send("# a0 CLI script missing");
+      return;
+    }
+    res.setHeader("Content-Type", "text/x-shellscript; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.sendFile(cliPath);
+  });
 
   app.use("/api/v1/guest", (_req, res) => {
     res.status(404).json({ error: "Not found" });
@@ -176,4 +201,4 @@ async function waitForPython(maxWaitMs = 120_000): Promise<void> {
 })();
 
 export default app;
-// 112:0
+// 178:11
