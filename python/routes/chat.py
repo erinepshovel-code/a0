@@ -683,6 +683,9 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                             "system_prompt": pending["system_prompt"],
                             "provider_id": pending["provider_id"],
                             "uid": uid,
+                            # Carry the allow-list forward so subsequent replays
+                            # continue to respect the original tool selection.
+                            "enabled_tools": pending.get("enabled_tools"),
                         })
                 else:
                     replay_result = None
