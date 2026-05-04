@@ -78,7 +78,6 @@ BUILTIN_PROVIDERS = {
 }
 
 
-_PROVIDER_DEFAULT_ASSIGNMENTS: dict[str, dict] = {}
 _PROVIDER_PRESETS: dict[str, dict] = {}
 _PROVIDER_AVAILABLE_MODELS: dict[str, list] = {}
 _PROVIDER_PRICING_URLS: dict[str, str] = {
