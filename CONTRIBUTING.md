@@ -18,8 +18,9 @@ Useful contributions include:
 
 1. Read `README.md` — including the "Project name: `a0` vs `a0p`" and "Access model" sections so you know what is open versus owner-only in the deployed instance (`a0p`).
 2. Read `docs/help-wanted.md`.
-3. Pick a small issue labeled `good first issue` or `help wanted`.
-4. If no issue fits, open a question issue before doing large work.
+3. If your local setup hits trouble, check [`docs/troubleshooting.md`](docs/troubleshooting.md) before opening an issue.
+4. Pick a small issue labeled `good first issue` or `help wanted`.
+5. If no issue fits, open a question issue before doing large work.
 
 ## How access works for contributors
 
