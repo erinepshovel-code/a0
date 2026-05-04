@@ -541,8 +541,14 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
             if gate_matched:
                 _pending_gates.pop(conv_id, None)
                 replay_provider = pending["provider_id"]
-                from ..services.tool_executor import set_approval_scope_user_id
+                from ..services.tool_executor import (
+                    set_approval_scope_user_id,
+                    set_allowed_tools as _set_at,
+                    reset_allowed_tools as _reset_at,
+                )
                 set_approval_scope_user_id(uid or None)
+                _gate_tools = pending.get("enabled_tools")
+                _t_gate_at = _set_at(list(_gate_tools) if isinstance(_gate_tools, list) else None)
                 try:
                     approved_content, approved_usage = await call_energy_provider(
                         provider_id=replay_provider,
@@ -553,6 +559,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                     )
                 finally:
                     set_approval_scope_user_id(None)
+                    _reset_at(_t_gate_at)
                 reply = f"[APPROVED — gate {gate_id_to_approve} cleared]{scope_note}\n\n{approved_content}"
             else:
                 replay_provider = "system"
@@ -647,8 +654,16 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 pending = raw_pending if (raw_pending and raw_pending.get("uid", uid) == uid) else None
                 if pending:
                     _pending_gates.pop(conv_id, None)
-                    from ..services.tool_executor import set_approval_scope_user_id
+                    from ..services.tool_executor import (
+                        set_approval_scope_user_id,
+                        set_allowed_tools as _set_at2,
+                        reset_allowed_tools as _reset_at2,
+                    )
                     set_approval_scope_user_id(uid or None)
+                    _scope_gate_tools = pending.get("enabled_tools")
+                    _t_sg_at = _set_at2(
+                        list(_scope_gate_tools) if isinstance(_scope_gate_tools, list) else None
+                    )
                     try:
                         replay_content, replay_usage = await call_energy_provider(
                             provider_id=pending["provider_id"],
@@ -658,6 +673,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                         )
                     finally:
                         set_approval_scope_user_id(None)
+                        _reset_at2(_t_sg_at)
                     replay_result = {"content": replay_content, "usage": replay_usage}
                     reply += f"\n\nRetrying blocked action...\n\n{replay_content}"
                     if replay_usage.get("approval_state") == "pending":
@@ -835,6 +851,8 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 "system_prompt": system_prompt or None,
                 "provider_id": provider_id,
                 "uid": uid,
+                # Persist the allow-list so approval replay uses the same tool set.
+                "enabled_tools": list(_conv_tools) if isinstance(_conv_tools, list) else None,
             })
 
         _attach_cost_usd(usage, provider_id)
