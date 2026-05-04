@@ -1,4 +1,4 @@
-# 328:125
+# 333:125
 import logging
 import contextvars
 import json
@@ -177,10 +177,7 @@ class EnergyRegistry:
             return False
         try:
             from ..database import get_session
-            logger.warning(
-                "Failed to persist active provider to DB; keeping in-memory selection.",
-                exc_info=True,
-            )
+            async with get_session() as session:
                 await session.execute(
                     sa_text(
                         "INSERT INTO a0p_settings (key, value) "
@@ -191,7 +188,10 @@ class EnergyRegistry:
                     {"pid": provider_id},
                 )
         except Exception:
-            pass
+            logger.warning(
+                "Failed to persist active provider to DB; keeping in-memory selection.",
+                exc_info=True,
+            )
         return True
 
     def compose_agent_name(self, base_name: str = "a0(zeta fun alpha echo)") -> str:
@@ -516,4 +516,4 @@ def resolve_providers(providers: list[str] | None) -> list[str]:
         elif p in BUILTIN_PROVIDERS and p not in out:
             out.append(p)
     return out
-# 328:125
+# 333:125

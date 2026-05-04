@@ -1,4 +1,4 @@
-// 206:25
+// 211:30
 import "./types.d.ts";
 import path from "path";
 import fs from "fs";
@@ -62,8 +62,19 @@ if (IS_PROD) {
   spawnPython();
 }
 
-app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+// Stripe webhook signature verification (construct_event) is computed over the
+// exact raw bytes Stripe sent. If express.json() parses the body first it
+// re-serialises it before the proxy forwards it, corrupting the HMAC. Skip ALL
+// body parsing for this one path so the raw stream flows through to FastAPI
+// unchanged and construct_event sees the original bytes.
+app.use((req, res, next) => {
+  if (req.path === "/api/v1/billing/webhook") return next();
+  express.json({ limit: "1mb" })(req, res, next);
+});
+app.use((req, res, next) => {
+  if (req.path === "/api/v1/billing/webhook") return next();
+  express.urlencoded({ extended: false, limit: "1mb" })(req, res, next);
+});
 
 async function waitForPython(maxWaitMs = 120_000): Promise<void> {
   if (!IS_PROD) return;
@@ -247,4 +258,4 @@ async function waitForPython(maxWaitMs = 120_000): Promise<void> {
 })();
 
 export default app;
-// 206:25
+// 211:30
