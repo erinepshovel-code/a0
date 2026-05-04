@@ -20,7 +20,7 @@ from typing import Any, Optional
 from google import genai
 from google.genai import types as gtypes
 
-from .tool_executor import TOOL_SCHEMAS_CHAT, execute_tool, set_caller_provider
+from .tool_executor import get_active_chat_schemas, execute_tool, set_caller_provider
 
 _MAX_TOOL_ROUNDS = 5
 
@@ -189,7 +189,7 @@ async def call_gemini_native(
     contents = _messages_to_contents(rest)
     accumulated: dict = {}
 
-    tools = _chat_tools_to_gemini(TOOL_SCHEMAS_CHAT) if use_tools else []
+    tools = _chat_tools_to_gemini(get_active_chat_schemas()) if use_tools else []
 
     cfg_kwargs: dict[str, Any] = {
         "max_output_tokens": max_tokens,

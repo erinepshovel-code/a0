@@ -713,7 +713,10 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 ]
             history.append(entry)
 
-        from ..services.tool_executor import set_approval_scope_user_id
+        from ..services.tool_executor import (
+            set_approval_scope_user_id,
+            set_allowed_tools, reset_allowed_tools,
+        )
         from ..services.run_context import (
             current_orchestration_mode, current_cut_mode, current_user_tier,
         )
@@ -744,6 +747,11 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
         eff_providers = body.providers or [provider_id]
 
         set_approval_scope_user_id(uid or None)
+        # Per-conversation tool allow-list — None means all tools enabled.
+        _conv_tools = conv.get("enabled_tools")
+        _t_at = set_allowed_tools(
+            list(_conv_tools) if isinstance(_conv_tools, list) else None
+        )
         _t_om = current_orchestration_mode.set(eff_mode)
         _t_cm = current_cut_mode.set(eff_cut)
         _t_ut = current_user_tier.set(tier)
@@ -814,6 +822,7 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
                 except Exception:
                     pass
             set_approval_scope_user_id(None)
+            reset_allowed_tools(_t_at)
             current_orchestration_mode.reset(_t_om)
             current_cut_mode.reset(_t_cm)
             current_user_tier.reset(_t_ut)

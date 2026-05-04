@@ -227,7 +227,7 @@ async def _call_with_tools(
 ) -> tuple[str, dict]:
     """xai-sdk chat with our function-tool loop. Streaming when no tools."""
     from ..tool_distill import set_caller_provider
-    from ..tool_executor import TOOL_SCHEMAS_CHAT, execute_tool
+    from ..tool_executor import get_active_chat_schemas, execute_tool
 
     set_caller_provider("grok")
     client = AsyncClient(api_key=api_key)
@@ -239,7 +239,7 @@ async def _call_with_tools(
             client, model, xai_messages, max_tokens, progress_callback
         )
 
-    xai_tools = _to_xai_tools(TOOL_SCHEMAS_CHAT) if use_tools else []
+    xai_tools = _to_xai_tools(get_active_chat_schemas()) if use_tools else []
 
     create_kwargs: dict = dict(
         model=model,
