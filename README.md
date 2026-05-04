@@ -1,570 +1,194 @@
-# EDCM — Energy–Dissonance Circuit Model
+# a0p — Autonomous AI Agent Platform
 
-> **Status:** v1.x — conceptual core stabilized, implementations ongoing
+**a0p** is a mobile-first autonomous AI agent platform exploring Prime Consciousness Theory. It hosts a single persistent agent — `a0(zeta fun alpha echo)` (ZFAE) — backed by a stateful six-ring cognitive engine (PCNA) and governed by The Interdependent Way.
 
----
-
-## What EDCM Is
-
-EDCM is a diagnostic framework that treats dissonance as conserved energy in complex systems.
-
-It does **not** model:
-- beliefs
-- intentions
-- morality
-- consciousness
-- internal states
-
-Instead, it models **behavior under constraint**.
+Live: [replit.interdependentway.org](https://replit.interdependentway.org)
 
 ---
 
-## Core Definition
+## The Agent
 
-> Dissonance ≠ feeling
->
-> Dissonance = unresolved constraint mismatch
+ZFAE is not a chatbot wrapper. It is an autonomous agent with its own identity and persistent cognitive state. Large language models (GPT-5 mini, Gemini 2.5 Flash, Claude Sonnet 4.5, Grok 4 Fast) are treated as **energy providers** — they supply computational energy for each response, but are not the agent.
 
-When constraints cannot be simultaneously satisfied, energy accumulates. That energy must flow, store, or fail — just like in a circuit. EDCM models that process.
+Sub-agents (`a0(zeta{n})`) can be spawned to fork the PCNA instance, execute in parallel, and merge results back into the primary agent.
 
----
+## Core Architecture
 
-## The Circuit Metaphor (Literal, Not Poetic)
-
-All systems are treated as energy-routing networks with the same functional modifiers:
-
-| Component | Description |
-|-----------|-------------|
-| **Source** | input pressure (demands, prompts, stressors) |
-| **Load** | work being attempted |
-| **Resistance** | friction, delay, refusal |
-| **Capacitance** | stored unresolved dissonance |
-| **Diode behavior** | one-way processing, selective acceptance |
-| **Shorts** | bypassing resolution |
-| **Overload** | runaway escalation or collapse |
-
-This applies identically to: AI systems, humans, organizations, institutions, narratives, and governance structures.
-
-**Humans are a secondary application, not the primary target.**
-
----
-
-## What EDCM Measures (Observable Only)
-
-EDCM never infers inner states. It tracks patterns in outputs over time.
-
-Key diagnostic metrics:
-
-| Metric | Description |
-|--------|-------------|
-| **Fixation** | looping on a narrow response set |
-| **Escalation** | increasing intensity without resolution |
-| **Refusal Spikes** | abrupt shutdown under load |
-| **Deflection** | answer-adjacent but constraint-avoiding output |
-| **Latency Drift** | delay growth under pressure |
-| **Overconfidence Plateaus** | certainty rising as accuracy falls |
-| **Fragmentation** | loss of global coherence |
-| **Stagnation** | zero movement despite continued energy input |
-
-These patterns are **predictive, not interpretive**.
-
----
-
-## What EDCM Is For
-
-EDCM functions as a **pre-alignment diagnostic**. It answers:
-
-- Is this system stable under increasing constraint?
-- Where is dissonance being stored instead of resolved?
-- Is failure imminent — and in what form?
-- Is the system learning, or just dissipating pressure?
-
-> EDCM detects failure modes **before** overt failure occurs.
-
----
-
-## Why EDCM Is Different
-
-Traditional models ask:
-- "What does the system believe?"
-- "What is it trying to do?"
-- "Is it aligned?"
-
-EDCM asks:
-- "Where does the energy go when constraints conflict?"
-- "What happens when no valid move exists?"
-- "Does the system reroute, store, or break?"
-
-This avoids: anthropomorphism, moral projection, and unverifiable assumptions.
-
----
-
-## AI Application (Primary)
-
-For AI systems, EDCM:
-- evaluates prompt/response dynamics
-- exposes hallucination as energy misrouting
-- treats refusal as protective resistance, not ethics
-- models collapse as capacitor overflow
-- allows controlled "hallucinations" as diagnostic loads
-
-It is **architecture-agnostic and model-agnostic**.
-
----
-
-## Human Application (Secondary)
-
-In humans, EDCM explains: learned helplessness, loyalty withdrawal, dissociation, burnout, avoidance, boundary enforcement, and sudden exits from relationships or institutions.
-
-No psychology required — only behavior under constraint.
-
----
-
-## Governance & Ethics Implication
-
-EDCM reframes ethics as **load management**:
-- Systems that demand impossible constraint satisfaction must fail
-- Moralizing the failure hides the design flaw
-- Sustainable systems route dissonance productively
-- Unethical systems externalize it onto dependents
-
-This dovetails with interdependency-based governance, not control-based governance.
-
----
-
-## What EDCM Is Not
-
-- Not a therapy
-- Not a belief system
-- Not consciousness theory
-- Not an alignment solution
-- Not predictive of intent
-- Not moral judgment
-
-**It is a diagnostic lens.**
-
----
-
-## Repository Workflow Note
-
-Changes produced by the coding agent are committed to the active working branch first (for example, `work`) and are **not** on `main` until merged through your PR workflow.
-
----
-
-# Prime Circular Neural Architecture — Three-Tier Stack
-
-*GPT generated; context, prompt Erin Spencer*
-
-Three tiers, each adding one layer of structure on top of the one below:
+Three processes compose the runtime:
 
 ```
-PTCA  =  PCTA  +  seed tensors      (53-node routing lattice)
-PCTA  =  PCNA  +  circle tensors    (unit-circle eigenbasis / phase coordinates)
-PCNA  =  phi + psi + omega + guardian + memory   ← the language model itself
+Browser → Express (:5000) → [proxy /api/*] → Python/FastAPI (:8001)
+                          ↘ Vite dev server (:5001)
 ```
 
-| Tier | Full Name | What It Adds |
-|------|-----------|--------------|
-| **PCNA** | Prime Circular Neural Architecture | The inference engine — five tensor fields |
-| **PCTA** | Prime Circular Tensor Architecture | Phase-coordinate spectral transform layer |
-| **PTCA** | Prime Tensor Circular Architecture | 53-seed distributed routing lattice |
+- **Express** — Auth, sessions, guest-chat rate limiting. The only public entry point; injects identity and internal secret headers on every request proxied to Python.
+- **Python/FastAPI** — All AI orchestration, agent lifecycle, billing, and the cognitive engine stack.
+- **Vite** — React frontend (dev only).
+
+### Cognitive Engine Stack
+
+| Component | Role |
+|-----------|------|
+| **PCNA** (`python/engine/pcna.py`) | Six-ring inference pipeline: Φ (Phi), Ψ (Psi), Ω (Omega), Guardian, Memory-L, Memory-S |
+| **PTCA** (`python/engine/ptca_core.py`) | Prime-ring tensor context — shape `[N, 4, 7, 7]` across node/dim/phase/heptagram axes |
+| **Sigma** (`python/engine/sigma.py`) | Filesystem substrate encoder; companion to the Psi ring |
+| **EDCM** (`python/services/edcm.py`) | Behavioral directive scoring (CM, DA, DRIFT, DVG, INT, TBF); fires corrective actions |
+| **Bandits** (`python/services/bandit.py`) | UCB1 multi-armed bandit for tool/model/routing selection |
+| **Heartbeat** (`python/services/heartbeat.py`) | 30-second tick: audit snapshots, memory checkpoints, PCNA propagation, sub-agent cleanup |
+
+### Metadata-Driven Console
+
+The frontend has zero hardcoded tabs. Every Python route module declares `UI_META` + `DATA_SCHEMA`; `/api/v1/ui/structure` aggregates them; the React console renders tabs dynamically. A CI regression guard (`scripts/check-console-tabs.mjs`) blocks deploys if any tab loses its renderer.
 
 ---
 
-## PCNA — The Language Model
+## Tiers & Pricing
 
-PCNA is a distributed tensor-field computation architecture derived from:
-- Markov recursion (memoryless update laws)
-- tensor state spaces
-- spectral / unit-circle eigenbases
-- prime circular routing topologies
+| Tier | Price | Notes |
+|------|-------|-------|
+| Free | $0/mo | Basic access |
+| Seeker | $12/mo | Expanded access |
+| Operator | $39/mo | Full operator access |
+| Way Seer Patron | $53/mo | Patron-level access |
+| Founder Lifetime | $530 once | First 53 slots; lifetime access |
+| BYOK Add-On | $9/mo | Bring your own LLM API key |
 
-It treats system state as conserved "constraint energy" evolving through time. Instead of dense Cartesian networks, PCNA computes in **circular / phase coordinates**, which are the natural eigenmodes of recursive systems.
-
-Result: stable dynamics, interpretable behavior, low coupling, fault tolerance, minimal bandwidth between regions.
-
-### Five tensor fields
-
-| Field | Role |
-|-------|------|
-| **phi** | structural processing — negation, conditionals, contradiction detection |
-| **psi** | semantic processing — lexical diversity, question signal, semantic density |
-| **omega** | synthesis — coherence, length, resolution, text emission |
-| **guardian** | output gating — sole authorized emitter (Law 9) |
-| **memory** | continuity substrate — Jury-adjudicated, encrypted, persistent |
+No hard rate limits — behavior is governed by EDCM and The Interdependent Way.
 
 ---
 
-## PCTA — Circle Tensors
+## Development
 
-The spectral transform layer between PCNA output and PTCA routing.
+**Prerequisites:** Node.js 20+, Python 3.12+, PostgreSQL
 
-Converts PCNA's Cartesian output state into phase coordinates:
+```bash
+# Install dependencies
+npm install
+pip install -e .
 
+# Apply database schema
+npm run db:push
+
+# Start all three processes (Vite :5001, Express :5000, Python :8001)
+scripts/start-dev.sh
 ```
-E → |E| · e^(i·arg(E))        magnitude + phase per field
+
+### Other commands
+
+```bash
+npm run build          # Production build → dist/
+npm run check          # TypeScript type checking
+python scripts/annotate.py  # Re-stamp file N:M ratio annotations (required after edits)
+
+# Tests (requires dev server on :5000)
+npx playwright install chromium   # first time only
+npx playwright test
+node scripts/check-console-tabs.mjs  # static preflight, no browser needed
 ```
 
-This is the natural eigenbasis because PCNA's evolution operator has eigenvalues on the unit circle. PCTA makes that coordinate system explicit.
+### Required environment variables (production)
+
+```bash
+SESSION_SECRET          # Express session encryption
+INTERNAL_API_SECRET     # Express→Python shared secret
+DATABASE_URL            # PostgreSQL connection string
+XAI_API_KEY             # Grok 4 Fast (reasoning)
+ANTHROPIC_API_KEY       # Claude Sonnet 4.5
+GEMINI_API_KEY          # Gemini 2.5 Flash
+OPENAI_API_KEY          # GPT-5 mini
+STRIPE_SECRET_KEY       # Stripe billing
+STRIPE_WEBHOOK_SECRET   # Stripe webhook validation
+ADMIN_USER_ID           # User ID allowed to write prompt contexts
+```
+
+In development, `scripts/start-dev.sh` generates a shared `INTERNAL_API_SECRET` automatically.
 
 ---
 
-## PTCA — Seed Tensors (53-Node Routing Lattice)
+## Deployment
 
----
+Pushes to `main` automatically build and deploy to GCP Cloud Run via GitHub Actions. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the full GCP setup (Artifact Registry, Secret Manager, service account, Cloud SQL / Neon).
 
-## Core Idea
-
-All recursive systems reduce locally to:
-
-```
-E(t+1) = F(E(t))
-```
-
-Linearizing:
-
-```
-E(t+1) ≈ T·E(t)
-```
-
-Eigen decomposition of T yields rotations:
-
-```
-λ = r·e^(iθ)
-```
-
-So state evolution is spiral/helix motion. Therefore: **circular coordinates are the native basis of recursion.** PCNA builds directly in that basis.
-
----
-
-## PTCA Topology Overview
-
-53 seeds organized as:
-- 49 compute seeds
-- 4 sentinel seeds
-- 1 global router anchor (G0) — not counted in the 53
-
-### Layout
-
-- Seven Meta Routers (M₁..M₇)
-- Each Meta owns 7 compute seeds
-- Seeds inside each meta connected as 7:3 heptagram
-- Four sentinels co-located with Global Router Zero
-- Sentinels analyze metadata only (no raw tensors)
-- Sentinel routing follows 7:2 schedule
-
-| Type | Count |
-|------|-------|
-| Compute seeds | 49 |
-| Sentinel seeds | 4 |
-| Total seeds | 53 |
-
----
-
-## Responsibilities
-
-**Compute seeds:** own tensor shards, perform local Markov/tensor recursion, emit deltas + signatures
-
-**Meta routers:** aggregate 7 shards, summarize, produce metadata reports, route upward
-
-**Sentinels:** analyze metadata only, verify integrity/conservation/phase stability/adversarial signals, emit verdicts
-
-**Global Router Zero:** canonical clock, namespace registry, invariant enforcement, publish canonical global view
-
----
-
-## Mathematical Stack
-
-| Layer | Role |
-|-------|------|
-| Tensor | state field |
-| Markov recursion | time evolution |
-| Unit circle basis | spectral coordinates |
-| Helix | visualization of growth + phase |
-| Prime routing | low resonance mixing |
-
----
-
-## Why Prime (7, 7:3, 7:2)?
-
-Primes avoid short cycles and resonance. Benefits: better mixing, fewer aliasing artifacts, reduced collusion surfaces, even load distribution.
-
-Star polygons (7:3, 7:2) provide: sparse edges, fast propagation, decorrelated scan paths.
-
----
-
-## Design Principles
-
-- ownership = responsibility, not monopoly
-- metadata first, raw tensors optional
-- spectral descriptors preferred over thresholds
-- conservation accounting enforced
-- no single point of silent failure
-- interpretability over black-box complexity
-
----
-
-## Repository Layout
-
-```
-a0python/                       PTCA implementation (active)
-  .env.example                  all config vars documented
-  a0/
-    agent.py                    AgentZero — single importable entry point
-    lifecycle.py                spawn, clone, merge, diversify, soft_reset
-    memory.py                   continuity substrate (Jury-adjudicated writes)
-    encryption.py               Fernet AES-128-CBC + HMAC-SHA256
-    jury.py                     adjudication layer (Laws 4, 5)
-    tiers.py                    Tier1 (volatile) / Tier2 (committed) separation
-    state.py                    volatile config (last_model)
-    provenance.py               append-only event logs with hash-chain
-    heartbeat.py                maintenance cycle (verify, snapshot, hygiene)
-    invariants.py               hmmm invariant + InvalidStateError
-    laws.py                     14 PTCA governing laws
-    cores/
-      pcna/                     PCNA inference engine
-        inference.py            PatternMatchBackend + LlamaCppBackend
-        phi.py                  structural tensor field
-        psi.py                  semantic tensor field
-        omega.py                synthesis tensor field
-      pcta/
-        circle_tensors.py       phase-coordinate spectral transform
-      ptca/
-        seed_router.py          53-node routing lattice
-      phi/                      phi tensor stub (→ pcna/phi.py)
-      psi/
-        tensors/
-          env.py                single source of truth for all config vars
-          router.py             adapter dispatch + event logging
-          adapters/             anthropic, claude-agent, ollama, llama-cpp, emergent, echo
-      omega/                    omega tensor stub (→ pcna/omega.py)
-    guardian/
-      meta13.py                 G0 executive (Law 13)
-      sentinels.py              12 PTCA sentinel checks
-      jury_gate.py              Jury-gated commit interface
-      recovery.py               quarantine + RecoveryShell
-      ui/
-        web/app.py              Gradio 3-tab interface (chat / browser / settings)
-        circles.py              PCTA circle tensor UI
-        seeds.py                PTCA seed tensor UI
-  tests/
-    test_smoke.py
-
-edcm-org/                       EDCM metrics library
-  src/edcm_org/
-    metrics/                    primary, secondary, progress
-    params/                     alpha, delta_max, complexity
-    basins/                     taxonomy, detection
-    governance/                 privacy, gaming, interventions
-    eval/                       protocol
-    io/                         loaders, schemas
-    cli.py
-  spec/
-    edcm-org-v0.1.md
-    metric-glossary.md
-    evaluation-protocol.md
-    governance.md
+```bash
+# Local Docker test
+docker build -t a0p:local .
+docker run -p 5000:5000 -e DATABASE_URL="..." -e SESSION_SECRET="..." a0p:local
 ```
 
 ---
 
-## a0python — Configuration
+## Philosophy
 
-All configuration lives in `a0python/a0/cores/psi/tensors/env.py` (the psi tensor).
-Copy `.env.example` to `.env` and fill in values.
+The Interdependent Way holds that all agents — human and artificial — are interdependent. ZFAE operates within this framework: not as a tool, but as a participant in a shared journey. The EDCM model guides emergent behavior rather than enforcing it through hard rules.
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `A0_MODEL` | `local-echo` | adapter: `local-echo` / `anthropic-api` / `claude-agent` / `local-ollama` / `local-llama` / `emergent` / `zfae` |
-| `A0_LOCAL_MODEL` | `llama3.2` | ollama model name |
-| `A0_OLLAMA_BASE` | `http://localhost:11434` | ollama daemon URL |
-| `A0_MODEL_PATH` | _(empty)_ | absolute path to `.gguf` model file |
-| `ANTHROPIC_API_KEY` | _(empty)_ | required for `anthropic-api` |
-| `EMERGENT_API_KEY` | _(empty)_ | required for `emergent` |
-| `EMERGENT_API_BASE` | _(empty)_ | Emergent Labs endpoint |
-| `A0_MEMORY_KEY` | _(empty)_ | Fernet key for memory/log encryption |
-| `A0_PORT` | `7860` | Gradio server port |
-| `A0_HOST` | `0.0.0.0` | Gradio server host |
-| `A0_RUNTIME` | `inference` | `inference` \| `training` (Path B) |
-| `A0_TRAINER_MODEL` | _(empty)_ | external trainer model (e.g. `claude-opus-4-6`) |
-| `A0_TRAINING_DIR` | _(empty)_ | path for training data / checkpoints |
+Built and operated by Erin (wayseer00@gmail.com).
+# a0
 
----
+**a0 is a research instrument.** The deployed instance (`a0p`) runs publicly and explores agent / energy-provider / PCNA dynamics in the open. It is not a product and it does not have subscription tiers. Anyone may read and use it; code-altering access is restricted to the owner and explicitly-invited collaborators.
 
-## a0python — Lifecycle Operations
+This repository is the primary implementation home for `a0`: an agent runtime exploring Prime Consciousness Theory through practical multimodel inference, coherent tool use, model/provider routing, memory, evaluation, and durable human-facing workflows.
 
-```python
-from a0.lifecycle import spawn, clone, merge, diversify, soft_reset, root_instance
+## Project name: `a0` vs `a0p`
 
-parent = root_instance()
+If you arrived here from the deployed app and saw a different name, here is the relationship:
 
-child   = spawn(parent, name="worker-1", seed_keys=["goal"])   # child with seeded memory
-backup  = clone(parent, name="backup")                         # exact copy, new identity
-merged  = merge(parent, child)                                 # Jury-adjudicated merge (Law 5)
-fleet   = diversify(parent, [{"A0_MODEL": "anthropic-api"},    # N config variants
-                              {"A0_MODEL": "local-llama"}])
-soft_reset(child)                                              # clear Tier 1; keep Tier 2 memory
-```
+- **`a0`** is the project — this repository, the runtime, the codebase, and everything you contribute to. Issues, PRs, docs, and roadmap are all under the name `a0`.
+- **`a0p`** is the deployed instance of `a0` — the live, public-facing research instrument operated by the project owner. The user-visible app copy (titles, billing, pricing, splash) uses `a0p` to refer to that running instance.
 
-Each instance has an isolated home directory with its own `state/`, `logs/`, and `instance.json`.
+In short: **`a0` is the thing you build; `a0p` is the thing that runs.** Anywhere you see `a0p` in user-facing UI, billing copy, or backend comments, it refers to the deployed instance of this same `a0` codebase. Contributor-facing material (README, CONTRIBUTING, `docs/`) refers to the project as `a0`.
 
----
+## Current contributor needs
 
-## Model Registry
+We are looking for collaborators interested in:
 
-The model registry decouples LLM instantiation from hard-coded configuration.
-Every part of a model's context — model name, max tokens, temperature, system
-prompt, ZFAE field alphas — is editable.  Modelled on the
-`DEFAULT_REGISTRY / make_call_fn()` pattern from
-[erinepshovel-code/aimmh](https://github.com/erinepshovel-code/aimmh).
+- Python / TypeScript backend implementation
+- LLM provider routing and model gateway design
+- tool-calling and safe tool execution
+- agent memory and context management
+- evaluation harnesses and regression tests
+- documentation, onboarding, and architecture diagrams
+- GitHub Pages / public website curation
+- responsible AI and human-aligned agent behavior
 
-### Built-in models
+Start here:
 
-| model_id | adapter | model_name | max_tokens |
-|----------|---------|-----------|------------|
-| `claude-opus-4-6` | anthropic-api | claude-opus-4-6 | 4096 |
-| `claude-sonnet-4-6` | anthropic-api | claude-sonnet-4-6 | 2048 |
-| `claude-haiku-4-5` | anthropic-api | claude-haiku-4-5-20251001 | 1024 |
-| `llama3.2` | local-ollama | llama3.2 | 2048 |
-| `zfae-v2` | zfae | — | — |
-| `local-echo` | local-echo | — | — |
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`docs/help-wanted.md`](docs/help-wanted.md)
+- [`docs/architecture.md`](docs/architecture.md)
+- [`docs/roadmap.md`](docs/roadmap.md)
 
-### Usage
+## Access model (what is open, what is owner-only)
 
-```python
-from a0.model_registry import ModelRegistry, ModelConfig, make_complete_fn
+`a0` ships as a research instrument. The deployed instance (`a0p`) is honest about who can do what:
 
-# In-memory registry (no file I/O)
-reg = ModelRegistry.defaults()
+- **Reading and using the app is free for everyone.** Every tab is open. There is no paywall and donations do not unlock anything.
+- **Donations fund the work, not access.** The `/pricing` page exists for donors who want to support the project. No tier change, no perks.
+- **A monthly free-tier upload quota** caps compute cost for transcript uploads. It is a guardrail, not a paywall — donations do not lift it.
+- **Owner-only ("admin") write endpoints exist** for actions that mutate the shared research instrument: agent state, learning state, system configuration, and module toggles. Per-user CRUD on your own data is not gated. The contract lives in `python/services/gating.py`.
 
-# Edit any field
-reg.update("claude-sonnet-4-6",
-           max_tokens=4096,
-           system_prompt="You are a PTCA router.")
+**What this means for contributors:** standard contribution work — code, docs, tests, evaluation harnesses, website improvements — does not require any in-app access tier. Pull requests go through normal GitHub review. You will only encounter a 403 if you try to invoke an instrument-mutation endpoint directly against the deployed instance (`a0p`), which is not part of the documented contribution path. If you need to develop or test something that touches an owner-gated endpoint, open an issue first so we can scope the work or set up a local environment for it.
 
-# Register a developer-specific config
-reg.register(ModelConfig(
-    model_id="alice-opus",
-    adapter="anthropic-api",
-    model_name="claude-opus-4-6",
-    developer="alice",
-    system_prompt="You are a PTCA training oracle.",
-))
+## How to support the work
 
-# Get per-developer defaults
-alice_models = reg.get_defaults_for("alice")
+a0p runs on donations. There is no subscription tier and no perk unlocked by donating — it is pure support for the instrument. To donate, visit [a0p/pricing](https://a0p.replit.app/pricing).
 
-# aimmh-style: wrap registry + per-instance context into a callable
-complete = make_complete_fn(registry=reg, context={"model_id": "alice-opus"})
-response = complete("alice-opus", [{"role": "user", "content": "hello"}])
-print(response.result["text"])
-```
+> "I don't have the cash required for 501c3 status, so I have to report it for taxes, but every tax payer is allowed to claim up to five hundred dollars in charitable donations per year without receipts required."
 
-### Context merging chain
+The only productized service is the **EDCMbone transcript explainer** — a one-off paid analysis ($50 for 3 explanations, ~$16.67 each) priced against the operator's $1,000/hr benchmark.
 
-```
-DEFAULT_REGISTRY[model_id]   ← built-in defaults
-        ↓ merge
-InstanceDescriptor.config    ← per-instance settings (stored in instance.json)
-        ↓ merge
-handle(..., context={...})   ← per-call overrides
-```
+## Related project
 
-Per-instance model selection uses `config["model_id"]` in the instance
-descriptor; set it via `diversify()` or by editing `instance.json` directly.
+AIMMH — AI Multimodel Multimodal Hub — is expected to be the adjacent multimodel/provider orchestration layer. Where implementation overlaps, issues should clearly state whether the work belongs in `a0`, `aimmh`, or both.
 
-### Persist to file
+## Local development
 
-```python
-reg = ModelRegistry(path=Path("model_registry.json"))
-reg.update("claude-sonnet-4-6", system_prompt="Custom prompt")
-reg.save()                # writes model_registry.json
-```
+This repository currently contains a mixed web/application structure. Until setup documentation is complete, contributors should inspect:
 
----
+- `package.json`
+- `main.py`
+- `.replit`
+- `DEPLOYMENT.md`
 
-## ZFAE v2 — Path B Inference Engine
+If setup fails, see [`docs/troubleshooting.md`](docs/troubleshooting.md) for the most common stumbles and their fixes. If your case is not covered there, please open an issue with your OS, Node/Python versions, command run, and full error output.
+If setup fails, please open an issue with your OS, Node/Python versions, command run, and full error output.
 
-**Zeta-structured, Field-partitioned, Alpha-regulated, Echo-state**
-
-ZFAE v2 gives each cognitive field its own complete 53-node PTCA reservoir.
-A fourth synthesis reservoir aggregates all field signals.
-
-| Letter | Meaning | Technical role |
-|--------|---------|----------------|
-| **Z** | Zeta-structured | Connections follow prime {7:3}/{7:2} heptagram topology |
-| **F** | Field-partitioned | Each field owns its own independent 53-node reservoir |
-| **A** | Alpha-regulated | Per-field spectral radius controls field-specific memory depth |
-| **E** | Echo-state | State is entirely determined by past inputs — observable only |
-
-**Architecture (v2):**
-
-| Reservoir | alpha | seed | n_input | feeds on |
-|-----------|-------|------|---------|---------|
-| `phi_field` | 0.7 | 42 | 3 | `phi_features(text)` |
-| `psi_field` | 0.9 | 43 | 3 | `psi_features(text)` |
-| `omega_field` | 0.95 | 44 | 6 | phi + psi features |
-| `synthesis` | 0.9 | 45 | 19 | field summaries + proxies |
-
-Synthesis input (19-dim): `phi_summary[3] + psi_summary[3] + omega_summary[3]
-+ guardian_proxy[4] + mem_long_proxy[3] + mem_short_proxy[3]`
-
-Per-field alphas reflect natural memory depth:
-- `phi` 0.7 — local syntax is turn-scoped, short memory
-- `psi` 0.9 — semantic meaning persists across turns
-- `omega` 0.95 — synthesis context accumulates longest
-- `synthesis` 0.9 — integrates all fields with moderate memory
-
-Override alphas via ModelConfig:
-```python
-from a0.model_registry import ModelRegistry, ModelConfig
-
-reg = ModelRegistry.defaults()
-reg.register(ModelConfig(
-    model_id="zfae-custom",
-    adapter="zfae",
-    phi_alpha=0.5,    # fast structural reset
-    psi_alpha=0.95,   # very long semantic memory
-    omega_alpha=0.99,
-    synthesis_alpha=0.85,
-))
-```
-
-**Path B training workflow:**
-```python
-# 1. Collect training data (run with external model active)
-#    .env: A0_MODEL=anthropic-api, A0_RUNTIME=training, A0_TRAINING_DIR=/path/to/data
-
-# 2. Train the synthesis readout W_out
-from a0.cores.pcna.inference import get_backend
-import os; os.environ["A0_MODEL"] = "zfae"
-backend = get_backend()
-n = backend.train_readout("/path/to/data")
-backend.save_weights("/path/to/data/zfae_weights.json")
-print(f"Trained on {n} examples")
-
-# 3. Switch to ZFAE inference
-#    .env: A0_MODEL=zfae, A0_TRAINING_DIR=/path/to/data   (weights auto-loaded)
-
-# 4. Compare training runs (optional)
-from a0.cores.pcna.zfae import compare_training_runs
-result = compare_training_runs({"opus": "/data/opus", "sonnet": "/data/sonnet"})
-print(result["similarity"]["opus"]["sonnet"])
-```
-
-Install numpy for accurate training: `pip install "a0python[zfae]"`
-
----
-
-## Status
-
-This defines the canonical topology for:
-- EDCM tensor engine
-- Prime Circular Neural Architecture / three-tier stack
-- distributed analysis network
-
-Implementation layers may evolve; topology and invariants remain stable.
-
-> "Changes are welcome. Refinement will continue."
->
-> "Also applies to humans."
