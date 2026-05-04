@@ -188,14 +188,23 @@ export default function ForgeAgentChat({ agentId, agentName, onClose }: Props) {
         ) : (
           <div className="flex flex-col gap-2">
             {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate(c)} />
+              <MessageBubble
+                key={m.id}
+                message={m}
+                onSend={(content) => sendMessage.mutate({ content, attachmentIds: [] })}
+              />
             ))}
           </div>
         )}
       </div>
 
       {!!activeConvId && (
-        <ChatInput onSend={(c) => sendMessage.mutate(c)} isSending={sendMessage.isPending} />
+        <ChatInput
+          onSend={(content, attachmentIds) =>
+            sendMessage.mutate({ content, attachmentIds })
+          }
+          isSending={sendMessage.isPending}
+        />
       )}
     </div>
   );
