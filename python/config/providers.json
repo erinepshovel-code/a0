@@ -85,10 +85,10 @@
       "supports_reasoning_effort": true,
       "supports_prompt_caching": true,
       "pricing_url": "https://docs.x.ai/docs/models",
-      "note": "Auto-cache on >=1024 token prefix; cached_tokens reported in prompt_tokens_details",
+      "note": "Auto-cache on >=1024 token prefix; cached_tokens reported in prompt_tokens_details. Live search disabled — routes to chat completions for full ZFAE tool access.",
       "url": "https://api.x.ai/v1/chat/completions",
       "responses_url": "https://api.x.ai/v1/responses",
-      "supports_live_search": true,
+      "supports_live_search": false,
       "supports_vision": true
     },
     "openai-5.5": {

@@ -16,11 +16,19 @@ Useful contributions include:
 
 ## First steps
 
-1. Read `README.md`.
+1. Read `README.md` — including the "Project name: `a0` vs `a0p`" and "Access model" sections so you know what is open versus owner-only in the deployed instance (`a0p`).
 2. Read `docs/help-wanted.md`.
 3. If your local setup hits trouble, check [`docs/troubleshooting.md`](docs/troubleshooting.md) before opening an issue.
 4. Pick a small issue labeled `good first issue` or `help wanted`.
 5. If no issue fits, open a question issue before doing large work.
+
+## How access works for contributors
+
+> Naming reminder: `a0` is this project / repository; `a0p` is the deployed instance of `a0` running publicly. See "Project name: `a0` vs `a0p`" in `README.md`.
+
+The deployed instance (`a0p`) is open to read and use; donations do not unlock anything. You will not hit a paywall by signing up. However, a small set of write endpoints are owner-only because they mutate shared research-instrument state (agent state, learning state, system configuration). The full posture is described in `README.md` under "Access model" and the contract lives in `python/services/gating.py`.
+
+Contribution work — code, docs, tests, evaluation harnesses, AIMMH integration, website — does not require any in-app tier. If a task you want to take on appears to require hitting an owner-gated endpoint, open an issue describing the scope before starting; we may be able to either scope it differently or arrange a local development setup.
 
 ## Working norms
 
