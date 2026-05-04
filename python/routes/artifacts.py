@@ -1,6 +1,6 @@
 # 98:12
 """HTTP API for the unified artifacts archive."""
-from typing import Any, Optional
+from typing import Optional
 import datetime as _dt
 
 from fastapi import APIRouter, HTTPException, Request, Query
