@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 python/__init__.py
@@ -16,10 +17,12 @@ tests/test_artifacts.py
 tests/test_compute_transcript_full.py
 tests/test_cut_modes.py
 tests/test_edcm_uses_package.py
+tests/test_hmmm_boundary.py
 tests/test_inference_modes_usage.py
 tests/test_live_server.py
 tests/test_route_imports.py
 tests/test_run_context.py
 tests/test_skills.py
+tests/test_smoke.py
 tests/test_spawn_caps.py
 tests/test_tools_registry.py
