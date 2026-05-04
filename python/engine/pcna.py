@@ -6,20 +6,20 @@ Six rings:
   Φ  (phi)       N=53, seed=53  — cognitive substrate
   Ψ  (psi)       N=53, seed=43  — self-model
   Ω  (omega)     N=53, seed=47  — autonomy
-  Guardian       N=29           — microkernel gate
+  Θ  (theta)     N=29           — microkernel gate
   Memory-L       N=19, seed=19  — long-term
   Memory-S       N=17, seed=17  — short-term
 
 Six inference steps:
   1. Project    — encode input text → normalized signal vector
   2. Inject     — push signal into Φ, self-referential into Ψ, autonomy into Ω
-  3. Propagate  — run heptagram propagation on Φ/Ψ/Ω + guardian
+  3. Propagate  — run heptagram propagation on Φ/Ψ/Ω + Θ
   4. PTCA-seed  — per-prime-node audit on all three PTCA cores
-  5. PCTA-circle — guardian circle audit
+  5. PCTA-circle — theta circle audit
   6. Coherence  — weighted ring coherence → winner + confidence
 
 Backprop:
-  reward(winner, outcome) → nudge all three PTCA cores + guardian + memory flush
+  reward(winner, outcome) → nudge all three PTCA cores + theta + memory flush
 """
 
 import base64
