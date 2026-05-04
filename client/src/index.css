@@ -1,0 +1,413 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* LIGHT MODE — TIW palette (lighter variants; app runs dark-always) */
+:root {
+  --button-outline: rgba(0,0,0, .10);
+  --badge-outline: rgba(0,0,0, .05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0,0,0, .03);
+  --elevate-2: rgba(0,0,0, .08);
+  --background: 220 20% 97%;
+  --foreground: 220 15% 10%;
+  --border: 220 15% 85%;
+  --card: 220 15% 99%;
+  --card-foreground: 220 15% 10%;
+  --card-border: 220 15% 90%;
+  --sidebar: 220 15% 95%;
+  --sidebar-foreground: 220 15% 10%;
+  --sidebar-border: 220 15% 88%;
+  --sidebar-primary: 142 60% 35%;
+  --sidebar-primary-foreground: 220 15% 97%;
+  --sidebar-accent: 220 15% 90%;
+  --sidebar-accent-foreground: 220 15% 10%;
+  --sidebar-ring: 142 60% 35%;
+  --popover: 220 15% 98%;
+  --popover-foreground: 220 15% 10%;
+  --popover-border: 220 15% 88%;
+  --primary: 204 60% 40%;
+  --primary-foreground: 220 15% 97%;
+  --secondary: 218 25% 35%;
+  --secondary-foreground: 220 15% 97%;
+  --muted: 220 15% 92%;
+  --muted-foreground: 218 20% 40%;
+  --accent: 142 60% 35%;
+  --accent-foreground: 220 15% 97%;
+  --destructive: 0 72% 42%;
+  --destructive-foreground: 0 72% 98%;
+  --input: 220 15% 75%;
+  --ring: 142 60% 35%;
+  --link: 230 70% 55%;
+  --btn-primary-bg: 173 44% 10%;
+  --btn-primary-text: 142 60% 35%;
+  --chart-1: 204 60% 40%;
+  --chart-2: 142 60% 35%;
+  --chart-3: 30 80% 42%;
+  --chart-4: 280 70% 40%;
+  --chart-5: 218 25% 40%;
+  --font-sans: "Inter", sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --radius: .5rem;
+  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
+  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
+  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 2px 4px -1px hsl(0 0% 0% / 0.00);
+  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 4px 6px -1px hsl(0 0% 0% / 0.00);
+  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 8px 10px -1px hsl(0 0% 0% / 0.00);
+  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+/* DARK MODE — baseline (Tensor skin defaults; theme classes can override) */
+.dark {
+  --button-outline: rgba(255,255,255, .10);
+  --badge-outline: rgba(255,255,255, .05);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255,255,255, .04);
+  --elevate-2: rgba(255,255,255, .09);
+
+  /* ── Core surfaces ── */
+  --background: 240 20% 5%;          /* #0A0A0F near-black */
+  --foreground: 210 15% 92%;         /* off-white */
+  --border: 220 15% 13%;
+  --input: 240 15% 16%;
+
+  /* ── Card / Popover ── */
+  --card: 240 18% 8%;
+  --card-foreground: 210 15% 92%;
+  --card-border: 220 15% 11%;
+  --popover: 240 18% 8%;
+  --popover-foreground: 210 15% 92%;
+  --popover-border: 220 15% 12%;
+
+  /* ── Sidebar ── */
+  --sidebar: 240 20% 6%;
+  --sidebar-foreground: 210 15% 92%;
+  --sidebar-border: 220 15% 10%;
+  --sidebar-primary: 142 69% 58%;    /* #4ADE80 green — active indicators */
+  --sidebar-primary-foreground: 240 20% 5%;
+  --sidebar-accent: 240 18% 11%;
+  --sidebar-accent-foreground: 210 15% 92%;
+  --sidebar-ring: 142 69% 58%;
+
+  /* ── Brand primaries ── */
+  --primary: 204 94% 94%;            /* #E0F2FE ice blue — badges, highlights */
+  --primary-foreground: 240 20% 5%;
+  --secondary: 218 30% 71%;          /* #A0B0CC blue-gray */
+  --secondary-foreground: 240 20% 5%;
+
+  /* ── Muted / subdued ── */
+  --muted: 240 15% 11%;
+  --muted-foreground: 218 25% 55%;
+
+  /* ── Accent (green) ── */
+  --accent: 142 69% 58%;             /* #4ADE80 — interactive green */
+  --accent-foreground: 240 20% 5%;
+
+  /* ── Destructive ── */
+  --destructive: 0 72% 42%;
+  --destructive-foreground: 0 72% 98%;
+
+  /* ── Focus ring ── */
+  --ring: 142 69% 58%;               /* green focus ring */
+
+  /* ── Link ── */
+  --link: 230 94% 82%;               /* #A5B4FC soft violet */
+
+  /* ── Primary button (dark bg + green text/border) ── */
+  --btn-primary-bg: 173 44% 8%;     /* #0B1C1A */
+  --btn-primary-text: 142 69% 58%;  /* #4ADE80 */
+
+  /* ── Charts ── */
+  --chart-1: 204 80% 80%;
+  --chart-2: 142 69% 58%;
+  --chart-3: 30 80% 68%;
+  --chart-4: 280 70% 72%;
+  --chart-5: 218 30% 71%;
+
+  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
+  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
+  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 2px 4px -1px hsl(0 0% 0% / 0.00);
+  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 4px 6px -1px hsl(0 0% 0% / 0.00);
+  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 8px 10px -1px hsl(0 0% 0% / 0.00);
+  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+/* ── SKIN: Synthwave Mesh — magenta + cyan on midnight violet ── */
+.dark.theme-synthwave {
+  --background: 248 22% 6%;
+  --foreground: 250 100% 95%;
+  --border: 248 20% 14%;
+  --input: 248 18% 18%;
+
+  --card: 248 28% 9%;
+  --card-foreground: 250 100% 95%;
+  --card-border: 248 20% 12%;
+  --popover: 248 28% 9%;
+  --popover-foreground: 250 100% 95%;
+  --popover-border: 248 20% 13%;
+
+  --sidebar: 248 25% 7%;
+  --sidebar-foreground: 250 100% 95%;
+  --sidebar-border: 248 20% 11%;
+  --sidebar-primary: 330 86% 70%;
+  --sidebar-primary-foreground: 248 30% 8%;
+  --sidebar-accent: 248 22% 12%;
+  --sidebar-accent-foreground: 250 100% 95%;
+  --sidebar-ring: 330 86% 70%;
+
+  --primary: 188 91% 69%;
+  --primary-foreground: 248 30% 8%;
+  --secondary: 230 94% 82%;
+  --secondary-foreground: 248 30% 8%;
+
+  --muted: 248 20% 12%;
+  --muted-foreground: 250 25% 70%;
+
+  --accent: 330 86% 70%;
+  --accent-foreground: 248 30% 8%;
+
+  --destructive: 350 90% 60%;
+  --destructive-foreground: 0 0% 98%;
+
+  --ring: 330 86% 70%;
+  --link: 188 91% 69%;
+
+  --btn-primary-bg: 270 60% 12%;
+  --btn-primary-text: 330 86% 70%;
+
+  --chart-1: 188 91% 69%;
+  --chart-2: 330 86% 70%;
+  --chart-3: 230 94% 82%;
+  --chart-4: 280 70% 72%;
+  --chart-5: 38 92% 65%;
+}
+
+/* ── SKIN: Copper Codex — amber/copper on warm walnut ── */
+.dark.theme-copper {
+  --background: 25 25% 5%;
+  --foreground: 36 50% 93%;
+  --border: 25 20% 14%;
+  --input: 25 18% 17%;
+
+  --card: 22 25% 8%;
+  --card-foreground: 36 50% 93%;
+  --card-border: 25 20% 12%;
+  --popover: 22 25% 8%;
+  --popover-foreground: 36 50% 93%;
+  --popover-border: 25 20% 13%;
+
+  --sidebar: 25 22% 6%;
+  --sidebar-foreground: 36 50% 93%;
+  --sidebar-border: 25 18% 11%;
+  --sidebar-primary: 38 92% 50%;
+  --sidebar-primary-foreground: 25 30% 8%;
+  --sidebar-accent: 25 22% 12%;
+  --sidebar-accent-foreground: 36 50% 93%;
+  --sidebar-ring: 38 92% 50%;
+
+  --primary: 48 96% 76%;
+  --primary-foreground: 25 30% 8%;
+  --secondary: 25 5% 64%;
+  --secondary-foreground: 25 30% 8%;
+
+  --muted: 25 18% 12%;
+  --muted-foreground: 30 20% 60%;
+
+  --accent: 38 92% 50%;
+  --accent-foreground: 25 30% 8%;
+
+  --destructive: 0 73% 50%;
+  --destructive-foreground: 0 0% 98%;
+
+  --ring: 38 92% 50%;
+  --link: 46 96% 64%;
+
+  --btn-primary-bg: 25 60% 8%;
+  --btn-primary-text: 38 92% 50%;
+
+  --chart-1: 38 92% 50%;
+  --chart-2: 48 96% 76%;
+  --chart-3: 15 80% 55%;
+  --chart-4: 88 40% 55%;
+  --chart-5: 25 5% 64%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  input[type="search"]::-webkit-search-cancel-button {
+    @apply hidden;
+  }
+
+  [contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+  }
+
+  .no-default-hover-elevate {}
+  .no-default-active-elevate {}
+
+  .toggle-elevate::before,
+  .toggle-elevate-2::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    border-radius: inherit;
+    z-index: -1;
+  }
+
+  .toggle-elevate.toggle-elevated::before {
+    background-color: var(--elevate-2);
+  }
+
+  .border.toggle-elevate::before {
+    inset: -1px;
+  }
+
+  .hover-elevate:not(.no-default-hover-elevate),
+  .active-elevate:not(.no-default-active-elevate),
+  .hover-elevate-2:not(.no-default-hover-elevate),
+  .active-elevate-2:not(.no-default-active-elevate) {
+    position: relative;
+    z-index: 0;
+  }
+
+  .hover-elevate:not(.no-default-hover-elevate)::after,
+  .active-elevate:not(.no-default-active-elevate)::after,
+  .hover-elevate-2:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:not(.no-default-active-elevate)::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    border-radius: inherit;
+    z-index: 999;
+  }
+
+  .hover-elevate:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-1);
+  }
+
+  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-2);
+  }
+
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
+    inset: -1px;
+  }
+}
+
+.markdown-content pre.code-block {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown-content code.inline-code {
+  word-break: break-all;
+}
+
+.markdown-content a.md-link,
+.md-link {
+  color: hsl(var(--link));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+
+/* ── Mobile-first globals ── */
+html {
+  height: -webkit-fill-available;
+}
+
+body {
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Remove 300ms tap delay everywhere */
+a, button, [role="button"], input, select, textarea, label {
+  touch-action: manipulation;
+}
+
+/* Kill grey tap flash on iOS */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent body scroll when app shell is open */
+#root {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* Scrollable areas should bounce only on iOS (feels native) */
+.overflow-y-auto, .overflow-auto, [data-radix-scroll-area-viewport] {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Ensure inputs never trigger zoom on iOS (font-size >= 16px).
+   Must use !important to override Tailwind's text-sm (14px). */
+input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea,
+select {
+  font-size: max(16px, 1em) !important;
+}

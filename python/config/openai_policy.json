@@ -1,0 +1,354 @@
+{
+  "version": "2026-04-27.a0.openai.policy.v3",
+  "attribution": "GPT generated; context, prompt Erin Spencer",
+  "hmmm": {
+    "items": [
+      {
+        "id": "hmmm-model-001",
+        "status": "open",
+        "note": "Pin snapshot model IDs once evals stabilize.",
+        "owner": "R0",
+        "created_at": "2026-04-06T18:00:00-07:00"
+      },
+      {
+        "id": "hmmm-roles-rename-001",
+        "status": "closed",
+        "note": "Roles renamed 2026-04-27: root_orchestrator->conduct, high_risk_gate->perform, worker->practice, classifier->record, deep_pass->derive. Env vars renamed in lockstep: OPENAI_MODEL_ROOT->OPENAI_MODEL_CONDUCT (also covers perform), OPENAI_MODEL_WORKER->OPENAI_MODEL_PRACTICE, OPENAI_MODEL_CLASSIFIER->OPENAI_MODEL_RECORD, OPENAI_MODEL_DEEP->OPENAI_MODEL_DERIVE. Phase 1 of the energy/model/task overhaul.",
+        "owner": "R0",
+        "created_at": "2026-04-27T00:00:00-07:00"
+      }
+    ]
+  },
+  "provider": "openai",
+  "api_family": "responses",
+  "defaults": {
+    "store": false,
+    "temperature": 1,
+    "parallel_tool_calls": false,
+    "max_output_tokens": 4000,
+    "text": {
+      "verbosity": "low"
+    },
+    "reasoning": {
+      "effort": "medium"
+    }
+  },
+  "contracts": {
+    "require_structured_outputs": true,
+    "require_explicit_tool_allowlist": true,
+    "require_approval_gate_for_external_write": true,
+    "require_append_only_event_log": true,
+    "require_hmmm": true
+  },
+  "roles": {
+    "conduct": {
+      "model": "gpt-5.5",
+      "store": false,
+      "parallel_tool_calls": false,
+      "max_output_tokens": 4000,
+      "text": {
+        "verbosity": "low"
+      },
+      "reasoning": {
+        "effort": "low"
+      },
+      "tools_policy": {
+        "mode": "allowlist",
+        "allowed": [
+          "search",
+          "fetch",
+          "code_exec",
+          "filesystem",
+          "email_draft",
+          "calendar_read",
+          "calendar_write_gated",
+          "github_gated"
+        ]
+      },
+      "use_cases": [
+        "routing",
+        "planning",
+        "synthesis",
+        "approval preparation",
+        "artifact drafting",
+        "repo analysis"
+      ]
+    },
+    "perform": {
+      "model": "gpt-5.5",
+      "store": false,
+      "parallel_tool_calls": false,
+      "max_output_tokens": 5000,
+      "text": {
+        "verbosity": "low"
+      },
+      "reasoning": {
+        "effort": "medium"
+      },
+      "tools_policy": {
+        "mode": "allowlist",
+        "allowed": [
+          "search",
+          "fetch",
+          "code_exec",
+          "filesystem",
+          "email_draft",
+          "calendar_read",
+          "github_gated"
+        ]
+      },
+      "use_cases": [
+        "ambiguous tasks",
+        "safety review",
+        "costly or hard-to-undo actions",
+        "approval packet generation",
+        "conflict resolution"
+      ]
+    },
+    "practice": {
+      "model": "gpt-5.5-mini",
+      "store": false,
+      "parallel_tool_calls": false,
+      "max_output_tokens": 2500,
+      "text": {
+        "verbosity": "low"
+      },
+      "reasoning": {
+        "effort": "none"
+      },
+      "tools_policy": {
+        "mode": "allowlist",
+        "allowed": [
+          "search",
+          "fetch",
+          "code_exec",
+          "filesystem"
+        ]
+      },
+      "use_cases": [
+        "batch transcript passes",
+        "cleanup",
+        "light coding",
+        "summaries",
+        "subagent loops",
+        "extraction with light judgment"
+      ]
+    },
+    "record": {
+      "model": "gpt-5.5-nano",
+      "store": false,
+      "parallel_tool_calls": false,
+      "max_output_tokens": 1200,
+      "text": {
+        "verbosity": "low"
+      },
+      "reasoning": {
+        "effort": "none"
+      },
+      "tools_policy": {
+        "mode": "deny"
+      },
+      "output_policy": {
+        "strict_json_only": true,
+        "allowed_shapes": [
+          "enum",
+          "boolean",
+          "scorecard",
+          "label_set",
+          "ranked_list"
+        ]
+      },
+      "use_cases": [
+        "classification",
+        "ranking",
+        "metadata extraction",
+        "tagging",
+        "cheap triage"
+      ]
+    },
+    "derive": {
+      "model": "gpt-5.5-pro",
+      "store": false,
+      "parallel_tool_calls": false,
+      "max_output_tokens": 8000,
+      "reasoning": {
+        "effort": "high"
+      },
+      "text": {
+        "verbosity": "low"
+      },
+      "tools_policy": {
+        "mode": "allowlist",
+        "allowed": [
+          "search",
+          "fetch",
+          "code_exec",
+          "filesystem"
+        ]
+      },
+      "entry_conditions": [
+        "architecture dispute",
+        "hard debugging",
+        "doctrine reconciliation",
+        "one-shot think-hard pass"
+      ],
+      "budget_guard": {
+        "requires_explicit_flag": true,
+        "max_calls_per_task": 1
+      }
+    }
+  },
+  "routing": {
+    "default_role": "conduct",
+    "rules": [
+      {
+        "match": "external_write OR publish OR send OR push OR spend_money",
+        "route_to": "perform"
+      },
+      {
+        "match": "batch OR repetitive OR extraction OR cleanup",
+        "route_to": "practice"
+      },
+      {
+        "match": "classify OR rank OR label OR score OR triage",
+        "route_to": "record"
+      },
+      {
+        "match": "hard_debug OR architecture_dispute OR doctrine_reconciliation",
+        "route_to": "derive"
+      }
+    ]
+  },
+  "approval_gates": {
+    "required_for": [
+      "publish",
+      "post",
+      "send_email",
+      "push_git",
+      "open_pr",
+      "create_issue_external",
+      "spend_money",
+      "change_permissions",
+      "change_secrets",
+      "outreach_to_humans"
+    ],
+    "action_keywords": {
+      "publish": ["publish", "deploy it", "make it live", "go live", "release it", "ship it", "launch it", "make public", "publish this", "publishing"],
+      "post": ["post this", "post to", "post on", "share on", "submit post", "publish post"],
+      "send_email": ["send email", "send an email", "email to", "email this", "shoot an email", "fire off an email", "send this email", "emailing"],
+      "push_git": ["push to github", "push to git", "git push", "push branch", "push this", "push my changes", "push the code", "push commit", "push it up", "push up to", "push changes", "push codebase"],
+      "open_pr": ["open pr", "open a pr", "open pull request", "open a pull request", "create pr", "create a pr", "create pull request", "create a pull request", "raise pr", "raise a pr", "raise a pull request", "submit pr", "submit a pr", "file a pr", "pr this", "merge request"],
+      "create_issue_external": ["create issue", "create an issue", "create a ticket", "open issue", "open an issue", "open a ticket", "file issue", "file an issue", "file a bug", "log issue", "log an issue", "submit issue", "submit an issue", "create a bug report"],
+      "spend_money": ["spend money", "purchase", "buy this", "charge my card", "pay for", "subscribe to", "place an order", "invoice"],
+      "change_permissions": ["change permissions", "update permissions", "grant access", "revoke access", "change roles", "modify access", "change acl", "update acl"],
+      "change_secrets": ["change secrets", "update secret", "rotate key", "change api key", "update token", "change credentials", "reset the api key", "rotate credentials"],
+      "outreach_to_humans": ["reach out to", "contact them", "message them", "outreach", "send a message to", "ping them", "dm them", "initiate contact", "send outreach"]
+    },
+    "approval_phrase": "APPROVE <gate_id>",
+    "scope_phrase": "APPROVE SCOPE <scope>",
+    "safety_floor": ["spend_money", "change_permissions", "change_secrets"],
+    "pre_approved_scopes": {
+      "github_write": {
+        "label": "GitHub writes",
+        "description": "Push to git, open PRs, create/close issues, create releases, manage branches",
+        "covers": ["push_git", "open_pr", "create_issue_external"]
+      },
+      "publish": {
+        "label": "Publish & post",
+        "description": "Publish content, post to platforms, create public-facing records",
+        "covers": ["publish", "post"]
+      },
+      "email_send": {
+        "label": "Send emails",
+        "description": "Send email drafts via connected mail accounts",
+        "covers": ["send_email"]
+      },
+      "outreach": {
+        "label": "Human outreach",
+        "description": "Initiate direct contact with humans via any channel",
+        "covers": ["outreach_to_humans"]
+      }
+    }
+  },
+  "logging": {
+    "source_of_truth": "append_only_events_jsonl",
+    "log_all_tool_calls": true,
+    "log_router_path": true,
+    "log_model_name": true,
+    "log_reasoning_effort": true,
+    "log_input_hash": true,
+    "log_output_hash": true,
+    "log_approval_state": true
+  },
+  "structured_outputs": {
+    "strict": true,
+    "schemas": {
+      "route_decision": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "conduct",
+              "perform",
+              "practice",
+              "record",
+              "derive"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "requires_approval": {
+            "type": "boolean"
+          },
+          "hmmm": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "role",
+          "reason",
+          "requires_approval",
+          "hmmm"
+        ]
+      },
+      "approval_packet": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "gate_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "impact": {
+            "type": "string"
+          },
+          "rollback": {
+            "type": "string"
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hmmm": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "gate_id",
+          "action",
+          "impact",
+          "rollback",
+          "artifacts",
+          "hmmm"
+        ]
+      }
+    }
+  }
+}

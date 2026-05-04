@@ -1,0 +1,9 @@
+A0-PLANS-ALWAYS-UPDATE
+
+This marker tags the `plans/` folder as a required update surface.
+
+Whenever repository status, scope, done-state, or next-action information changes, update the relevant `plans/<repo_name>_plan.md` file in the same change.
+
+GPT generated from context and prompt by Erin Spencer.
+
+hmm

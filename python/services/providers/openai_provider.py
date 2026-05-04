@@ -1,0 +1,174 @@
+# 129:19
+"""openai_provider — OpenAI GPT-5 family via the Responses API.
+
+Migrated from raw httpx to the `openai` Python SDK (v2). The contract is
+unchanged; the httpx block is replaced by `AsyncOpenAI.responses.create()`,
+which gives us built-in retries, proper error typing, and OpenAI tracing.
+
+    call(messages, *, role, model_override, api_key,
+         max_tokens, use_tools, reasoning_effort, ...)
+        -> (content, usage)
+
+The tool loop structure is identical to the pre-SDK version; only the outbound
+HTTP call changes. `response.model_dump()` converts the SDK object to the same
+dict shape the tool-loop code already understood, so zero churn downstream.
+"""
+from __future__ import annotations
+
+import copy
+import json
+import os
+from typing import Optional
+
+from openai import AsyncOpenAI
+
+from ._resolver import resolve_model_for_role
+
+
+async def call(
+    messages: list[dict],
+    *,
+    role: str = "conduct",
+    model_override: Optional[str] = None,
+    api_key: Optional[str] = None,
+    max_tokens: int = 4000,
+    use_tools: bool = True,
+    reasoning_effort: Optional[str] = "medium",
+    temperature: float = 1.0,
+    store: bool = False,
+) -> tuple[str, dict]:
+    """Run a chat turn against OpenAI's Responses API."""
+    key = api_key or os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key:
+        raise ValueError("OPENAI_API_KEY not configured")
+    model = model_override or await resolve_model_for_role("openai", role)
+
+    return await _call_responses(
+        api_key=key,
+        model=model,
+        input_messages=messages,
+        max_output_tokens=max_tokens,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort or "medium",
+        store=store,
+        use_tools=use_tools,
+    )
+
+
+async def _call_responses(
+    api_key: str,
+    model: str,
+    input_messages: list[dict],
+    max_output_tokens: int,
+    temperature: float,
+    reasoning_effort: str,
+    store: bool,
+    use_tools: bool,
+) -> tuple[str, dict]:
+    """Tool loop over the OpenAI Responses API via the native SDK.
+
+    The SDK replaces the raw httpx POST; `response.model_dump()` converts the
+    typed response to a plain dict so the rest of the loop is unchanged.
+    Up to _MAX_TOOL_ROUNDS rounds; repeat-call short-circuit prevents infinite
+    loops; only `function_call` items are echoed back per Responses API rules.
+    """
+    from ..tool_distill import set_caller_provider
+    from ..tool_executor import TOOL_SCHEMAS_RESPONSES, execute_tool
+    from ..inference import (
+        _MAX_TOOL_ROUNDS,
+        _canonical_tool_calls,
+        _sanitize_provider_error,
+    )
+
+    set_caller_provider("openai")
+
+    def _fmt_messages(msgs: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        for m in msgs:
+            r = m.get("role", "user")
+            content = m.get("content", "")
+            if r == "system":
+                out.append({"role": "system", "content": content})
+            elif r == "assistant":
+                out.append({
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": content}],
+                })
+            else:
+                out.append({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": content}],
+                })
+        return out
+
+    openai_input = _fmt_messages(copy.deepcopy(input_messages))
+    oai_client = AsyncOpenAI(api_key=api_key)
+    accumulated_usage: dict = {}
+    prev_call_fingerprint: Optional[str] = None
+
+    for _round in range(_MAX_TOOL_ROUNDS + 1):
+        kwargs: dict = {
+            "model": model,
+            "input": openai_input,
+            "store": store,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "text": {"format": {"type": "text"}},
+        }
+        if reasoning_effort and reasoning_effort != "none":
+            kwargs["reasoning"] = {"effort": reasoning_effort}
+        if use_tools:
+            kwargs["tools"] = TOOL_SCHEMAS_RESPONSES
+
+        try:
+            response = await oai_client.responses.create(**kwargs)
+            data = response.model_dump()
+        except Exception as exc:
+            return _sanitize_provider_error("openai", exc), accumulated_usage
+
+        for k, v in (data.get("usage") or {}).items():
+            if isinstance(v, (int, float)):
+                accumulated_usage[k] = accumulated_usage.get(k, 0) + v
+
+        output_items = data.get("output") or []
+        tool_calls = [it for it in output_items if it.get("type") == "function_call"]
+
+        if tool_calls:
+            fp = _canonical_tool_calls(tool_calls)
+            if prev_call_fingerprint is not None and fp == prev_call_fingerprint:
+                return "[noticed repeat tool call — answering directly]", accumulated_usage
+            prev_call_fingerprint = fp
+
+        if not tool_calls or not use_tools or _round >= _MAX_TOOL_ROUNDS:
+            content = ""
+            for item in output_items:
+                if item.get("type") == "message":
+                    for part in item.get("content") or []:
+                        if part.get("type") == "output_text":
+                            content = part.get("text", "")
+                            break
+                if content:
+                    break
+            return content or "[openai: empty response]", accumulated_usage
+
+        # Multi-turn rule: only function_call items in next round's input
+        for item in output_items:
+            if item.get("type") == "function_call":
+                openai_input.append(item)
+
+        for tc in tool_calls:
+            call_id = tc.get("call_id", "")
+            name = tc.get("name", "")
+            try:
+                args = json.loads(tc.get("arguments", "{}"))
+            except json.JSONDecodeError:
+                args = {}
+            result = await execute_tool(name, args)
+            openai_input.append({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": result,
+            })
+
+    return "[openai: tool loop exhausted]", accumulated_usage
+# 129:19

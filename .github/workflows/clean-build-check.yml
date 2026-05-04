@@ -1,0 +1,40 @@
+name: Clean Build Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check-replit-refs:
+    name: Verify no @replit packages in build output
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build without REPL_ID
+        run: env -u REPL_ID NODE_ENV=production npx tsx script/build.ts
+
+      - name: Check for @replit references in client bundle
+        run: |
+          MATCHES=$( (grep -r "@replit" dist/public/assets/ || true) )
+          if [ -n "$MATCHES" ]; then
+            echo "::error::@replit packages leaked into the client bundle. Run 'env -u REPL_ID NODE_ENV=production npx tsx script/build.ts' locally and check vite.config.ts for static @replit imports."
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "Clean build confirmed: zero @replit references in client bundle."

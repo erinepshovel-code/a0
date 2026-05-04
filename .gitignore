@@ -1,1 +1,20 @@
 __pycache__/
+*.pyc
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+logs/transcripts/
+logs/*.jsonl
+attached_assets/*-recovery-codes*.txt
+logs/sigma_checkpoint.npz
+logs/sigma_checkpoint_meta.json
+logs/sigma_checkpoint.npz
+logs/sigma_checkpoint_meta.json
+
+# Playwright e2e
+test-results/
+playwright-report/
+.playwright/
