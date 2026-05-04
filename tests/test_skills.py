@@ -62,6 +62,28 @@ def test_skill_load_unknown_returns_help():
     assert "available" in out.lower() or "not found" in out.lower()
 
 
+def test_skill_load_missing_name_returns_explicit_error():
+    out = _skill_load("   ")
+    assert "missing name" in out.lower()
+
+
+def test_skill_load_known_skill_has_header_and_body():
+    out = _skill_load("deep-research")
+    assert out.startswith("[skill_load · deep-research]")
+    assert "##" in out or len(out) > 200
+
+
+def test_recommend_limit_is_bounded_to_at_least_one_result():
+    out = _skill_recommend("skill", limit=0)
+    bullet_lines = [ln for ln in out.splitlines() if ln.startswith("- ")]
+    assert len(bullet_lines) <= 1, "limit=0 must clamp to 1 result"
+
+
+def test_recommend_reports_no_match_for_gibberish_query():
+    out = _skill_recommend("zzzzzz qqqqqq asdfghjkl")
+    assert "no skill matched query" in out.lower()
+
+
 def test_skill_tools_registered_in_chat_schema():
     names = {t["function"]["name"] for t in TOOL_SCHEMAS_CHAT if "function" in t}
     assert "skill_recommend" in names

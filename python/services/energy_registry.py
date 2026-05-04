@@ -177,10 +177,8 @@ class EnergyRegistry:
             return False
         try:
             from ..database import get_session
-            logger.warning(
-                "Failed to persist active provider to DB; keeping in-memory selection.",
-                exc_info=True,
-            )
+
+            async with get_session() as session:
                 await session.execute(
                     sa_text(
                         "INSERT INTO a0p_settings (key, value) "
@@ -190,8 +188,12 @@ class EnergyRegistry:
                     ),
                     {"pid": provider_id},
                 )
+                await session.commit()
         except Exception:
-            pass
+            logger.warning(
+                "Failed to persist active provider to DB; keeping in-memory selection.",
+                exc_info=True,
+            )
         return True
 
     def compose_agent_name(self, base_name: str = "a0(zeta fun alpha echo)") -> str:
