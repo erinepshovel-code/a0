@@ -319,7 +319,7 @@ function ToolsTab({ convId }: { convId: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const { data, isLoading } = useQuery<ConvToolsRes>({
+  const { data, isLoading, error: toolsError } = useQuery<ConvToolsRes>({
     queryKey: ["/api/v1/conversations", convId, "tools"],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/v1/conversations/${convId}/tools`);
@@ -341,11 +341,18 @@ function ToolsTab({ convId }: { convId: number }) {
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8 text-muted-foreground text-xs" data-testid="tools-loading">
         <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
         Loading tools…
+      </div>
+    );
+  }
+  if (toolsError || !data) {
+    return (
+      <div className="text-xs text-destructive py-4 px-2" data-testid="tools-error">
+        {toolsError instanceof Error ? toolsError.message : "Failed to load tools"}
       </div>
     );
   }

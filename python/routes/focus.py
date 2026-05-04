@@ -325,9 +325,14 @@ async def get_context_preview(conv_id: int, request: Request):
 
     base_prompt = await _build_system_prompt(tier, agent_persona=agent_persona)
 
-    # NOTE: context_boost is stored on the conversation but is NOT injected into
-    # the system prompt at inference time. The preview intentionally omits it so
-    # the display matches what the model actually receives.
+    # Inject context_boost exactly as the send path does (chat.py), so the
+    # preview matches what the model actually receives.
+    boost = (conv.get("context_boost") or "").strip()
+    if boost and base_prompt is not None:
+        base_prompt = base_prompt + f"\n\n## Context Boost\n{boost}"
+    elif boost:
+        base_prompt = f"## Context Boost\n{boost}"
+
     full_prompt = _prepend_doctrine(base_prompt) or ""
 
     # Collect active seed titles for the UI summary strip.

@@ -702,6 +702,13 @@ async def send_message(conv_id: int, body: SendMessage, request: Request):
 
         system_prompt = await _build_system_prompt(tier, agent_persona=agent_persona)
 
+        # Inject per-conversation context boost if set.
+        _boost = (conv.get("context_boost") or "").strip()
+        if _boost and system_prompt is not None:
+            system_prompt = system_prompt + f"\n\n## Context Boost\n{_boost}"
+        elif _boost:
+            system_prompt = f"## Context Boost\n{_boost}"
+
         user_msg = await storage.create_message({
             "conversation_id": conv_id,
             "role": "user",
