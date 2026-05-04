@@ -1,7 +1,10 @@
 # 328:125
+import logging
 import contextvars
 import json
 import os
+logger = logging.getLogger(__name__)
+
 from pathlib import Path
 from typing import Optional
 
@@ -174,7 +177,10 @@ class EnergyRegistry:
             return False
         try:
             from ..database import get_session
-            async with get_session() as session:
+            logger.warning(
+                "Failed to persist active provider to DB; keeping in-memory selection.",
+                exc_info=True,
+            )
                 await session.execute(
                     sa_text(
                         "INSERT INTO a0p_settings (key, value) "
