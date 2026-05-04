@@ -79,7 +79,6 @@ BUILTIN_PROVIDERS = {
 
 
 _PROVIDER_PRESETS: dict[str, dict] = {}
-_PROVIDER_AVAILABLE_MODELS: dict[str, list] = {}
 _PROVIDER_PRICING_URLS: dict[str, str] = {
     "openai": "https://openai.com/api/pricing/",
     "gemini": "https://ai.google.dev/pricing",
