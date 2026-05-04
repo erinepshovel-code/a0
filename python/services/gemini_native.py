@@ -13,7 +13,6 @@ Streaming and Google Search grounding are deliberately out of scope for v1.
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 import os
 from typing import Any, Optional

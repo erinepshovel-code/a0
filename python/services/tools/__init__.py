@@ -72,6 +72,8 @@ def _discover() -> dict[str, ModuleType]:
 
 def registry() -> dict[str, ToolSpec]:
     """Return {name: ToolSpec}, sorted by tool name for cache stability.
+
+    Validates tool metadata at boot, including canonical side-effects.
     Enforces: any tool with "security_active" in side_effects must declare a
     non-None approval_scope (gates offensive tooling by construction)."""
     mods = _discover()

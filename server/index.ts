@@ -5,7 +5,6 @@ import fs from "fs";
 import crypto from "crypto";
 import { spawn, type ChildProcess } from "child_process";
 import express from "express";
-import multer from "multer";
 import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import {
   setupAuth,
