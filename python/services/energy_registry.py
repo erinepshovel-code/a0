@@ -1,4 +1,4 @@
-# 328:125
+# 333:125
 import logging
 import contextvars
 import json
@@ -518,4 +518,4 @@ def resolve_providers(providers: list[str] | None) -> list[str]:
         elif p in BUILTIN_PROVIDERS and p not in out:
             out.append(p)
     return out
-# 328:125
+# 333:125

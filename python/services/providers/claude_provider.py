@@ -52,7 +52,7 @@ async def call(
     """
     # Lazy imports to avoid claude_provider ↔ inference circular at module load.
     from ..tool_distill import set_caller_provider
-    from ..tool_executor import TOOL_SCHEMAS_CHAT, execute_tool
+    from ..tool_executor import get_active_chat_schemas, execute_tool
     from ..inference import (
         _ANTHROPIC_CACHE_MIN_CHARS,
         _MAX_TOOL_ROUNDS,
@@ -85,7 +85,7 @@ async def call(
             "description": s["function"]["description"],
             "input_schema": s["function"]["parameters"],
         }
-        for s in TOOL_SCHEMAS_CHAT
+        for s in get_active_chat_schemas()
     ]
     # Anthropic's prompt cache has a 1024-token (~4096-char) minimum;
     # below that the cache_control header just adds overhead.

@@ -74,6 +74,7 @@ Each declares `UI_META` (tab config for frontend) + `DATA_SCHEMA` (field specs).
 - `pcna_api.py` — PCNA state and propagation
 - `billing.py` — Stripe billing: status, donations, portal, webhook (donations-only — no recurring subscription tier)
 - `contexts.py` — Prompt contexts CRUD (admin-only write via ADMIN_USER_ID)
+- `focus.py` — Context boost, focus regain, sub-agent delegation; also hosts the pre-chat inspector endpoints (context-preview, per-conversation tool selection GET/PATCH)
 
 ### Frontend (`client/`)
 React + Vite + TypeScript, Tailwind CSS, shadcn/ui components. Fully metadata-driven:
@@ -88,7 +89,8 @@ React + Vite + TypeScript, Tailwind CSS, shadcn/ui components. Fully metadata-dr
   - `tests/e2e/console-tabs.spec.ts` — Playwright e2e test. Logs in, opens every console tab, asserts each renders with `data-renderer` of `custom` or `generic` (never `missing`), and asserts every id in `REQUIRED_CUSTOM_TAB_IDS` actually rendered as `custom`. Run with `npx playwright test`. Requires the dev server running on port 5000 and Chromium installed (`npx playwright install chromium`).
   - `scripts/check-console-tabs.mjs` — fast static preflight: parses `CUSTOM_TAB_RENDERERS`, fetches `/api/v1/ui/structure`, fails if any API tab has no renderer and no sections. Run locally with `node scripts/check-console-tabs.mjs` (against Express on :5000) or `API_BASE=http://localhost:8001 INTERNAL_API_SECRET=… node scripts/check-console-tabs.mjs` (direct against uvicorn). The script reads `INTERNAL_API_SECRET` and forwards it as the `x-a0p-internal` header so it can call the gated Python backend without going through the Express proxy.
   - **CI integration (Task #92):** the `check-console-tabs` job in both `.github/workflows/deploy.yml` and `cloudbuild.yaml` boots an ephemeral Postgres + uvicorn backend on every push to `main` and runs the script. The `deploy` job declares `needs: check-console-tabs`, so the Cloud Run deploy is blocked when the script exits non-zero, which happens for either (a) a tab returned by the API with no custom renderer and no sections, or (b) an orphan entry in `CUSTOM_TAB_RENDERERS` whose `tab_id` is no longer returned by `/api/v1/ui/structure`. See `DEPLOYMENT.md` → "Pre-deploy checks".
-- `client/src/pages/chat.tsx` — chat shell with conversation list + message bubbles
+- `client/src/pages/chat.tsx` — chat shell with conversation list + message bubbles; shows `PreChatInspectorPanel` on empty conversations and `ConvToolsPopover` in input bar (Task #141)
+- `client/src/components/chat-widgets.tsx` — `PreChatInspectorPanel` (Context tab: read-only system prompt; Tools tab: per-tool toggles) + `ConvToolsPopover` (compact wrench icon in input bar) (Task #141)
 - `client/src/components/top-nav.tsx` — Agent/Console nav, agent name + tier badge
 - `client/src/components/tabs/` — Legacy hardcoded tab components (unused, retained for reference)
 - `client/src/hooks/use-billing-status.ts` — fetches /api/v1/billing/status (5-min stale), exposes tier, isAdmin
@@ -99,6 +101,7 @@ React + Vite + TypeScript, Tailwind CSS, shadcn/ui components. Fully metadata-dr
 PostgreSQL via SQLAlchemy (Python) and Drizzle ORM (schema management).
 - `shared/schema.ts` — Drizzle schema (source of truth for `db:push`)
 - `drizzle.config.ts` — Drizzle Kit configuration
+- `conversations.enabled_tools` — JSONB column (Task #141): null = all tools on; string[] = explicit allow-list enforced at inference time via ContextVar in `tool_executor.py`
 
 ## Agent Architecture
 
