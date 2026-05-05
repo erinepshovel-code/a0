@@ -38,8 +38,7 @@ const MD_PLUGINS = {
 
 function Md({ children, className = "" }: { children: string; className?: string }) {
   return (
-    <ReactMarkdown
-      {...MD_PLUGINS}
+    <div
       className={`prose prose-sm dark:prose-invert max-w-none
         prose-headings:font-semibold prose-headings:tracking-tight
         prose-code:before:content-none prose-code:after:content-none
@@ -51,8 +50,8 @@ function Md({ children, className = "" }: { children: string; className?: string
         prose-th:bg-muted/50
         ${className}`}
     >
-      {children}
-    </ReactMarkdown>
+      <ReactMarkdown {...MD_PLUGINS}>{children}</ReactMarkdown>
+    </div>
   );
 }
 

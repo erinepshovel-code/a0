@@ -12,7 +12,27 @@
 set -euo pipefail
 
 : "${A0_KEY:?A0_KEY is not set — generate one in the Console → CLI Keys tab}"
-: "${A0_HOST:?A0_HOST is not set — e.g. https://your-app.replit.app}"
+
+# Host resolution order:
+# 1) explicit A0_HOST
+# 2) Cloud Run URL variables (useful on Google Cloud shells)
+# 3) fail with guidance
+if [ -z "${A0_HOST:-}" ]; then
+  if [ -n "${CLOUD_RUN_URL:-}" ]; then
+    A0_HOST="$CLOUD_RUN_URL"
+  elif [ -n "${SERVICE_URL:-}" ]; then
+    A0_HOST="$SERVICE_URL"
+  fi
+fi
+: "${A0_HOST:?A0_HOST is not set — e.g. https://your-app.example.com}"
+
+# Termux-specific quality-of-life guidance.
+if [ -n "${TERMUX_VERSION:-}" ]; then
+  if ! command -v python3 >/dev/null 2>&1 && ! command -v node >/dev/null 2>&1; then
+    echo "a0: Termux detected; install one of: pkg install python OR pkg install nodejs" >&2
+    exit 1
+  fi
+fi
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "a0: curl is required" >&2

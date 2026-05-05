@@ -177,6 +177,7 @@ class EnergyRegistry:
             return False
         try:
             from ..database import get_session
+
             async with get_session() as session:
                 await session.execute(
                     sa_text(
@@ -187,6 +188,7 @@ class EnergyRegistry:
                     ),
                     {"pid": provider_id},
                 )
+                await session.commit()
         except Exception:
             logger.warning(
                 "Failed to persist active provider to DB; keeping in-memory selection.",
