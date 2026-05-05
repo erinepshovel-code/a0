@@ -9,6 +9,9 @@
 # DOC endpoint: POST /api/v1/conversations/{id}/focus | Inject a focus-regain directive into the conversation
 # DOC endpoint: POST /api/v1/subagent | Launch a background sub-agent task; primary energy stays unblocked
 # DOC endpoint: GET /api/v1/subagent/{conv_id}/status | Poll sub-agent completion status + result
+# DOC endpoint: GET /api/v1/conversations/{id}/context-preview | Return the assembled system prompt for this conversation (read-only inspector)
+# DOC endpoint: GET /api/v1/conversations/{id}/tools | List all tools with enabled/disabled status for this conversation
+# DOC endpoint: PATCH /api/v1/conversations/{id}/tools | Update the per-conversation enabled tool set
 
 import asyncio
 from typing import Optional
@@ -272,6 +275,169 @@ async def _run_subagent(conv_id: int, task: str, model: Optional[str], uid: Opti
                 )
         except Exception:
             pass
+
+
+
+# ─── Context Preview ────────────────────────────────────────────────────────
+
+@router.get("/conversations/{conv_id}/context-preview")
+async def get_context_preview(conv_id: int, request: Request):
+    """Return the assembled system prompt exactly as the model will receive it.
+
+    This is a read-only inspector — returns the full string plus the list of
+    active memory seed titles so the UI can summarize what's in scope.
+    Only authenticated users can call this (guest chat is unaffected).
+    """
+    uid = _uid(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    conv = await _assert_conv_owner(conv_id, uid)
+
+    from ..database import engine
+    from sqlalchemy import text as _text
+    tier = "free"
+    async with engine.connect() as conn:
+        row = await conn.execute(
+            _text("SELECT subscription_tier FROM users WHERE id = :id"), {"id": uid}
+        )
+        rec = row.mappings().first()
+        if rec:
+            tier = rec["subscription_tier"]
+
+    # Load agent persona if the conversation is Forge-pinned.
+    agent_persona: str | None = None
+    agent_id = conv.get("agent_id")
+    if agent_id:
+        try:
+            async with engine.connect() as conn:
+                row = await conn.execute(
+                    _text("SELECT system_prompt FROM agent_instances WHERE id = :id"),
+                    {"id": agent_id},
+                )
+                rec = row.mappings().first()
+                if rec:
+                    agent_persona = rec["system_prompt"]
+        except Exception:
+            pass
+
+    from .chat import _build_system_prompt
+    from ..services.inference import _prepend_doctrine
+
+    base_prompt = await _build_system_prompt(tier, agent_persona=agent_persona)
+
+    # Inject context_boost exactly as the send path does (chat.py), so the
+    # preview matches what the model actually receives.
+    boost = (conv.get("context_boost") or "").strip()
+    if boost and base_prompt is not None:
+        base_prompt = base_prompt + f"\n\n## Context Boost\n{boost}"
+    elif boost:
+        base_prompt = f"## Context Boost\n{boost}"
+
+    full_prompt = _prepend_doctrine(base_prompt) or ""
+
+    # Collect active seed titles for the UI summary strip.
+    seeds = await storage.get_memory_seeds()
+    active_seed_titles = [
+        s.get("label", f"Seed {s.get('seed_index', '?')}")
+        for s in seeds
+        if s.get("enabled") and (s.get("summary") or "").strip()
+    ]
+
+    return {
+        "conversation_id": conv_id,
+        "system_prompt": full_prompt,
+        "char_count": len(full_prompt),
+        "active_seed_titles": active_seed_titles,
+    }
+
+
+# ─── Per-conversation tool selection ────────────────────────────────────────
+
+class ToolsBody(BaseModel):
+    enabled_tools: Optional[list[str]]  # None = all tools on
+
+
+@router.get("/conversations/{conv_id}/tools")
+async def get_conv_tools(conv_id: int, request: Request):
+    """List all tools with their enabled/disabled status for this conversation.
+
+    enabled_tools = null on the conversation → all tools are enabled (default).
+    """
+    uid = _uid(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    conv = await _assert_conv_owner(conv_id, uid)
+
+    from ..services.tool_executor import TOOL_SCHEMAS_CHAT
+    from ..services.tools import registry as _registry
+
+    reg = _registry()
+    enabled_tools: list[str] | None = conv.get("enabled_tools")
+    enabled_set: set[str] | None = set(enabled_tools) if isinstance(enabled_tools, list) else None
+
+    tool_list = []
+    for schema in TOOL_SCHEMAS_CHAT:
+        fn = schema.get("function", {})
+        name = fn.get("name", "")
+        # Look up metadata from the registry for tier/category info.
+        spec = reg.get(name)
+        tool_list.append({
+            "name": name,
+            "description": (fn.get("description") or "")[:160],
+            "tier": spec.tier if spec else "free",
+            "category": spec.category if spec else "misc",
+            "enabled": enabled_set is None or name in enabled_set,
+        })
+
+    return {
+        "conversation_id": conv_id,
+        "enabled_tools": enabled_tools,
+        "tools": tool_list,
+    }
+
+
+@router.patch("/conversations/{conv_id}/tools")
+async def patch_conv_tools(conv_id: int, body: ToolsBody, request: Request):
+    """Update the per-conversation enabled tool set.
+
+    Pass enabled_tools=null to reset to "all tools on".
+    Pass enabled_tools=[] to disable all tools.
+    Pass enabled_tools=["web_search", ...] to enable only those tools.
+    """
+    uid = _uid(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    await _assert_conv_owner(conv_id, uid)
+
+    # Validate tool names against the known registry to prevent data drift.
+    if body.enabled_tools is not None:
+        from ..services.tool_executor import TOOL_SCHEMAS_CHAT
+        known = {s["function"]["name"] for s in TOOL_SCHEMAS_CHAT}
+        unknown = [n for n in body.enabled_tools if n not in known]
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown tool name(s): {', '.join(unknown)}",
+            )
+        # Deduplicate and sort for stable storage.
+        body = body.model_copy(update={"enabled_tools": sorted(set(body.enabled_tools))})
+
+    import json as _json
+    new_val = _json.dumps(body.enabled_tools) if body.enabled_tools is not None else None
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE conversations SET enabled_tools = :val::jsonb WHERE id = :id"
+            ),
+            {"val": new_val, "id": conv_id},
+        )
+
+    return {
+        "ok": True,
+        "conversation_id": conv_id,
+        "enabled_tools": body.enabled_tools,
+    }
 
 
 @router.get("/subagent/{conv_id}/status")

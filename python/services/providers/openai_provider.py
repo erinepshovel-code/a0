@@ -73,7 +73,7 @@ async def _call_responses(
     loops; only `function_call` items are echoed back per Responses API rules.
     """
     from ..tool_distill import set_caller_provider
-    from ..tool_executor import TOOL_SCHEMAS_RESPONSES, execute_tool
+    from ..tool_executor import get_active_responses_schemas, execute_tool
     from ..inference import (
         _MAX_TOOL_ROUNDS,
         _canonical_tool_calls,
@@ -118,7 +118,7 @@ async def _call_responses(
         if reasoning_effort and reasoning_effort != "none":
             kwargs["reasoning"] = {"effort": reasoning_effort}
         if use_tools:
-            kwargs["tools"] = TOOL_SCHEMAS_RESPONSES
+            kwargs["tools"] = get_active_responses_schemas()
 
         try:
             response = await oai_client.responses.create(**kwargs)

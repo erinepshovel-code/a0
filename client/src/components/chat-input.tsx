@@ -64,6 +64,7 @@ export function ChatInput({
   onSend,
   isSending,
   hideModelPicker = false,
+  hideBorderTop = false,
 }: {
   onSend: (content: string, attachmentIds: number[], opts?: ChatSendOpts) => void;
   isSending: boolean;
@@ -73,6 +74,8 @@ export function ChatInput({
   // per-message override would conflict with that design. Pass true to
   // hide the picker on those surfaces.
   hideModelPicker?: boolean;
+  // When true, removes the top border so a parent wrapper can apply its own.
+  hideBorderTop?: boolean;
 }) {
   const { toast } = useToast();
   const [input, setInput] = useState("");
@@ -254,7 +257,7 @@ export function ChatInput({
     availability.find((a) => a.active)?.id || availableProviders[0]?.id;
 
   return (
-    <div className="px-4 py-3 border-t border-border" data-testid="chat-input-area">
+    <div className={`px-4 py-3 ${hideBorderTop ? "" : "border-t border-border"}`} data-testid="chat-input-area">
       <div className="mb-2 flex flex-col gap-1.5">
         <div
           role="tablist"

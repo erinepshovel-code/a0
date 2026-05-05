@@ -15,6 +15,7 @@ SCHEMA + async handle). This module:
     set_approval_scope_user_id().
 """
 import contextvars as _cv
+import contextvars
 import os
 
 from .tool_distill import (
@@ -25,6 +26,68 @@ from .tool_distill import (
 from .tools import dispatch as _registry_dispatch
 from .tools import registry as _registry
 from .tools import tool_schemas_chat as _registry_schemas
+
+# ---------------------------------------------------------------------------
+# Per-conversation tool allow-list ContextVar.
+# When set to a list of tool names, only those tools are exposed to the model.
+# When None (the default), all tools are available.
+# ---------------------------------------------------------------------------
+_allowed_tools_cv: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "_allowed_tools", default=None
+)
+
+
+def set_allowed_tools(names: list[str] | None) -> contextvars.Token:
+    """Set the per-request allowed tool list. Returns a token for reset."""
+    return _allowed_tools_cv.set(names)
+
+
+def reset_allowed_tools(token: contextvars.Token) -> None:
+    """Restore the previous allowed tool list."""
+    _allowed_tools_cv.reset(token)
+
+
+def get_active_chat_schemas() -> list[dict]:
+    """Return TOOL_SCHEMAS_CHAT filtered by the current request's allow-list.
+
+    Returns the full list when no allow-list is set (None = all tools on).
+    The allow-list is set per-request via set_allowed_tools() so parallel
+    requests don't interfere with each other.
+    """
+    allowed = _allowed_tools_cv.get()
+    if allowed is None:
+        return TOOL_SCHEMAS_CHAT
+    allowed_set = set(allowed)
+    return [s for s in TOOL_SCHEMAS_CHAT if s["function"]["name"] in allowed_set]
+
+
+def get_active_responses_schemas() -> list[dict]:
+    """Like get_active_chat_schemas but for TOOL_SCHEMAS_RESPONSES (OpenAI format)."""
+    allowed = _allowed_tools_cv.get()
+    if allowed is None:
+        return TOOL_SCHEMAS_RESPONSES
+    allowed_set = set(allowed)
+    # Map OpenAI native tool types to their logical allow-list name so that
+    # disabling "web_search" also removes the native "web_search_preview" entry.
+    _NATIVE_TYPE_TO_TOOL_NAME: dict[str, str] = {
+        "web_search_preview": "web_search",
+    }
+    filtered = []
+    for s in TOOL_SCHEMAS_RESPONSES:
+        if "name" in s:
+            # Named tool (function-call style) — check allow-list directly.
+            if s["name"] in allowed_set:
+                filtered.append(s)
+        elif "type" in s:
+            # Native type entry (e.g. {"type": "web_search_preview"}).
+            # Map to logical name; include if the logical name is allowed.
+            logical = _NATIVE_TYPE_TO_TOOL_NAME.get(s["type"], s["type"])
+            if logical in allowed_set:
+                filtered.append(s)
+        else:
+            # Unknown shape — include unconditionally.
+            filtered.append(s)
+    return filtered
 
 _TOOL_RESULT_PASS_TOKENS = 8000  # mirrored from tool_distill for the persist gate
 
@@ -414,5 +477,9 @@ __all__ = [
     "_discover_a0_skills",
     "_skill_recommend",
     "_skill_load",
+    "set_allowed_tools",
+    "reset_allowed_tools",
+    "get_active_chat_schemas",
+    "get_active_responses_schemas",
 ]
 # 314:53

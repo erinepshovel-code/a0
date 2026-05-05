@@ -4,10 +4,15 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Trash2, Loader2, ChevronDown, ChevronUp, ChevronRight, Zap, X,
   Archive, ArchiveRestore, CornerDownRight, AlertTriangle, CheckCircle2,
+  Eye, Wrench,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { fmtTokens } from "@/components/chat-messages";
@@ -228,6 +233,321 @@ export function ContextBoostPanel({ convId }: { convId: number }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Pre-chat inspector panel ────────────────────────────────────────────────
+
+interface ToolEntry {
+  name: string;
+  description: string;
+  tier: string;
+  category: string;
+  enabled: boolean;
+}
+
+interface ConvToolsRes {
+  conversation_id: number;
+  enabled_tools: string[] | null;
+  tools: ToolEntry[];
+}
+
+interface ContextPreviewRes {
+  conversation_id: number;
+  system_prompt: string;
+  char_count: number;
+  active_seed_titles: string[];
+}
+
+function ContextTab({ convId }: { convId: number }) {
+  const { data, isLoading, error } = useQuery<ContextPreviewRes>({
+    queryKey: ["/api/v1/conversations", convId, "context-preview"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/v1/conversations/${convId}/context-preview`);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8 text-muted-foreground text-xs" data-testid="context-loading">
+        <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+        Assembling context…
+      </div>
+    );
+  }
+  if (error || !data) {
+    return (
+      <div className="text-xs text-destructive py-4 px-2" data-testid="context-error">
+        {error instanceof Error ? error.message : "Failed to load context preview"}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="context-tab-content">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] text-muted-foreground font-mono">
+          {data.char_count.toLocaleString()} chars
+        </span>
+        {data.active_seed_titles.length > 0 && (
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[10px] text-muted-foreground">seeds:</span>
+            {data.active_seed_titles.map((t) => (
+              <Badge key={t} variant="secondary" className="text-[10px] h-4 px-1.5" data-testid={`badge-seed-${t}`}>
+                {t}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+      <ScrollArea className="h-56 rounded border border-border bg-muted/30">
+        <pre
+          className="text-[10px] font-mono whitespace-pre-wrap p-3 leading-relaxed text-foreground/80"
+          data-testid="context-preview-text"
+        >
+          {data.system_prompt}
+        </pre>
+      </ScrollArea>
+    </div>
+  );
+}
+
+function ToolsTab({ convId }: { convId: number }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const { data, isLoading, error: toolsError } = useQuery<ConvToolsRes>({
+    queryKey: ["/api/v1/conversations", convId, "tools"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/v1/conversations/${convId}/tools`);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const patch = useMutation({
+    mutationFn: async (enabledTools: string[] | null) => {
+      const res = await apiRequest("PATCH", `/api/v1/conversations/${convId}/tools`, { enabled_tools: enabledTools });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/v1/conversations", convId, "tools"] });
+    },
+    onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8 text-muted-foreground text-xs" data-testid="tools-loading">
+        <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+        Loading tools…
+      </div>
+    );
+  }
+  if (toolsError || !data) {
+    return (
+      <div className="text-xs text-destructive py-4 px-2" data-testid="tools-error">
+        {toolsError instanceof Error ? toolsError.message : "Failed to load tools"}
+      </div>
+    );
+  }
+
+  const allEnabled = data.enabled_tools === null;
+  const enabledSet = new Set<string>(data.enabled_tools ?? data.tools.map((t) => t.name));
+
+  const toggleTool = (name: string, checked: boolean) => {
+    if (allEnabled) {
+      // Currently all-on; switching one off means we go explicit.
+      const nowEnabled = data.tools.map((t) => t.name).filter((n) => (n === name ? checked : true));
+      patch.mutate(nowEnabled);
+    } else {
+      const next = checked
+        ? [...Array.from(enabledSet), name]
+        : Array.from(enabledSet).filter((n) => n !== name);
+      // If every tool is on, reset to null (all-on shorthand).
+      const all = data.tools.map((t) => t.name);
+      patch.mutate(next.length === all.length ? null : next);
+    }
+  };
+
+  const enableAll = () => patch.mutate(null);
+  const disableAll = () => patch.mutate([]);
+
+  const tierColor: Record<string, string> = {
+    free: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    supporter: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    ws: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+    admin: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  };
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="tools-tab-content">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-muted-foreground">
+          {allEnabled ? `All ${data.tools.length} tools enabled` : `${enabledSet.size} / ${data.tools.length} enabled`}
+        </span>
+        <div className="flex gap-1 ml-auto">
+          <button
+            type="button"
+            onClick={enableAll}
+            disabled={patch.isPending || allEnabled}
+            className="text-[10px] text-muted-foreground hover:text-primary underline underline-offset-2 disabled:opacity-40"
+            data-testid="btn-enable-all-tools"
+          >
+            all on
+          </button>
+          <span className="text-muted-foreground text-[10px]">·</span>
+          <button
+            type="button"
+            onClick={disableAll}
+            disabled={patch.isPending || (!allEnabled && enabledSet.size === 0)}
+            className="text-[10px] text-muted-foreground hover:text-primary underline underline-offset-2 disabled:opacity-40"
+            data-testid="btn-disable-all-tools"
+          >
+            all off
+          </button>
+        </div>
+      </div>
+      <ScrollArea className="h-56 rounded border border-border">
+        <div className="divide-y divide-border" data-testid="tools-list">
+          {data.tools.map((tool) => {
+            const on = allEnabled || enabledSet.has(tool.name);
+            return (
+              <div
+                key={tool.name}
+                className="flex items-start gap-3 px-3 py-2"
+                data-testid={`tool-row-${tool.name}`}
+              >
+                <Switch
+                  checked={on}
+                  onCheckedChange={(checked) => toggleTool(tool.name, checked)}
+                  disabled={patch.isPending}
+                  className="mt-0.5 shrink-0"
+                  data-testid={`switch-tool-${tool.name}`}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-medium font-mono">{tool.name}</span>
+                    <span
+                      className={cn(
+                        "text-[9px] px-1 rounded font-medium uppercase tracking-wide",
+                        tierColor[tool.tier] ?? tierColor.free,
+                      )}
+                      data-testid={`badge-tier-${tool.name}`}
+                    >
+                      {tool.tier}
+                    </span>
+                    {tool.category !== "misc" && (
+                      <span className="text-[9px] text-muted-foreground">{tool.category}</span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">
+                    {tool.description}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+export function PreChatInspectorPanel({ convId }: { convId: number }) {
+  return (
+    <div
+      className="mx-4 mb-4 rounded-lg border border-border bg-card shadow-sm"
+      data-testid="pre-chat-inspector"
+    >
+      <div className="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-border">
+        <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs font-medium text-foreground">Pre-send Inspector</span>
+        <span className="text-[10px] text-muted-foreground ml-1">
+          — collapses after your first message
+        </span>
+      </div>
+      <div className="p-3">
+        <Tabs defaultValue="context">
+          <TabsList className="h-7 text-[11px] mb-3">
+            <TabsTrigger value="context" className="h-6 px-3 text-[11px]" data-testid="tab-context">
+              <Eye className="h-3 w-3 mr-1" />Context
+            </TabsTrigger>
+            <TabsTrigger value="tools" className="h-6 px-3 text-[11px]" data-testid="tab-tools">
+              <Wrench className="h-3 w-3 mr-1" />Tools
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="context" className="mt-0">
+            <ContextTab convId={convId} />
+          </TabsContent>
+          <TabsContent value="tools" className="mt-0">
+            <ToolsTab convId={convId} />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
+
+export function ConvToolsPopover({ convId }: { convId: number }) {
+  const [open, setOpen] = useState(false);
+
+  const { data } = useQuery<ConvToolsRes>({
+    queryKey: ["/api/v1/conversations", convId, "tools"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/v1/conversations/${convId}/tools`);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const activeCount = data
+    ? (data.enabled_tools === null ? data.tools.length : data.enabled_tools.length)
+    : null;
+  const totalCount = data?.tools.length ?? null;
+  const allOn = data?.enabled_tools === null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          size="icon"
+          variant="ghost"
+          className={cn(
+            "h-8 w-8 shrink-0",
+            !allOn && activeCount !== null && "text-primary",
+          )}
+          title={`Tools (${activeCount ?? "…"}/${totalCount ?? "…"} enabled)`}
+          data-testid="btn-tools-popover"
+        >
+          <Wrench className="h-4 w-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        className="w-80 p-3"
+        data-testid="tools-popover-content"
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs font-medium">Tool selection</span>
+          {activeCount !== null && (
+            <Badge variant="secondary" className="ml-auto text-[10px] h-4 px-1.5">
+              {activeCount}/{totalCount}
+            </Badge>
+          )}
+        </div>
+        <ToolsTab convId={convId} />
+      </PopoverContent>
+    </Popover>
   );
 }
 

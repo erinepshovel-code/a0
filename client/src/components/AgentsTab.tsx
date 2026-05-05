@@ -1,4 +1,4 @@
-// 663:1
+// 663:2
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -258,7 +258,8 @@ interface ProviderPanelProps {
 function ProviderPanel({ provider, onSetActive, isSettingActive }: ProviderPanelProps) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [collapsed, setCollapsed] = useState(true);
+  // Active provider starts expanded so controls are immediately visible
+  const [collapsed, setCollapsed] = useState(!provider.active);
 
   const rc = provider.route_config || {};
   const assignments: Record<string, string> = rc.model_assignments || {};
@@ -719,4 +720,4 @@ export default function AgentsTab() {
     </TabShell>
   );
 }
-// 663:1
+// 663:2

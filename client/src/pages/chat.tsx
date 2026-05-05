@@ -23,6 +23,8 @@ import {
   ConversationList,
   ContextBoostPanel,
   ChatInput,
+  PreChatInspectorPanel,
+  ConvToolsPopover,
 } from "@/components/chat-widgets";
 
 const CONV_KEY = "a0p_active_conv";
@@ -384,9 +386,7 @@ export default function ChatPage() {
               ) : (
                 <div className="flex flex-col gap-3">
                   {messages.length === 0 && !sendMessage.isPending && (
-                    <div className="flex items-center justify-center h-full text-muted-foreground" data-testid="no-messages">
-                      <p className="text-sm">No messages yet</p>
-                    </div>
+                    <PreChatInspectorPanel convId={activeConvId} />
                   )}
                   {messages.map((m) => <MessageBubble key={m.id} message={m} onSend={(c) => sendMessage.mutate({ content: c })} />)}
                   {/* Mounted for any in-flight multi-model send, including the first turn. */}
@@ -413,12 +413,18 @@ export default function ChatPage() {
                 </Button>
               )}
             </div>
-            <ChatInput
-              onSend={(content, attachment_ids, opts) =>
-                sendMessage.mutate({ content, attachment_ids, ...(opts ?? {}) })
-              }
-              isSending={sendMessage.isPending}
-            />
+            <div className="flex items-end gap-1 border-t border-border">
+              <ConvToolsPopover convId={activeConvId} />
+              <div className="flex-1">
+                <ChatInput
+                  onSend={(content, attachment_ids, opts) =>
+                    sendMessage.mutate({ content, attachment_ids, ...(opts ?? {}) })
+                  }
+                  isSending={sendMessage.isPending}
+                  hideBorderTop
+                />
+              </div>
+            </div>
           </>
         )}
       </div>
