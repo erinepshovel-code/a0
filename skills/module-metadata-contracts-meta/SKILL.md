@@ -17,7 +17,7 @@ Use this skill when a user asks to standardize **module metadata declarations** 
 
 ## Boundary Rule (Mandatory)
 
-`hmmm` is the mandatory boundary object that records unresolved constraints, preserves honest incompletion, and marks the transition between delivered output and living continuation.
+`hmmm` is the mandatory boundary list (`List[str]`) that records unresolved constraints, preserves honest incompletion, and marks the transition between delivered output and living continuation.
 
 Every output contract in this skill **must** include `hmmm`.
 
@@ -110,18 +110,18 @@ Use a strict envelope named `module_output`:
     "latency_ms": 0,
     "cost_hint": "string"
   },
-  "hmmm": {
-    "unresolved_constraints": ["string"],
-    "honest_incompletion": "string",
-    "continuation_handoff": "string"
-  }
+  "hmmm": [
+    "UNRESOLVED: missing upstream constraint X",
+    "INCOMPLETE: partial coverage due to timebox",
+    "HANDOFF: continue with module Y and request_id Z"
+  ]
 }
 ```
 
 ### Output Contract Rules
 
 1. Always return a `module_output`, even for failures.
-2. `status=partial` requires non-empty `hmmm.unresolved_constraints`.
+2. `status=partial` requires non-empty `hmmm` (at least one unresolved/incompletion/handoff entry).
 3. `status=error` requires at least one structured `errors[]` item.
 4. `hmmm` must be present for `ok`, `partial`, and `error` states.
 
@@ -133,7 +133,7 @@ For deterministic downstream handling:
 
 - Use stable `errors[].code` namespaces (e.g., `INPUT_SCHEMA_MISMATCH`).
 - Keep `errors[].message` concise and user-safe (no secrets/stack traces).
-- Put unresolved work in `hmmm.unresolved_constraints`, not in free-text logs.
+- Put unresolved work in structured `hmmm` entries, not in free-text logs.
 
 ---
 
@@ -150,5 +150,5 @@ For deterministic downstream handling:
 - Metadata fields complete and versioned.
 - Input/output envelopes contain all required keys.
 - Failure paths return structured `module_output`.
-- `hmmm` present and non-empty where unresolved constraints exist.
+- `hmmm` present (and non-empty for `partial`/unresolved paths).
 - Examples parse against declared schemas.
